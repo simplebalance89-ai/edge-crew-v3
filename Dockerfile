@@ -1,16 +1,13 @@
-FROM python:3.11-slim
+FROM python:3.11-alpine
 
 WORKDIR /app
 
-# Cache buster
-ARG CACHE_BUST=1
-
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache gcc musl-dev
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py /app/main.py
+COPY main.py .
 
 ENV PORT=8000
 EXPOSE 8000
