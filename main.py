@@ -1,5 +1,5 @@
 """
-Edge Crew v3.0 - Railway Deploy (Single Service)
+Edge Crew v3.0 - 20260404140021 - Railway Deploy (Single Service)
 Simplified version for Railway deployment
 """
 
@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from typing import Dict
 
-print("🚀 Starting Edge Crew v3.0...", flush=True)
+print("🚀 Starting Edge Crew v3.0 - 20260404140021...", flush=True)
 
 try:
     import httpx
@@ -21,7 +21,7 @@ except Exception as e:
     print(f"❌ Import error: {e}", flush=True)
     sys.exit(1)
 
-app = FastAPI(title="Edge Crew v3.0", version="3.0.0-railway")
+app = FastAPI(title="Edge Crew v3.0 - 20260404140021", version="3.0.0-railway")
 
 # CORS - Allow Vercel frontend
 app.add_middleware(
@@ -55,7 +55,7 @@ class GradeRequest(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "name": "Edge Crew v3.0",
+        "name": "Edge Crew v3.0 - 20260404140021",
         "version": "3.0.0-railway",
         "status": "online",
         "endpoints": ["/health", "/api/grade"]
