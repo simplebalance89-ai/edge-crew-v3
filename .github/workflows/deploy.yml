@@ -1,0 +1,99 @@
+name: Deploy to GKE
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_CLUSTER: edge-crew-prod
+  GKE_ZONE: us-central1-a
+  NAMESPACE: edge-crew
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    # Auth to GCP
+    - name: Google Auth
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.GCP_SA_EMAIL }}
+    
+    # Setup gcloud
+    - name: Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+    
+    # Auth Docker
+    - name: Docker Auth
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+    
+    # Build AI Processor
+    - name: Build AI Processor
+      run: |
+        docker build \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/ai-processor:${{ github.sha }} \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/ai-processor:latest \
+          -f services/ai-processor/Dockerfile \
+          services/ai-processor
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/ai-processor:${{ github.sha }}
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/ai-processor:latest
+    
+    # Build Convergence
+    - name: Build Convergence
+      run: |
+        docker build \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/convergence:${{ github.sha }} \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/convergence:latest \
+          -f services/convergence/Dockerfile \
+          services/convergence
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/convergence:${{ github.sha }}
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/convergence:latest
+    
+    # Get GKE credentials
+    - name: Get GKE Credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+    
+    # Deploy to GKE
+    - name: Deploy to GKE
+      run: |
+        # Update image tags
+        kustomize edit set image \
+          ai-processor=us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/ai-processor:${{ github.sha }} \
+          convergence=us-central1-docker.pkg.dev/$PROJECT_ID/edge-crew/convergence:${{ github.sha }}
+        
+        # Apply manifests
+        kubectl apply -k infrastructure/k8s
+        
+        # Wait for rollout
+        kubectl rollout status deployment/ai-processor -n $NAMESPACE
+        kubectl rollout status deployment/convergence -n $NAMESPACE
+        kubectl rollout status deployment/api-gateway -n $NAMESPACE
+    
+    # Verify deployment
+    - name: Verify Deployment
+      run: |
+        kubectl get pods -n $NAMESPACE
+        kubectl get ingress -n $NAMESPACE
+        
+        # Health check
+        INGRESS_IP=$(kubectl get ingress edge-crew-ingress -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        echo "Ingress IP: $INGRESS_IP"
+        curl -sf http://$INGRESS_IP/health || echo "Health check failed"

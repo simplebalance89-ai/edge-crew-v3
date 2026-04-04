@@ -1,0 +1,57 @@
+name: Terraform
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'infrastructure/terraform/**'
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+
+env:
+  TF_IN_AUTOMATION: true
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'write'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Google Auth
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.GCP_SA_EMAIL }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: "1.7.0"
+    
+    - name: Terraform Format
+      run: terraform fmt -check -recursive infrastructure/terraform
+    
+    - name: Terraform Init
+      working-directory: infrastructure/terraform/environments/prod
+      run: terraform init
+    
+    - name: Terraform Validate
+      working-directory: infrastructure/terraform/environments/prod
+      run: terraform validate
+    
+    - name: Terraform Plan
+      working-directory: infrastructure/terraform/environments/prod
+      run: terraform plan -no-color
+      continue-on-error: true
+    
+    - name: Terraform Apply (main only)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      working-directory: infrastructure/terraform/environments/prod
+      run: terraform apply -auto-approve
