@@ -1,10 +1,9 @@
 [build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "nixpacks"
+
+[build.nixpacks]
+phases.build.cmds = ["cd web && npm install && npm run build"]
+phases.setup.nixPkgs = ["nodejs_20"]
 
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
-healthcheckPath = "/health"
-healthcheckTimeout = 30
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 3
+startCommand = "cd web && npx serve dist -p $PORT"
