@@ -1,9 +1,0 @@
-[build]
-builder = "nixpacks"
-
-[build.nixpacks]
-phases.build.cmds = ["cd web && npm install && npm run build"]
-phases.setup.nixPkgs = ["nodejs_20"]
-
-[deploy]
-startCommand = "cd web && npx serve dist -p $PORT"
