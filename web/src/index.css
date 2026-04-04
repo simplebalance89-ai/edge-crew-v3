@@ -3,15 +3,21 @@
 @tailwind utilities;
 
 :root {
-  --color-bg: #0a0a0f;
-  --color-surface: #1a1a1a;
-  --color-gold: #d4a017;
-  --color-pink: #f72585;
-  --color-teal: #00d4aa;
+  /* EC⁸ Brand Colors */
+  --color-bg: #08080C;
+  --color-surface: #0E0E14;
+  --color-surface-hover: #141420;
+  --color-cyan: #00E5FF;
+  --color-magenta: #FF2D78;
+  --color-text: #E8E8EC;
+  --color-text-dim: #6E6E80;
+  --color-border: #1A1A28;
+  
+  /* Grade colors */
+  --color-green: #10b981;
   --color-blue: #38bdf8;
   --color-orange: #f59e0b;
   --color-red: #ef4444;
-  --color-green: #10b981;
 }
 
 * {
@@ -21,9 +27,9 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Outfit', sans-serif;
   background-color: var(--color-bg);
-  color: white;
+  color: var(--color-text);
   min-height: 100vh;
 }
 
@@ -34,22 +40,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.03);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.15);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.25);
 }
 
 /* Animations */
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(212, 160, 23, 0.3); }
-  50% { box-shadow: 0 0 40px rgba(212, 160, 23, 0.5); }
+  0%, 100% { box-shadow: 0 0 20px rgba(0, 229, 255, 0.2); }
+  50% { box-shadow: 0 0 40px rgba(0, 229, 255, 0.4); }
 }
 
 @keyframes slide-up {
@@ -59,6 +65,14 @@ body {
 
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+/* EC⁸ Gradient text utility */
+.text-gradient {
+  background: linear-gradient(135deg, var(--color-cyan), var(--color-magenta));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 /* Grade colors */
@@ -75,9 +89,9 @@ body {
 }
 
 .status-aligned {
-  background: rgba(56, 189, 248, 0.15);
-  border: 1px solid var(--color-blue);
-  color: var(--color-blue);
+  background: rgba(0, 229, 255, 0.15);
+  border: 1px solid var(--color-cyan);
+  color: var(--color-cyan);
 }
 
 .status-divergent {
