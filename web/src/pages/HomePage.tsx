@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
 import { getGames, gradeGame } from '@/services/api'
-import type { Sport, ConvergenceResult } from '@/types'
+import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer']
