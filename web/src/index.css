@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #0a0a0f;
+  --color-surface: #1a1a1a;
+  --color-gold: #d4a017;
+  --color-pink: #f72585;
+  --color-teal: #00d4aa;
+  --color-blue: #38bdf8;
+  --color-orange: #f59e0b;
+  --color-red: #ef4444;
+  --color-green: #10b981;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--color-bg);
+  color: white;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(212, 160, 23, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(212, 160, 23, 0.5); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* Grade colors */
+.grade-a { color: var(--color-green); }
+.grade-b { color: var(--color-blue); }
+.grade-c { color: var(--color-orange); }
+.grade-f { color: var(--color-red); }
+
+/* Status badges */
+.status-lock {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--color-green);
+  color: var(--color-green);
+}
+
+.status-aligned {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid var(--color-blue);
+  color: var(--color-blue);
+}
+
+.status-divergent {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid var(--color-orange);
+  color: var(--color-orange);
+}
+
+.status-conflict {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--color-red);
+  color: var(--color-red);
+}
