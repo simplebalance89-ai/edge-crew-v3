@@ -27,8 +27,9 @@ app = FastAPI(title="Edge Crew v3.0 - 20260404140021", version="3.0.0-railway")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://web-7ijq5qa9a-simplebalance89-ais-projects.vercel.app",
+        "https://web-nasrhavf5-simplebalance89-ais-projects.vercel.app",
         "https://web-seven-taupe-43.vercel.app",
+        "https://web-m7yw97rdj-simplebalance89-ais-projects.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
     ],
