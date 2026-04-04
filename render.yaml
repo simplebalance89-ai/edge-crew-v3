@@ -1,0 +1,106 @@
+# Edge Crew v3.0 - Render Blueprint
+# Deploy with one click: https://render.com/deploy?repo=https://github.com/simplebalance89-ai/edge-crew-v3
+
+services:
+  # Redis Cache
+  - type: redis
+    name: edge-crew-redis
+    ipAllowList: []
+    plan: standard
+
+  # PostgreSQL Database
+  - type: pserv
+    name: edge-crew-postgres
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./infrastructure/db/Dockerfile
+    envVars:
+      - key: POSTGRES_USER
+        value: edgecrew
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+      - key: POSTGRES_DB
+        value: edgecrew
+      - key: PGDATA
+        value: /var/lib/postgresql/data/pgdata
+
+  # AI Processor Service
+  - type: web
+    name: edge-crew-ai
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./services/ai-processor/Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: REDIS_URL
+        fromService:
+          name: edge-crew-redis
+          type: redis
+          property: connectionString
+      - key: AZURE_SWEDEN_KEY
+        sync: false
+      - key: AZURE_NC_KEY
+        sync: false
+      - key: AZURE_GCE_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GROK_API_KEY
+        sync: false
+      - key: KIMI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+    healthCheckPath: /health
+
+  # Convergence Service
+  - type: web
+    name: edge-crew-convergence
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./services/convergence/Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: REDIS_URL
+        fromService:
+          name: edge-crew-redis
+          type: redis
+          property: connectionString
+      - key: DATABASE_URL
+        fromService:
+          name: edge-crew-postgres
+          type: pserv
+          property: connectionString
+    healthCheckPath: /health
+
+  # Data Ingestion Service (Background Worker)
+  - type: worker
+    name: edge-crew-ingestion
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./services/data-ingestion/Dockerfile
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          name: edge-crew-redis
+          type: redis
+          property: connectionString
+      - key: ODDS_API_KEY
+        sync: false
+
+  # Web Frontend
+  - type: web
+    name: edge-crew-web
+    runtime: static
+    plan: starter
+    buildCommand: cd web && npm install && npm run build
+    staticPublishPath: ./web/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://edge-crew-ai.onrender.com
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://edge-crew-ai.onrender.com/api/*
