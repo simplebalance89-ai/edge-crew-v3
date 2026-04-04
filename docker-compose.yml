@@ -1,0 +1,210 @@
+version: '3.8'
+
+# Edge Crew v3.0 - Local Development Stack
+# This compose file defines the full local development environment
+
+services:
+  # Redis - Message broker and cache
+  redis:
+    image: redis:7-alpine
+    container_name: edge-crew-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - edge-crew-network
+
+  # PostgreSQL with TimescaleDB - Primary database
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: edge-crew-postgres
+    environment:
+      POSTGRES_USER: edgecrew
+      POSTGRES_PASSWORD: edgecrew
+      POSTGRES_DB: edgecrew
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./infrastructure/db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edgecrew -d edgecrew"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - edge-crew-network
+
+  # API Gateway - Entry point for all API requests
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: edge-crew-api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATA_INGESTION_URL=http://data-ingestion:8080
+      - GRADING_ENGINE_URL=http://grading-engine:8080
+      - AI_PROCESSOR_URL=http://ai-processor:8080
+      - CONVERGENCE_URL=http://convergence:8080
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
+      data-ingestion:
+        condition: service_started
+      grading-engine:
+        condition: service_started
+      ai-processor:
+        condition: service_started
+      convergence:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+  # Data Ingestion Service - Handles incoming sports data
+  data-ingestion:
+    build:
+      context: ./services/data-ingestion
+      dockerfile: Dockerfile
+    container_name: edge-crew-data-ingestion
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://edgecrew:edgecrew@postgres:5432/edgecrew
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+  # Grading Engine - Evaluates betting predictions
+  grading-engine:
+    build:
+      context: ./services/grading-engine
+      dockerfile: Dockerfile
+    container_name: edge-crew-grading-engine
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://edgecrew:edgecrew@postgres:5432/edgecrew
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+  # AI Processor - AI/ML inference service
+  ai-processor:
+    build:
+      context: ./services/ai-processor
+      dockerfile: Dockerfile
+    container_name: edge-crew-ai-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - AZURE_SWEDEN_KEY=${AZURE_SWEDEN_KEY}
+      - AZURE_SWEDEN_ENDPOINT=${AZURE_SWEDEN_ENDPOINT:-https://swedencentral.api.cognitive.microsoft.com}
+      - MODEL_CACHE_DIR=/app/cache
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ai_model_cache:/app/cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+  # Convergence Service - Data aggregation and analysis
+  convergence:
+    build:
+      context: ./services/convergence
+      dockerfile: Dockerfile
+    container_name: edge-crew-convergence
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://edgecrew:edgecrew@postgres:5432/edgecrew
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+  # Web Frontend - Next.js application
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: edge-crew-web
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - API_INTERNAL_URL=http://api-gateway:8000
+    depends_on:
+      api-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge-crew-network
+
+# Named volumes for persistent data
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  ai_model_cache:
+    driver: local
+
+# Shared network for service communication
+networks:
+  edge-crew-network:
+    driver: bridge
+    name: edge-crew-network

@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: grading-engine
+  namespace: edge-crew
+  labels:
+    app: grading-engine
+    component: service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: grading-engine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grading-engine
+  namespace: edge-crew
+  labels:
+    app: grading-engine
+    component: service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: grading-engine
+  template:
+    metadata:
+      labels:
+        app: grading-engine
+        component: service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - grading-engine
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: grading-engine
+        image: edgecrew/grading-engine:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SERVER_PORT
+          value: "8080"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: edge-crew-config
+              key: log.level
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: edge-crew-config
+              key: redis.url
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: edge-crew-secrets
+              key: postgres.url
+        - name: AI_PROCESSOR_URL
+          valueFrom:
+            configMapKeyRef:
+              name: edge-crew-config
+              key: ai.processor.url
+        - name: CONVERGENCE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: edge-crew-config
+              key: convergence.url
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 12

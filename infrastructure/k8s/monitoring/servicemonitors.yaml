@@ -1,0 +1,169 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api-gateway-metrics
+  namespace: edge-crew
+  labels:
+    app: api-gateway
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: data-ingestion-metrics
+  namespace: edge-crew
+  labels:
+    app: data-ingestion
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: data-ingestion
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: grading-engine-metrics
+  namespace: edge-crew
+  labels:
+    app: grading-engine
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: grading-engine
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-processor-metrics
+  namespace: edge-crew
+  labels:
+    app: ai-processor
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ai-processor
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: convergence-metrics
+  namespace: edge-crew
+  labels:
+    app: convergence
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: convergence
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web-metrics
+  namespace: edge-crew
+  labels:
+    app: web
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: web
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  endpoints:
+  - port: http
+    path: /api/metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PodMonitor for Redis metrics (if using redis-exporter sidecar)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: redis-metrics
+  namespace: edge-crew
+  labels:
+    app: redis
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PodMonitor for PostgreSQL metrics (if using postgres-exporter)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres-metrics
+  namespace: edge-crew
+  labels:
+    app: postgres
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  namespaceSelector:
+    matchNames:
+    - edge-crew
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s

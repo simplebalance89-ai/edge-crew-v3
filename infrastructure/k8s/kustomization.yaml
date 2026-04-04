@@ -1,0 +1,123 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace for all resources
+namespace: edge-crew
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/part-of: edge-crew
+  app.kubernetes.io/version: "3.0"
+  app.kubernetes.io/managed-by: kustomize
+
+# Common annotations
+commonAnnotations:
+  edge-crew.io/description: "Edge Crew v3.0 - Sports Data Processing Platform"
+
+# Resources to include in this kustomization
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - redis.yaml
+  - postgres.yaml
+  - api-gateway.yaml
+  - data-ingestion.yaml
+  - grading-engine.yaml
+  - ai-processor.yaml
+  - convergence.yaml
+  - web.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - monitoring/servicemonitors.yaml
+
+# Images to use (can be overridden by overlays)
+images:
+  - name: edgecrew/data-ingestion
+    newTag: latest
+  - name: edgecrew/grading-engine
+    newTag: latest
+  - name: edgecrew/ai-processor
+    newTag: latest
+  - name: edgecrew/convergence
+    newTag: latest
+  - name: edgecrew/web
+    newTag: latest
+  - name: edgecrew/api-migrations
+    newTag: latest
+
+# ConfigMap generator for environment-specific configs
+configMapGenerator:
+  - name: edge-crew-env-config
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+
+# Secret generator for environment-specific secrets
+secretGenerator:
+  - name: edge-crew-env-secrets
+    literals:
+      - ENV_SECRET=placeholder
+
+# Replacements for cross-resource references
+replacements:
+  - source:
+      kind: ConfigMap
+      name: edge-crew-config
+      fieldPath: data.redis.url
+    targets:
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - spec.template.spec.containers.[name=*].env.[name=REDIS_URL].value
+  - source:
+      kind: Secret
+      name: edge-crew-secrets
+      fieldPath: data.postgres.url
+    targets:
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - spec.template.spec.containers.[name=*].env.[name=DATABASE_URL].value
+
+# Patches for production hardening
+patches:
+  # Add security context to all deployments
+  - target:
+      kind: Deployment
+      name: .*
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ignored
+      spec:
+        template:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              fsGroup: 1000
+            containers:
+            - name: ignored
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                  - ALL
+
+# Replica count transformer
+replicas:
+  - name: data-ingestion
+    count: 3
+  - name: grading-engine
+    count: 3
+  - name: ai-processor
+    count: 3
+  - name: convergence
+    count: 2
+  - name: web
+    count: 3
+  - name: api-gateway
+    count: 2

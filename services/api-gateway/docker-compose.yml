@@ -1,0 +1,220 @@
+# Edge Crew v3.0 API Gateway - Docker Compose Configuration
+# This sets up the complete local development environment
+
+version: "3.8"
+
+services:
+  # ============================================================================
+  # Kong API Gateway
+  # ============================================================================
+  kong:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: edge-crew-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PLUGINS: bundled,edge-auth,edge-rate-limiting,edge-transform
+      KONG_PLUGINSERVER_NAMES: python
+      KONG_PLUGINSERVER_PYTHON_SOCKET: /usr/local/kong/python-pluginserver.sock
+      KONG_PLUGINSERVER_PYTHON_START_CMD: /usr/local/bin/kong-python-pluginserver
+      KONG_PLUGINSERVER_PYTHON_QUERY_CMD: /usr/local/bin/kong-python-pluginserver --dump-all-plugins
+      # JWT Secrets (use environment variables in production)
+      JWT_SECRET_EDGE_WEB: ${JWT_SECRET_EDGE_WEB:-edge-web-secret-key}
+      JWT_SECRET_EDGE_MOBILE: ${JWT_SECRET_EDGE_MOBILE:-edge-mobile-secret-key}
+      JWT_SECRET_EDGE_ADMIN: ${JWT_SECRET_EDGE_ADMIN:-edge-admin-secret-key}
+      JWT_SECRET_INTERNAL: ${JWT_SECRET_INTERNAL:-internal-secret-key}
+    ports:
+      - "8000:8000"    # Proxy HTTP
+      - "8443:8443"    # Proxy HTTPS
+      - "8001:8001"    # Admin API HTTP
+      - "8444:8444"    # Admin API HTTPS
+      - "8002:8002"    # Kong Manager (Enterprise)
+    volumes:
+      - ./kong.yml:/kong/declarative/kong.yml:ro
+      - ./plugins:/usr/local/kong/custom-plugins:ro
+      - kong_logs:/usr/local/kong/logs
+    networks:
+      - edge-crew-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ============================================================================
+  # Redis - For distributed rate limiting and caching
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: edge-crew-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - edge-crew-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # Mock Services (for local development testing)
+  # ============================================================================
+  
+  # Grading Engine Mock
+  grading-engine:
+    image: mockserver/mockserver:5.15.0
+    container_name: edge-crew-grading-engine
+    environment:
+      MOCKSERVER_SERVER_PORT: 8000
+      MOCKSERVER_LOG_LEVEL: INFO
+    ports:
+      - "18000:8000"
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+  # AI Processor Mock
+  ai-processor:
+    image: mockserver/mockserver:5.15.0
+    container_name: edge-crew-ai-processor
+    environment:
+      MOCKSERVER_SERVER_PORT: 8000
+      MOCKSERVER_LOG_LEVEL: INFO
+    ports:
+      - "18001:8000"
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+  # Convergence Service Mock
+  convergence:
+    image: mockserver/mockserver:5.15.0
+    container_name: edge-crew-convergence
+    environment:
+      MOCKSERVER_SERVER_PORT: 8000
+      MOCKSERVER_LOG_LEVEL: INFO
+    ports:
+      - "18002:8000"
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+  # Data Ingestion Service Mock
+  data-ingestion:
+    image: mockserver/mockserver:5.15.0
+    container_name: edge-crew-data-ingestion
+    environment:
+      MOCKSERVER_SERVER_PORT: 8000
+      MOCKSERVER_LOG_LEVEL: INFO
+    ports:
+      - "18003:8000"
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Monitoring & Observability
+  # ============================================================================
+  
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: edge-crew-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - edge-crew-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: edge-crew-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - edge-crew-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ============================================================================
+  # Testing & Development Tools
+  # ============================================================================
+  
+  # HTTP Echo server for testing
+  httpbin:
+    image: kennethreitz/httpbin:latest
+    container_name: edge-crew-httpbin
+    ports:
+      - "8080:80"
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+  # Mailhog for testing email notifications
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: edge-crew-mailhog
+    ports:
+      - "1025:1025"    # SMTP port
+      - "8025:8025"    # Web UI
+    networks:
+      - edge-crew-network
+    restart: unless-stopped
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  edge-crew-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  kong_logs:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

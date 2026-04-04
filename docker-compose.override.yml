@@ -1,0 +1,173 @@
+version: '3.8'
+
+# Edge Crew v3.0 - Local Development Overrides
+# This file is automatically loaded by docker-compose for local development
+# It enables hot-reload, debugging, and local-specific configurations
+
+services:
+  # Redis - No overrides needed
+  redis:
+    # Expose for local debugging
+    labels:
+      - "traefik.enable=false"
+
+  # PostgreSQL - Development-specific settings
+  postgres:
+    # Enable query logging in development
+    command: >
+      postgres
+      -c log_statement=all
+      -c log_destination=stderr
+    labels:
+      - "edge-crew.service=database"
+
+  # API Gateway - Hot reload for development
+  api-gateway:
+    volumes:
+      - ./services/api-gateway:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DEBUG=${DEBUG:-edge-crew:*}
+      - HOT_RELOAD=true
+    command: ["npm", "run", "dev"]
+    # Enable debugging
+    ports:
+      - "8000:8000"
+      - "9229:9229"  # Node.js debugger
+
+  # Data Ingestion - Hot reload for development
+  data-ingestion:
+    volumes:
+      - ./services/data-ingestion:/app
+      - /app/__pycache__
+      - /app/.venv
+    environment:
+      - PYTHON_ENV=development
+      - DEBUG=true
+      - PYDEVD_DISABLE_FILE_VALIDATION=1
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    # Enable debugging
+    ports:
+      - "8081:8080"
+      - "5678:5678"  # Python debugger
+
+  # Grading Engine - Hot reload for development
+  grading-engine:
+    volumes:
+      - ./services/grading-engine:/app
+      - /app/__pycache__
+      - /app/.venv
+    environment:
+      - PYTHON_ENV=development
+      - DEBUG=true
+      - PYDEVD_DISABLE_FILE_VALIDATION=1
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    ports:
+      - "8082:8080"
+      - "5679:5678"  # Python debugger
+
+  # AI Processor - Hot reload for development
+  ai-processor:
+    volumes:
+      - ./services/ai-processor:/app
+      - /app/__pycache__
+      - /app/.venv
+    environment:
+      - PYTHON_ENV=development
+      - DEBUG=true
+      - PYDEVD_DISABLE_FILE_VALIDATION=1
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    ports:
+      - "8083:8080"
+      - "5680:5678"  # Python debugger
+
+  # Convergence - Hot reload for development
+  convergence:
+    volumes:
+      - ./services/convergence:/app
+      - /app/__pycache__
+      - /app/.venv
+    environment:
+      - PYTHON_ENV=development
+      - DEBUG=true
+      - PYDEVD_DISABLE_FILE_VALIDATION=1
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    ports:
+      - "8084:8080"
+      - "5681:5678"  # Python debugger
+
+  # Web Frontend - Hot reload for development
+  web:
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - CHOKIDAR_USEPOLLING=true  # For Windows/WSL file watching
+    command: ["npm", "run", "dev"]
+    ports:
+      - "3000:3000"
+      - "9230:9229"  # Node.js debugger
+
+  # Development tools
+  # pgAdmin - Database management UI
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: edge-crew-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@edgecrew.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - edge-crew-network
+    profiles:
+      - tools
+
+  # Redis Commander - Redis management UI
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: edge-crew-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8085:8081"
+    depends_on:
+      - redis
+    networks:
+      - edge-crew-network
+    profiles:
+      - tools
+
+  # Mailpit - Email testing (for notification service)
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: edge-crew-mailpit
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    volumes:
+      - mailpit_data:/data
+    environment:
+      - MP_DATA_FILE=/data/mailpit.db
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=true
+    networks:
+      - edge-crew-network
+    profiles:
+      - tools
+
+# Additional volumes for development tools
+volumes:
+  pgadmin_data:
+    driver: local
+  mailpit_data:
+    driver: local

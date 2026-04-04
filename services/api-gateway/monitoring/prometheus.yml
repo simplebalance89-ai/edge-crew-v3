@@ -1,0 +1,61 @@
+# Prometheus configuration for Edge Crew v3.0 API Gateway
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: edge-crew
+    replica: '{{.ExternalURL}}'
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Kong Gateway metrics
+  - job_name: 'kong-gateway'
+    static_configs:
+      - targets: ['kong:8001']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Kong Proxy metrics (via Prometheus plugin)
+  - job_name: 'kong-proxy'
+    static_configs:
+      - targets: ['kong:8000']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+
+  # Mock services for testing
+  - job_name: 'grading-engine'
+    static_configs:
+      - targets: ['grading-engine:8000']
+    scrape_interval: 30s
+
+  - job_name: 'ai-processor'
+    static_configs:
+      - targets: ['ai-processor:8000']
+    scrape_interval: 30s
+
+  - job_name: 'convergence'
+    static_configs:
+      - targets: ['convergence:8000']
+    scrape_interval: 30s
+
+  - job_name: 'data-ingestion'
+    static_configs:
+      - targets: ['data-ingestion:8000']
+    scrape_interval: 30s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

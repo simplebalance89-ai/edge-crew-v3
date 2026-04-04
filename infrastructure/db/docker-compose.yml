@@ -1,0 +1,87 @@
+﻿version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: edge-crew-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: edgecrew
+      POSTGRES_PASSWORD: edgecrew_dev
+      POSTGRES_DB: edgecrew_v3
+      TZ: America/New_York
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./migrations/001_initial.sql:/docker-entrypoint-initdb.d/02_initial.sql:ro
+      - ./migrations/002_indexes.sql:/docker-entrypoint-initdb.d/03_indexes.sql:ro
+      - ./seeds/sports.sql:/docker-entrypoint-initdb.d/04_seeds.sql:ro
+      - ./functions/aggregates.sql:/docker-entrypoint-initdb.d/05_functions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edgecrew -d edgecrew_v3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - edge-network
+    command: >
+      postgres
+      -c shared_preload_libraries=timescaledb
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=655kB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: edge-crew-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@edgecrew.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - edge-network
+
+  # Optional: Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: edge-crew-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - edge-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  timescale_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  edge-network:
+    driver: bridge

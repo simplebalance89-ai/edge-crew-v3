@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-crew-config
+  namespace: edge-crew
+data:
+  # Redis Configuration
+  redis.host: "redis.edge-crew.svc.cluster.local"
+  redis.port: "6379"
+  redis.url: "redis://redis.edge-crew.svc.cluster.local:6379"
+  redis.db: "0"
+  
+  # PostgreSQL Configuration
+  postgres.host: "postgres.edge-crew.svc.cluster.local"
+  postgres.port: "5432"
+  postgres.database: "edgecrew"
+  postgres.ssl_mode: "require"
+  
+  # API Gateway Configuration
+  api.gateway.host: "api.edgecrew.io"
+  api.gateway.port: "8000"
+  
+  # Service Endpoints
+  data.ingestion.url: "http://data-ingestion.edge-crew.svc.cluster.local:8080"
+  grading.engine.url: "http://grading-engine.edge-crew.svc.cluster.local:8080"
+  ai.processor.url: "http://ai-processor.edge-crew.svc.cluster.local:8000"
+  convergence.url: "http://convergence.edge-crew.svc.cluster.local:8080"
+  
+  # Application Settings
+  log.level: "info"
+  log.format: "json"
+  metrics.enabled: "true"
+  tracing.enabled: "true"
+  
+  # Convergence Settings
+  convergence.window.minutes: "5"
+  convergence.threshold: "0.95"
+  
+  # AI Processor Settings
+  ai.model.path: "/models"
+  ai.batch.size: "32"
+  ai.inference.threads: "4"

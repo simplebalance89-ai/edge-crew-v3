@@ -1,0 +1,568 @@
+# Kong Declarative Configuration for Edge Crew v3.0
+# This file configures all services, routes, and plugins
+
+_format_version: "3.0"
+_transform: true
+
+# ============================================================================
+# UPSTREAMS (for load balancing)
+# ============================================================================
+upstreams:
+  - name: grading-engine-upstream
+    targets:
+      - target: grading-engine:8000
+        weight: 100
+
+  - name: ai-processor-upstream
+    targets:
+      - target: ai-processor:8000
+        weight: 100
+
+  - name: convergence-upstream
+    targets:
+      - target: convergence:8000
+        weight: 100
+
+  - name: data-ingestion-upstream
+    targets:
+      - target: data-ingestion:8000
+        weight: 100
+
+# ============================================================================
+# SERVICES & ROUTES
+# ============================================================================
+services:
+  # ------------------------------------------------------------------------
+  # Grading Engine Service
+  # ------------------------------------------------------------------------
+  - name: grading-engine
+    url: http://grading-engine:8000
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 3
+    routes:
+      - name: grade-route
+        paths:
+          - /api/grade
+        strip_path: false
+        preserve_host: false
+        methods:
+          - POST
+          - GET
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 60
+              hour: 1000
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+              hide_client_headers: false
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+                - X-API-Key
+              exposed_headers:
+                - X-Request-ID
+              max_age: 3600
+              credentials: true
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:grading-engine
+                  - X-Route:grade
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - X-Edge-Crew-Version:3.0
+
+  # ------------------------------------------------------------------------
+  # AI Processor Service
+  # ------------------------------------------------------------------------
+  - name: ai-processor
+    url: http://ai-processor:8000
+    connect_timeout: 120000
+    write_timeout: 120000
+    read_timeout: 120000
+    retries: 2
+    routes:
+      - name: ai-grade-route
+        paths:
+          - /api/ai/grade
+        strip_path: false
+        preserve_host: false
+        methods:
+          - POST
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 30
+              hour: 500
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+              hide_client_headers: false
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+                - X-API-Key
+              exposed_headers:
+                - X-Request-ID
+              max_age: 3600
+              credentials: true
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:ai-processor
+                  - X-Route:ai-grade
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - X-Edge-Crew-Version:3.0
+
+  # ------------------------------------------------------------------------
+  # Convergence Service
+  # ------------------------------------------------------------------------
+  - name: convergence
+    url: http://convergence:8000
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 3
+    routes:
+      - name: convergence-route
+        paths:
+          - /api/convergence
+        strip_path: false
+        preserve_host: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 100
+              hour: 2000
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+              hide_client_headers: false
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+                - X-API-Key
+              exposed_headers:
+                - X-Request-ID
+              max_age: 3600
+              credentials: true
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:convergence
+                  - X-Route:convergence
+
+      - name: picks-route
+        paths:
+          - /api/picks
+        strip_path: false
+        preserve_host: false
+        methods:
+          - GET
+          - POST
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 100
+              hour: 2000
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:convergence
+                  - X-Route:picks
+
+      - name: stream-route
+        paths:
+          - /api/stream
+        strip_path: false
+        preserve_host: false
+        methods:
+          - GET
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 20
+              hour: 500
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+              exposed_headers:
+                - X-Request-ID
+                - Content-Type
+                - Cache-Control
+              max_age: 3600
+              credentials: true
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:convergence
+                  - X-Route:stream
+                  - Accept:text/event-stream
+
+  # ------------------------------------------------------------------------
+  # Data Ingestion Service
+  # ------------------------------------------------------------------------
+  - name: data-ingestion
+    url: http://data-ingestion:8000
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 3
+    routes:
+      - name: games-route
+        paths:
+          - /api/games
+        strip_path: false
+        preserve_host: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 120
+              hour: 3000
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_timeout: 2000
+              fault_tolerant: true
+              hide_client_headers: false
+          - name: jwt
+            config:
+              uri_param_names: []
+              cookie_names: []
+              key_claim_name: iss
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - OPTIONS
+              headers:
+                - Authorization
+                - Content-Type
+                - X-Request-ID
+                - X-API-Key
+              exposed_headers:
+                - X-Request-ID
+              max_age: 3600
+              credentials: true
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - X-Service:data-ingestion
+                  - X-Route:games
+
+  # ------------------------------------------------------------------------
+  # Health Check Routes (No Auth Required)
+  # ------------------------------------------------------------------------
+  - name: health-grading-engine
+    url: http://grading-engine:8000
+    routes:
+      - name: health-grading-route
+        paths:
+          - /health/grading-engine
+        strip_path: true
+        methods:
+          - GET
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+
+  - name: health-ai-processor
+    url: http://ai-processor:8000
+    routes:
+      - name: health-ai-route
+        paths:
+          - /health/ai-processor
+        strip_path: true
+        methods:
+          - GET
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+
+  - name: health-convergence
+    url: http://convergence:8000
+    routes:
+      - name: health-convergence-route
+        paths:
+          - /health/convergence
+        strip_path: true
+        methods:
+          - GET
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+
+  - name: health-data-ingestion
+    url: http://data-ingestion:8000
+    routes:
+      - name: health-data-route
+        paths:
+          - /health/data-ingestion
+        strip_path: true
+        methods:
+          - GET
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+
+  - name: gateway-health
+    url: http://localhost:8001
+    routes:
+      - name: health-gateway-route
+        paths:
+          - /health
+        strip_path: false
+        methods:
+          - GET
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+          - name: request-termination
+            config:
+              status_code: 200
+              content_type: application/json
+              body: '{"status":"healthy","gateway":"kong","version":"3.0"}'
+
+# ============================================================================
+# CONSUMERS (API Clients)
+# ============================================================================
+consumers:
+  - username: edge-web-client
+    custom_id: edge-web-001
+  - username: edge-mobile-client
+    custom_id: edge-mobile-001
+  - username: edge-admin-client
+    custom_id: edge-admin-001
+  - username: internal-service
+    custom_id: internal-001
+
+# ============================================================================
+# PLUGINS (Global)
+# ============================================================================
+plugins:
+  # Logging
+  - name: file-log
+    config:
+      path: /usr/local/kong/logs/access.log
+      reopen: false
+
+  # Global Rate Limiting (fallback)
+  - name: rate-limiting
+    config:
+      minute: 1000
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      fault_tolerant: true
+      hide_client_headers: false
+    consumer: internal-service
+
+  # Prometheus metrics
+  - name: prometheus
+    config:
+      per_consumer: true
+
+  # Request ID generation
+  - name: request-id
+    config:
+      header_name: X-Request-ID
+      generator: uuid4
+
+  # IP Restriction (example - allow all for dev)
+  - name: ip-restriction
+    config:
+      allow:
+        - 0.0.0.0/0
+      deny: []
+
+# ============================================================================
+# JWT CREDENTIALS (for consumers)
+# ============================================================================
+jwt_secrets:
+  - consumer: edge-web-client
+    algorithm: HS256
+    key: edge-web-key
+    secret: ${JWT_SECRET_EDGE_WEB}
+  - consumer: edge-mobile-client
+    algorithm: HS256
+    key: edge-mobile-key
+    secret: ${JWT_SECRET_EDGE_MOBILE}
+  - consumer: edge-admin-client
+    algorithm: HS256
+    key: edge-admin-key
+    secret: ${JWT_SECRET_EDGE_ADMIN}
+  - consumer: internal-service
+    algorithm: HS256
+    key: internal-key
+    secret: ${JWT_SECRET_INTERNAL}
