@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import TwoLaneCard from '@/components/TwoLaneCard'
+import { TwoLaneCard } from '@/components/TwoLaneCard'
 import { getGames, gradeGame } from '@/services/api'
-import type { Sport } from '@/types'
+import type { Sport, ConvergenceResult } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer']
@@ -44,8 +44,8 @@ export default function HomePage() {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[#d4a017] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-white/60">Loading games...</p>
+          <div className="w-12 h-12 border-4 border-[#00E5FF] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-[#6E6E80]">Loading games...</p>
         </div>
       </div>
     )
@@ -55,7 +55,7 @@ export default function HomePage() {
     return (
       <div className="text-center py-20">
         <p className="text-red-400 mb-2">Failed to load games</p>
-        <p className="text-white/40 text-sm">{(error as Error).message}</p>
+        <p className="text-[#6E6E80] text-sm">{(error as Error).message}</p>
       </div>
     )
   }
@@ -70,8 +70,8 @@ export default function HomePage() {
             onClick={() => setSelectedSport(sport)}
             className={`px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider whitespace-nowrap transition-all ${
               selectedSport === sport
-                ? 'bg-[#d4a017] text-black'
-                : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+                ? 'bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] text-black'
+                : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
             }`}
           >
             {SPORT_LABELS[sport]}
@@ -82,13 +82,13 @@ export default function HomePage() {
       {/* Analyze Button */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-black">{SPORT_LABELS[selectedSport]} Games</h1>
-          <p className="text-white/50 text-sm">{games?.length || 0} games on slate</p>
+          <h1 className="text-2xl font-black text-[#E8E8EC]">{SPORT_LABELS[selectedSport]} Games</h1>
+          <p className="text-[#6E6E80] text-sm">{games?.length || 0} games on slate</p>
         </div>
         <button
           onClick={handleAnalyzeAll}
           disabled={grading}
-          className="flex items-center gap-2 px-6 py-3 bg-[#d4a017] text-black font-bold rounded-lg hover:bg-[#e5b128] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          className="flex items-center gap-2 px-6 py-3 bg-[#00E5FF] text-black font-bold rounded-lg hover:bg-[#00E5FF]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           {grading ? (
             <>
@@ -109,31 +109,26 @@ export default function HomePage() {
         {games?.map((game) => (
           <TwoLaneCard
             key={game.id}
-            data={{
-              gameId: game.id,
-              sport: selectedSport,
-              homeTeam: game.homeTeam,
-              awayTeam: game.awayTeam,
-              ourProcess: {
-                grade: 'A-',
-                score: 7.2,
-                confidence: 82,
-                thesis: 'Strong home court advantage',
-              },
-              aiProcess: {
-                grade: 'A',
-                score: 7.8,
-                confidence: 85,
-                thesis: 'Market mispricing detected',
-                model: 'DeepSeek-V3',
-              },
-              convergence: {
-                status: 'ALIGNED',
-                consensusScore: 7.5,
-                consensusGrade: 'A-',
-                delta: 0.6,
-                variance: 0.3,
-              },
+            game={game}
+            ourGrade={{
+              grade: 'A-',
+              score: 7.2,
+              confidence: 82,
+              thesis: 'Strong home court advantage',
+            }}
+            aiGrade={{
+              grade: 'A',
+              score: 7.8,
+              confidence: 85,
+              thesis: 'Market mispricing detected',
+              model: 'DeepSeek-V3',
+            }}
+            convergence={{
+              status: 'ALIGNED',
+              consensusScore: 7.5,
+              consensusGrade: 'A-',
+              delta: 0.6,
+              variance: 0.3,
             }}
           />
         ))}

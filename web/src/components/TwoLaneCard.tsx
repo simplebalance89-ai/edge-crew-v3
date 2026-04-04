@@ -1,10 +1,10 @@
-import type { Game, OurGrade, AIGrade, Convergence } from '@/types'
+import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
   game: Game
-  ourGrade?: OurGrade
-  aiGrade?: AIGrade
-  convergence?: Convergence
+  ourGrade?: Grade
+  aiGrade?: Grade & { model?: string }
+  convergence?: ConvergenceResult['convergence']
 }
 
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
@@ -21,15 +21,17 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
   const displayStatus = convergence?.status || 'PENDING'
   const displayOur = ourGrade || { score: 0, grade: '-', confidence: 0 }
   const displayAI = aiGrade || { score: 0, grade: '-', confidence: 0, model: 'AI' }
-  const displayConvergence = convergence || { consensus_score: 0, consensus_grade: '-', delta: 0 }
+  const consensusScore = convergence?.consensusScore || 0
+  const consensusGrade = convergence?.consensusGrade || '-'
+  const delta = convergence?.delta || 0
 
   return (
     <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5 hover:border-[#1A1A28]/80 transition-all">
       {/* Header */}
       <div className="flex justify-between items-start mb-4">
         <div>
-          <h3 className="text-lg font-bold text-[#E8E8EC]">{game.matchup || `${game.home_team} vs ${game.away_team}`}</h3>
-          <p className="text-sm text-[#6E6E80]">{game.time}</p>
+          <h3 className="text-lg font-bold text-[#E8E8EC]">{game.homeTeam} vs {game.awayTeam}</h3>
+          <p className="text-sm text-[#6E6E80]">{new Date(game.scheduledAt).toLocaleTimeString()}</p>
         </div>
         <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusBadge(displayStatus)}`}>
           {displayStatus}
@@ -58,10 +60,10 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
       {/* Convergence */}
       <div className="bg-gradient-to-r from-[#00E5FF]/5 to-[#FF2D78]/5 border border-[#1A1A28] rounded-lg p-3 text-center">
         <div className="text-xs font-bold text-[#6E6E80] uppercase tracking-wider mb-1">Convergence</div>
-        <div className="text-2xl font-black text-gradient">
-          {displayConvergence.consensus_score.toFixed(1)} {displayConvergence.consensus_grade}
+        <div className="text-2xl font-black bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] bg-clip-text text-transparent">
+          {consensusScore.toFixed(1)} {consensusGrade}
         </div>
-        <div className="text-xs text-[#6E6E80]">Δ {displayConvergence.delta.toFixed(2)} variance</div>
+        <div className="text-xs text-[#6E6E80]">Δ {delta.toFixed(2)} variance</div>
       </div>
     </div>
   )
