@@ -2,12 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Cache buster
+ARG CACHE_BUST=1
+
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Force cache bust - copy main.py fresh
 COPY main.py /app/main.py
 
 ENV PORT=8000
