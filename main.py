@@ -5,14 +5,38 @@ Simplified version for Railway deployment
 
 import json
 import os
+import sys
 from datetime import datetime
 from typing import Dict
 
-import httpx
-from fastapi import FastAPI
-from pydantic import BaseModel
+print("🚀 Starting Edge Crew v3.0...", flush=True)
+
+try:
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+    print("✅ Imports successful", flush=True)
+except Exception as e:
+    print(f"❌ Import error: {e}", flush=True)
+    sys.exit(1)
 
 app = FastAPI(title="Edge Crew v3.0", version="3.0.0-railway")
+
+# CORS - Allow Vercel frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://web-7ijq5qa9a-simplebalance89-ais-projects.vercel.app",
+        "https://web-seven-taupe-43.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+print("✅ FastAPI app created", flush=True)
 
 # API Keys from environment
 AZURE_KEYS = {
