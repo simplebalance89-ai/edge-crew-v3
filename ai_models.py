@@ -360,7 +360,18 @@ async def crowdsource_grade(games: list, sport: str) -> Dict[str, list]:
 
     results: Dict[str, list] = {g.get("id", ""): [] for g in games}
 
-    for model_cfg in AI_MODELS:
+    # Build the full model list — add Gemini if key is available
+    all_models = list(AI_MODELS)
+    if GEMINI_API_KEY:
+        all_models.append({
+            "name": "gemini-2.5-flash",
+            "display": "Gemini 2.5 Flash",
+            "endpoint": "gemini",
+            "timeout": 60,
+            "personality": "probabilistic thinker, injury-aware, sharp on totals and live-line movement",
+        })
+
+    for model_cfg in all_models:
         model_name = model_cfg["name"]
         display = model_cfg["display"]
         timeout = model_cfg["timeout"]
@@ -372,7 +383,12 @@ async def crowdsource_grade(games: list, sport: str) -> Dict[str, list]:
         # Call model — route to correct endpoint
         endpoint_type = model_cfg.get("endpoint", "ai_services")
         logger.info(f"[CROWDSOURCE] Calling {display} ({model_name}) via {endpoint_type} for {len(games)} games")
-        raw = await _call_azure_model(model_name, prompt, timeout, endpoint_type=endpoint_type)
+
+        if endpoint_type == "gemini":
+            raw = await _call_gemini(prompt, timeout)
+        else:
+            raw = await _call_azure_model(model_name, prompt, timeout, endpoint_type=endpoint_type)
+
         parsed = _parse_model_response(raw, display)
 
         if isinstance(parsed, dict) and "games" in parsed:

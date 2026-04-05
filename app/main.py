@@ -1109,12 +1109,13 @@ async def analyze_games(request: AnalyzeRequest):
     Two-tier system -- this is the SLOW path triggered by 'Analyze All'."""
     sport_lower = request.sport.lower()
 
-    # Get cached games (fast path must have run first)
-    cached = _cache.get(sport_lower)
+    # Get cached games — match the same cache key format as /api/games
+    cache_key = f"{sport_lower}:games:"
+    cached = _cache.get(cache_key)
     if not cached or not cached.get("data"):
         games = await _fetch_and_grade(sport_lower)
         if games:
-            _cache[sport_lower] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
+            _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
     else:
         games = cached["data"]
 
@@ -1183,8 +1184,8 @@ async def analyze_games(request: AnalyzeRequest):
 
         enriched.append(game)
 
-    # Update cache with enriched data
-    _cache[sport_lower] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
+    # Update cache with enriched data — use same key so /api/games returns it
+    _cache[cache_key] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
 
     return enriched
 
