@@ -120,8 +120,8 @@ def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> d
     consensus = conv["consensusScore"]
     status = conv["status"]
     spread = odds.get("spread", 0)
-    home = event.get("home_team", "")
-    away = event.get("away_team", "")
+    home = event.get("homeTeam", "") or event.get("home_team", "")
+    away = event.get("awayTeam", "") or event.get("away_team", "")
 
     if spread <= 0:
         fav, dog, fav_spread = home, away, spread
