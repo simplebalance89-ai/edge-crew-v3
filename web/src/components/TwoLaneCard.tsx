@@ -1,3 +1,7 @@
+import { useState } from 'react'
+import { Lock, Check } from 'lucide-react'
+import { useAppStore } from '@/store/useAppStore'
+import { lockPick } from '@/services/api'
 import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
@@ -15,6 +19,31 @@ const gradeColor = (g: string) => {
 }
 
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
+  const { user } = useAppStore()
+  const [locking, setLocking] = useState(false)
+  const [locked, setLocked] = useState(false)
+
+  const handleLockPick = async () => {
+    if (!user?.username || !game.pick?.side) return
+    setLocking(true)
+    try {
+      await lockPick(user.username, {
+        game_id: game.id,
+        sport: game.sport?.toLowerCase() || '',
+        team: game.pick.side,
+        type: game.pick.type || 'ml',
+        line: game.pick.line || 0,
+        amount: 100,
+        odds: -110,
+      })
+      setLocked(true)
+      setTimeout(() => setLocked(false), 3000)
+    } catch (e) {
+      console.error('Lock pick failed:', e)
+    }
+    setLocking(false)
+  }
+
   const displayStatus = convergence?.status || 'PENDING'
   const displayOur = ourGrade || { score: 0, grade: '-', confidence: 0, thesis: '' }
   const displayAI = aiGrade || { score: 0, grade: '-', confidence: 0, model: 'AI' }
@@ -250,12 +279,27 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         </div>
         <div className="text-xs text-white/40">{consensusScore.toFixed(1)} | {'\u0394'} {delta.toFixed(2)}</div>
 
-        {/* Pick */}
+        {/* Pick + Lock Button */}
         {pick && pick.side && (
-          <div className="mt-3 inline-block bg-[#D4A017]/15 border border-[#D4A017]/30 text-[#D4A017] text-sm font-extrabold py-2 px-4 rounded-lg">
-            {pick.side}
-            {pick.type === 'spread' && pick.line !== 0 ? ` ${pick.line > 0 ? '+' : ''}${pick.line}` : ` ${pick.type.toUpperCase()}`}
-            {pick.sizing && pick.sizing !== 'No Play' ? ` (${pick.sizing})` : ''}
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <div className="inline-block bg-[#D4A017]/15 border border-[#D4A017]/30 text-[#D4A017] text-sm font-extrabold py-2 px-4 rounded-lg">
+              {pick.side}
+              {pick.type === 'spread' && pick.line !== 0 ? ` ${pick.line > 0 ? '+' : ''}${pick.line}` : ` ${pick.type.toUpperCase()}`}
+              {pick.sizing && pick.sizing !== 'No Play' ? ` (${pick.sizing})` : ''}
+            </div>
+            {user && (
+              <button
+                onClick={handleLockPick}
+                disabled={locking || locked}
+                className={`flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-bold transition-all ${
+                  locked
+                    ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
+                    : 'bg-white/5 border border-white/15 text-white/70 hover:bg-[#D4A017]/20 hover:text-[#D4A017] hover:border-[#D4A017]/40'
+                }`}
+              >
+                {locked ? <><Check size={12} /> Locked!</> : locking ? <><div className="w-3 h-3 border border-white/40 border-t-transparent rounded-full animate-spin" /> ...</> : <><Lock size={12} /> Lock</>}
+              </button>
+            )}
           </div>
         )}
 

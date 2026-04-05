@@ -1,19 +1,48 @@
 import { useState } from 'react'
 import { Trophy, Receipt, X, Copy, Check } from 'lucide-react'
-import { generateBetSlip } from '@/services/api'
-import type { BetSlip } from '@/types'
+import { useQuery } from '@tanstack/react-query'
+import { generateBetSlip, getUserPicks, getBankroll } from '@/services/api'
+import { useAppStore } from '@/store/useAppStore'
+import type { BetSlip, LockedPick, Bankroll } from '@/types'
 
 export default function PicksPage() {
+  const { user } = useAppStore()
   const [betSlip, setBetSlip] = useState<BetSlip | null>(null)
   const [slipLoading, setSlipLoading] = useState(false)
   const [slipError, setSlipError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
+  const username = user?.username || ''
+
+  const { data: picks = [] } = useQuery<LockedPick[]>({
+    queryKey: ['userPicks', username],
+    queryFn: () => getUserPicks(username),
+    enabled: !!username,
+    refetchInterval: 10000,
+  })
+
+  const { data: bankroll } = useQuery<Bankroll>({
+    queryKey: ['bankroll', username],
+    queryFn: () => getBankroll(username),
+    enabled: !!username,
+    refetchInterval: 10000,
+  })
+
+  const wins = bankroll?.wins ?? 0
+  const losses = bankroll?.losses ?? 0
+  const pushes = bankroll?.pushes ?? 0
+  const roi = bankroll && bankroll.wagered > 0
+    ? ((bankroll.profit / bankroll.wagered) * 100).toFixed(1)
+    : '0.0'
+
+  const pendingPicks = picks.filter(p => p.result === 'pending')
+  const settledPicks = picks.filter(p => p.result !== 'pending')
+
   const handleGenerateSlip = async () => {
     setSlipLoading(true)
     setSlipError(null)
     try {
-      const slip = await generateBetSlip('Peter')
+      const slip = await generateBetSlip(username || 'Peter')
       if (slip.error) {
         setSlipError(slip.error)
       } else {
@@ -47,6 +76,16 @@ export default function PicksPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  if (!user) {
+    return (
+      <div className="text-center py-20">
+        <Trophy size={48} className="mx-auto mb-4 text-[#d4a017]" />
+        <h2 className="text-xl font-bold mb-2">Log in to view picks</h2>
+        <p className="text-white/60">Go to Profile to log in and start tracking.</p>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -76,34 +115,96 @@ export default function PicksPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      {/* Stats Row */}
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 text-center">
-          <div className="text-3xl font-black text-green-400">24</div>
+          <div className="text-3xl font-black text-green-400">{wins}</div>
           <div className="text-xs text-white/50 uppercase tracking-wider">Wins</div>
         </div>
         <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 text-center">
-          <div className="text-3xl font-black text-red-400">12</div>
+          <div className="text-3xl font-black text-red-400">{losses}</div>
           <div className="text-xs text-white/50 uppercase tracking-wider">Losses</div>
         </div>
         <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 text-center">
-          <div className="text-3xl font-black text-[#d4a017]">+18%</div>
+          <div className="text-3xl font-black text-white/60">{pushes}</div>
+          <div className="text-xs text-white/50 uppercase tracking-wider">Pushes</div>
+        </div>
+        <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 text-center">
+          <div className={`text-3xl font-black ${Number(roi) >= 0 ? 'text-[#d4a017]' : 'text-red-400'}`}>
+            {Number(roi) > 0 ? '+' : ''}{roi}%
+          </div>
           <div className="text-xs text-white/50 uppercase tracking-wider">ROI</div>
         </div>
       </div>
 
-      <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-8 text-center">
-        <Trophy size={48} className="mx-auto mb-4 text-[#d4a017]" />
-        <h2 className="text-xl font-bold mb-2">No picks yet</h2>
-        <p className="text-white/60">
-          Grade some games and lock in your picks to track performance.
-        </p>
-      </div>
+      {/* Pending Picks */}
+      {pendingPicks.length > 0 ? (
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-3 text-[#d4a017]">Active Picks ({pendingPicks.length})</h2>
+          <div className="space-y-2">
+            {pendingPicks.map(p => (
+              <div key={p.id} className="bg-[#1a1a1a] border border-[#D4A017]/30 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-white">{p.team}</div>
+                  <div className="text-xs text-white/50">
+                    {p.sport.toUpperCase()} | {p.type}{p.line ? ` ${p.line > 0 ? '+' : ''}${p.line}` : ''} | ${p.amount}
+                  </div>
+                </div>
+                <span className="px-3 py-1 rounded-full text-[10px] font-black tracking-wider bg-[#D4A017]/15 text-[#D4A017] border border-[#D4A017]/30">
+                  PENDING
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
-      {/* ─── Bet Slip Modal ─── */}
+      {/* Settled Picks */}
+      {settledPicks.length > 0 ? (
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-3 text-white/70">Settled ({settledPicks.length})</h2>
+          <div className="space-y-2">
+            {settledPicks.map(p => (
+              <div key={p.id} className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-white">{p.team}</div>
+                  <div className="text-xs text-white/50">
+                    {p.sport.toUpperCase()} | {p.type}{p.line ? ` ${p.line > 0 ? '+' : ''}${p.line}` : ''} | ${p.amount}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-black tracking-wider border ${
+                    p.result === 'W' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40' :
+                    p.result === 'L' ? 'bg-rose-500/15 text-rose-400 border-rose-500/40' :
+                    'bg-white/10 text-white/50 border-white/20'
+                  }`}>
+                    {p.result}
+                  </span>
+                  <div className={`text-xs mt-1 font-bold ${p.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {p.profit >= 0 ? '+' : ''}{p.profit.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Empty state */}
+      {picks.length === 0 && (
+        <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-8 text-center">
+          <Trophy size={48} className="mx-auto mb-4 text-[#d4a017]" />
+          <h2 className="text-xl font-bold mb-2">No picks yet</h2>
+          <p className="text-white/60">
+            Grade some games and lock in your picks to track performance.
+          </p>
+        </div>
+      )}
+
+      {/* Bet Slip Modal */}
       {betSlip && betSlip.picks && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setBetSlip(null)}>
           <div className="bg-[#0E0E14] border border-[#D4A017]/40 rounded-2xl w-full max-w-lg mx-4 overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-            {/* Header */}
             <div className="bg-gradient-to-r from-[#D4A017] to-[#F5C842] px-6 py-4 flex items-center justify-between">
               <div>
                 <div className="text-black font-black text-lg tracking-wide">HARD ROCK SPORTSBOOK</div>
@@ -114,13 +215,11 @@ export default function PicksPage() {
               </button>
             </div>
 
-            {/* Meta */}
             <div className="px-6 py-3 border-b border-white/10 flex justify-between text-xs text-white/50">
               <span>ID: {betSlip.slip_id}</span>
               <span>{betSlip.generated}</span>
             </div>
 
-            {/* Picks */}
             <div className="px-6 py-4 space-y-3 max-h-80 overflow-y-auto">
               {betSlip.picks.map((p, i) => (
                 <div key={i} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
@@ -139,7 +238,6 @@ export default function PicksPage() {
               ))}
             </div>
 
-            {/* Footer */}
             <div className="px-6 py-4 border-t border-white/10 bg-white/[0.02]">
               <div className="flex justify-between mb-2">
                 <span className="text-white/50 text-sm">Total Risk</span>
