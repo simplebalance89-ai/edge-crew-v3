@@ -1456,6 +1456,96 @@ async def grade_pick(username: str, pick_id: str, req: GradePickRequest):
     return {"pick": pick, "bankroll": bankroll}
 
 
+# ─── Auto Parlay ─────────────────────────────────────────────────────────────
+
+
+def _american_odds_str(decimal_odds: float) -> str:
+    """Convert decimal parlay odds to American odds string."""
+    if decimal_odds >= 2.0:
+        return f"+{round((decimal_odds - 1) * 100)}"
+    elif decimal_odds > 1.0:
+        return f"-{round(100 / (decimal_odds - 1))}"
+    return "+100"
+
+
+@app.get("/api/parlay")
+async def get_parlay():
+    """Tonight's Best 3 LOCKs — auto-parlay across all sports."""
+    candidates = []
+
+    for cache_key, cached in _cache.items():
+        if not cached or not cached.get("data"):
+            continue
+        games = cached["data"]
+        for game in games:
+            conv = game.get("convergence", {})
+            status = conv.get("status", "")
+            consensus = conv.get("consensusScore", 0)
+            pick = game.get("pick", {})
+
+            if status in ("LOCK", "ALIGNED") and consensus >= 7.0 and pick and pick.get("side"):
+                # Determine American odds for the pick
+                odds_val = game.get("odds", {})
+                ml_home = odds_val.get("mlHome", -110)
+                ml_away = odds_val.get("mlAway", -110)
+                spread = odds_val.get("spread", 0)
+                # Use favorite's ML as default pick odds
+                pick_odds = ml_home if spread <= 0 else ml_away
+                if pick_odds == 0:
+                    pick_odds = -110
+
+                candidates.append({
+                    "game": f"{game.get('awayTeam', '?')} vs {game.get('homeTeam', '?')}",
+                    "pick": f"{pick['side']}" + (
+                        f" {pick['line']:+g}" if pick.get("type") == "spread" and pick.get("line", 0) != 0
+                        else f" {pick.get('type', 'ML').upper()}"
+                    ),
+                    "odds": int(pick_odds),
+                    "sport": (game.get("sport", "")).upper(),
+                    "consensus": consensus,
+                    "decimal_odds": _ml_to_decimal(pick_odds),
+                })
+
+    # Sort by consensus descending, take top 3
+    candidates.sort(key=lambda c: c["consensus"], reverse=True)
+    top3 = candidates[:3]
+
+    if not top3:
+        return {
+            "picks": [],
+            "parlay_odds": "+0",
+            "risk": 50,
+            "potential_payout": 0,
+            "confidence": 0,
+        }
+
+    # Calculate parlay odds (multiply decimal odds)
+    parlay_decimal = 1.0
+    total_confidence = 0
+    for c in top3:
+        parlay_decimal *= c["decimal_odds"]
+        total_confidence += c["consensus"]
+
+    parlay_american = _american_odds_str(parlay_decimal)
+    risk = 50
+    potential_payout = round(risk * parlay_decimal, 2)
+    avg_confidence = round(total_confidence / len(top3) * 10)  # scale consensus to %
+    avg_confidence = min(95, max(40, avg_confidence))
+
+    picks_out = [
+        {"game": c["game"], "pick": c["pick"], "odds": c["odds"], "sport": c["sport"]}
+        for c in top3
+    ]
+
+    return {
+        "picks": picks_out,
+        "parlay_odds": parlay_american,
+        "risk": risk,
+        "potential_payout": potential_payout,
+        "confidence": avg_confidence,
+    }
+
+
 # ─── Static File Serving ──────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)

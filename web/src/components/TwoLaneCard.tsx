@@ -23,7 +23,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
   const [locking, setLocking] = useState(false)
   const [locked, setLocked] = useState(false)
 
-  const handleLockPick = async () => {
+  const handleLockPick = async (amount: number) => {
     if (!user?.username || !game.pick?.side) return
     setLocking(true)
     try {
@@ -33,7 +33,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         team: game.pick.side,
         type: game.pick.type || 'ml',
         line: game.pick.line || 0,
-        amount: 100,
+        amount,
         odds: -110,
       })
       setLocked(true)
@@ -288,17 +288,30 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               {pick.sizing && pick.sizing !== 'No Play' ? ` (${pick.sizing})` : ''}
             </div>
             {user && (
-              <button
-                onClick={handleLockPick}
-                disabled={locking || locked}
-                className={`flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-bold transition-all ${
-                  locked
-                    ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
-                    : 'bg-white/5 border border-white/15 text-white/70 hover:bg-[#D4A017]/20 hover:text-[#D4A017] hover:border-[#D4A017]/40'
-                }`}
-              >
-                {locked ? <><Check size={12} /> Locked!</> : locking ? <><div className="w-3 h-3 border border-white/40 border-t-transparent rounded-full animate-spin" /> ...</> : <><Lock size={12} /> Lock</>}
-              </button>
+              locked ? (
+                <span className="flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">
+                  <Check size={12} /> Locked!
+                </span>
+              ) : locking ? (
+                <span className="flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-bold bg-white/5 border border-white/15 text-white/40">
+                  <div className="w-3 h-3 border border-white/40 border-t-transparent rounded-full animate-spin" /> ...
+                </span>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => { e.preventDefault(); handleLockPick(50) }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all bg-white/5 border border-white/15 text-white/60 hover:bg-[#D4A017]/15 hover:text-[#D4A017] hover:border-[#D4A017]/30"
+                  >
+                    <Lock size={10} /> $50
+                  </button>
+                  <button
+                    onClick={(e) => { e.preventDefault(); handleLockPick(100) }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black transition-all bg-[#D4A017]/15 border border-[#D4A017]/40 text-[#D4A017] hover:bg-[#D4A017]/25 hover:border-[#D4A017]/60"
+                  >
+                    <Lock size={10} /> $100
+                  </button>
+                </div>
+              )
             )}
           </div>
         )}

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
-import { getGames, analyzeGames } from '@/services/api'
+import { getGames, analyzeGames, getParlay, lockPick } from '@/services/api'
+import { useAppStore } from '@/store/useAppStore'
+import { Lock, Check } from 'lucide-react'
 import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
@@ -31,7 +33,40 @@ export default function HomePage() {
   const [soccerLeague, setSoccerLeague] = useState<SoccerLeague>('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+  const [parlayLocking, setParlayLocking] = useState(false)
+  const [parlayLocked, setParlayLocked] = useState(false)
   const queryClient = useQueryClient()
+  const { user } = useAppStore()
+
+  // Fetch parlay
+  const { data: parlay } = useQuery({
+    queryKey: ['parlay'],
+    queryFn: getParlay,
+    refetchInterval: 60000,
+  })
+
+  const handleLockParlay = async () => {
+    if (!user?.username || !parlay?.picks?.length) return
+    setParlayLocking(true)
+    try {
+      for (const p of parlay.picks) {
+        await lockPick(user.username, {
+          game_id: `parlay-${p.sport}-${Date.now()}`,
+          sport: p.sport.toLowerCase(),
+          team: p.pick.split(' ')[0],
+          type: 'ml',
+          line: 0,
+          amount: Math.round(parlay.risk / parlay.picks.length),
+          odds: p.odds,
+        })
+      }
+      setParlayLocked(true)
+      setTimeout(() => setParlayLocked(false), 4000)
+    } catch (e) {
+      console.error('Parlay lock failed:', e)
+    }
+    setParlayLocking(false)
+  }
 
   const apiMode = selectedSport === 'mlb' ? mlbMode : undefined
   const apiLeague = selectedSport === 'soccer' ? soccerLeague || undefined : undefined
@@ -84,6 +119,64 @@ export default function HomePage() {
 
   return (
     <div>
+      {/* TONIGHT'S PARLAY */}
+      <div className="mb-6 bg-[#0E0E14] border-2 border-[#D4A017]/50 rounded-xl p-4">
+        <div className="text-[11px] font-black tracking-[2px] text-[#D4A017] mb-3 text-center">TONIGHT&apos;S PARLAY</div>
+        {parlay && parlay.picks.length > 0 ? (
+          <>
+            <div className="space-y-2 mb-3">
+              {parlay.picks.map((p, i) => (
+                <div key={i} className="flex items-center justify-between bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-black tracking-wider text-white/40 bg-white/5 px-1.5 py-0.5 rounded">{p.sport}</span>
+                    <span className="text-[12px] text-[#E8E8EC] font-medium">{p.game}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[12px] font-bold text-[#D4A017]">{p.pick}</span>
+                    <span className="text-[11px] text-white/50">({p.odds > 0 ? '+' : ''}{p.odds})</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="text-center">
+                  <div className="text-[9px] text-white/35 font-bold tracking-wide">PARLAY ODDS</div>
+                  <div className="text-lg font-black text-[#D4A017]">{parlay.parlay_odds}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] text-white/35 font-bold tracking-wide">$50 PAYS</div>
+                  <div className="text-lg font-black text-emerald-400">${parlay.potential_payout}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] text-white/35 font-bold tracking-wide">CONFIDENCE</div>
+                  <div className="text-lg font-black text-[#38BDF8]">{parlay.confidence}%</div>
+                </div>
+              </div>
+              {user && (
+                <button
+                  onClick={handleLockParlay}
+                  disabled={parlayLocking || parlayLocked}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-black transition-all ${
+                    parlayLocked
+                      ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
+                      : parlayLocking
+                      ? 'bg-white/5 border border-white/15 text-white/40'
+                      : 'bg-[#D4A017]/20 border border-[#D4A017]/50 text-[#D4A017] hover:bg-[#D4A017]/30'
+                  }`}
+                >
+                  {parlayLocked ? <><Check size={14} /> Parlay Locked!</> : parlayLocking ? <><div className="w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin" /> Locking...</> : <><Lock size={14} /> Lock Parlay</>}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="text-center text-sm text-white/30 py-4">
+            No parlay tonight — waiting for LOCKs
+          </div>
+        )}
+      </div>
+
       {/* Sport Selector */}
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {SPORTS.map((sport) => (

@@ -66,6 +66,25 @@ export const gradePick = (username: string, pickId: string, result: string) =>
 export const generateBetSlip = (username: string) =>
   api.post<BetSlip>('/api/betslip', { username }).then(r => r.data);
 
+// Parlay
+export interface ParlayPick {
+  game: string;
+  pick: string;
+  odds: number;
+  sport: string;
+}
+
+export interface ParlayResponse {
+  picks: ParlayPick[];
+  parlay_odds: string;
+  risk: number;
+  potential_payout: number;
+  confidence: number;
+}
+
+export const getParlay = () =>
+  api.get<ParlayResponse>('/api/parlay').then(r => r.data);
+
 // Legacy
 export const getUser = () =>
   api.get<User>('/api/user').then(r => r.data);
