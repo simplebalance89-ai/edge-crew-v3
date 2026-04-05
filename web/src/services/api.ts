@@ -29,8 +29,12 @@ export interface GradeRequest {
   context?: Record<string, unknown>;
 }
 
-export const gradeGame = (data: GradeRequest) => 
+export const gradeGame = (data: GradeRequest) =>
   api.post<ConvergenceResult>('/api/grade', data).then(r => r.data);
+
+// Deep AI analysis (crowdsource + gatekeeper)
+export const analyzeGames = (sport: string) =>
+  api.post<Game[]>('/api/analyze', { sport }).then(r => r.data);
 
 // Picks
 export const getPicks = () => 

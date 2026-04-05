@@ -1,15 +1,17 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
-import { getGames, gradeGame } from '@/services/api'
-import type { Sport } from '@/types'
+import { getGames, analyzeGames } from '@/services/api'
+import type { Game, Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer']
 
 export default function HomePage() {
   const [selectedSport, setSelectedSport] = useState<Sport>('nba')
-  const [grading, setGrading] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
   // Fetch games
   const { data: games, isLoading, error } = useQuery({
@@ -17,27 +19,24 @@ export default function HomePage() {
     queryFn: () => getGames(selectedSport),
   })
 
-  // Grade all games
+  // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
   const handleAnalyzeAll = async () => {
-    if (!games || grading) return
-    setGrading(true)
-    
-    // Grade each game
-    for (const game of games) {
-      try {
-        await gradeGame({
-          game_id: game.id,
-          sport: selectedSport,
-          home_team: game.homeTeam,
-          away_team: game.awayTeam,
-          context: {},
-        })
-      } catch (e) {
-        console.error('Grading failed:', e)
+    if (analyzing) return
+    setAnalyzing(true)
+    setAnalyzeError(null)
+
+    try {
+      const enriched = await analyzeGames(selectedSport)
+      // Update the query cache with enriched games so cards re-render
+      if (Array.isArray(enriched)) {
+        queryClient.setQueryData(['games', selectedSport], enriched)
       }
+    } catch (e) {
+      console.error('Analysis failed:', e)
+      setAnalyzeError((e as Error).message || 'Analysis failed')
     }
-    
-    setGrading(false)
+
+    setAnalyzing(false)
   }
 
   if (isLoading) {
@@ -87,13 +86,13 @@ export default function HomePage() {
         </div>
         <button
           onClick={handleAnalyzeAll}
-          disabled={grading}
+          disabled={analyzing}
           className="flex items-center gap-2 px-6 py-3 bg-[#00E5FF] text-black font-bold rounded-lg hover:bg-[#00E5FF]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
-          {grading ? (
+          {analyzing ? (
             <>
               <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-              Analyzing...
+              AI Models Running...
             </>
           ) : (
             <>
@@ -103,6 +102,18 @@ export default function HomePage() {
           )}
         </button>
       </div>
+
+      {/* Analysis status */}
+      {analyzing && (
+        <div className="mb-4 p-3 bg-[#00E5FF]/5 border border-[#00E5FF]/20 rounded-lg text-sm text-[#00E5FF]">
+          Running DeepSeek R1, Grok 4.1, and Kimi K2.5 on {games?.length || 0} games... This may take 15-30 seconds.
+        </div>
+      )}
+      {analyzeError && (
+        <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-sm text-rose-400">
+          Analysis error: {analyzeError}
+        </div>
+      )}
 
       {/* Games List with Two-Lane Cards */}
       <div className="space-y-4">
