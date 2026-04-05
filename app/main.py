@@ -1058,6 +1058,16 @@ class AnalyzeRequest(BaseModel):
 # ─── Odds Snapshot / Line Movement Sync ────────────────────────────────────────
 
 _ODDS_HISTORY_FILE = "odds_history.json"
+_SYNC_LOG_FILE = "sync_log.json"
+
+
+def _load_sync_log() -> list:
+    return _load_json(_SYNC_LOG_FILE, [])
+
+
+def _save_sync_log(log: list):
+    # Keep last 50 entries
+    _save_json(_SYNC_LOG_FILE, log[-50:])
 
 
 def _load_odds_history() -> dict:
@@ -1184,12 +1194,40 @@ async def sync_odds():
         except Exception as e:
             logger.warning(f"[SYNC] AI analysis failed for {sport}: {e}")
 
+    # Log this sync
+    sync_log = _load_sync_log()
+    sync_log.append({
+        "ts": now_ts,
+        "games": total_snapped,
+        "sports": sports_synced,
+        "status": "ok",
+    })
+    _save_sync_log(sync_log)
+
     return {
         "status": "synced",
         "timestamp": now_ts,
         "games_snapped": total_snapped,
         "sports": sports_synced,
         "history_size": len(history),
+    }
+
+
+@app.get("/api/sync/status")
+async def sync_status():
+    """Dashboard: show which cron syncs have run."""
+    log = _load_sync_log()
+    # Expected schedule (PST labels)
+    schedule = ["1:00 AM", "9:00 AM", "11:00 AM", "3:30 PM", "6:30 PM"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_syncs = [e for e in log if e.get("ts", "").startswith(today)]
+    return {
+        "schedule": schedule,
+        "today_syncs": len(today_syncs),
+        "today_log": today_syncs,
+        "total_syncs": len(log),
+        "last_sync": log[-1] if log else None,
+        "all_log": log[-10:],
     }
 
 
