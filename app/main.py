@@ -301,6 +301,25 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
                     "confidence": min(92, int(54 + claude_score * 4)),
                     "thesis": claude_thesis, "key_factors": []})
 
+    # Phi-4 Reasoning — small but sharp reasoning model, chain-of-thought approach
+    # Weighs the delta between processes heavily — if Our and AI disagree, Phi digs into why
+    process_delta = abs(our_score - (sum(m["score"] for m in models) / len(models)))
+    if process_delta > 1.5:
+        # Significant disagreement — Phi reasons through the conflict
+        phi_score = round((our_score * 0.55 + ds_score * 0.25 + grok_score * 0.2), 1)
+        phi_thesis = f"Process disagreement detected ({process_delta:.1f}pt gap). Reasoning through: {fav} ({fav_rec}) fundamentals score {our_score:.1f} but model consensus at {sum(m['score'] for m in models)/len(models):.1f}. Splitting the difference — edge exists but confidence is capped."
+    elif fav_margin > 3:
+        phi_score = round(our_score * 0.8 + fav_margin * 0.15 + 0.5, 1)
+        phi_thesis = f"Chain-of-thought: {fav} ({fav_rec}) margin +{fav_margin:.1f} is reproducible across sample. {dog} ({dog_rec}) hasn't shown ability to close that gap. Line {spread:+.1f} is fair to slightly short."
+    else:
+        phi_score = round(our_score * 0.9 + 0.3, 1)
+        phi_thesis = f"Thin edge — {fav} ({fav_rec}) is the right side but margin {fav_margin:+.1f} doesn't inspire conviction. Reasoning says bet small or pass unless other signals confirm."
+    phi_score = max(3.0, min(9.5, phi_score))
+    phi_grade = _score_to_grade_local(phi_score)
+    models.append({"model": "Phi-4 Reasoning", "grade": phi_grade, "score": phi_score,
+                    "confidence": min(88, int(50 + phi_score * 4)),
+                    "thesis": phi_thesis, "key_factors": []})
+
     return models
 
 

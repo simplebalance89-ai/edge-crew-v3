@@ -134,9 +134,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           {game.aiModels && game.aiModels.length > 0 ? (
             <>
               <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MODEL GRADES</div>
-              <div className="grid grid-cols-5 gap-1.5 mb-2">
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
                 {game.aiModels.map((m, i) => (
-                  <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-2 text-center">
+                  <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-1.5 text-center">
                     <div className="text-[7px] font-black text-[#00D4AA] uppercase truncate">{m.model}</div>
                     <div className="text-[18px] font-black leading-tight" style={{ color: gradeColor(m.grade) }}>
                       {m.grade}
