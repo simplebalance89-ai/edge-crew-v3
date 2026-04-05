@@ -477,31 +477,69 @@ def grade_game(game: dict, pick_side: str) -> dict:
     var_weights = SPORT_VARIABLES.get(sport, SPORT_VARIABLES["NBA"])
     variables = {}
 
+    # Data availability checks — skip variables we have NO data for
+    has_injuries = bool(game.get("injuries", {}).get("home") or game.get("injuries", {}).get("away"))
+    has_rest = profile.get("rest_days") is not None
+    has_form = bool(profile.get("L5"))
+    has_h2h = profile.get("h2h_season", "0-0") != "0-0"
+    has_shifts = bool(game.get("shifts", {}).get("spread_delta"))
+    has_pace = bool(profile.get("pace_L5"))
+
     for var_name, weight in var_weights.items():
+        available = True  # default: include in composite
+
         if var_name == "star_player":
-            score, note = score_star_player(game, pick_side)
+            if has_injuries:
+                score, note = score_star_player(game, pick_side)
+            else:
+                score, note = 5, "No injury data"
+                available = False
         elif var_name == "rest":
-            score, note = score_rest_advantage(profile, opp)
+            if has_rest:
+                score, note = score_rest_advantage(profile, opp)
+            else:
+                score, note = 5, "No rest data"
+                available = False
         elif var_name == "off_ranking":
             score, note = score_off_ranking(profile, opp, sport)
         elif var_name == "def_ranking":
             score, note = score_def_ranking(profile, opp, sport)
         elif var_name == "form":
-            score, note = score_recent_form(profile, opp)
+            if has_form:
+                score, note = score_recent_form(profile, opp)
+            else:
+                score, note = 5, "No L5 data"
+                available = False
         elif var_name == "home_away":
             score, note = score_home_away(game, pick_side)
         elif var_name == "h2h":
-            score, note = score_h2h(profile)
+            if has_h2h:
+                score, note = score_h2h(profile)
+            else:
+                score, note = 5, "No H2H data"
+                available = False
         elif var_name == "ats":
             score, note = score_ats_trend(profile)
         elif var_name == "line_movement":
-            score, note = score_line_movement(game)
+            if has_shifts:
+                score, note = score_line_movement(game)
+            else:
+                score, note = 5, "No line movement data"
+                available = False
         elif var_name == "road_trip":
             score, note = score_road_trip(profile)
         elif var_name == "depth":
-            score, note = score_depth_injuries(game, pick_side)
+            if has_injuries:
+                score, note = score_depth_injuries(game, pick_side)
+            else:
+                score, note = 5, "No injury data"
+                available = False
         elif var_name == "pace":
-            score, note = score_pace_matchup(profile, opp, sport)
+            if has_pace:
+                score, note = score_pace_matchup(profile, opp, sport)
+            else:
+                score, note = 5, "No pace data"
+                available = False
         elif var_name == "motivation":
             score, note = score_motivation(game, pick_side)
         elif var_name == "starting_pitcher":
@@ -510,17 +548,20 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_fixture_congestion(game, pick_side)
         else:
             score, note = 5, f"{var_name}: no data"
+            available = False
 
         variables[var_name] = {
             "score": _clamp(score),
             "weight": weight,
             "weighted": round(_clamp(score) * weight, 1),
             "note": note,
+            "available": available,
         }
 
-    # Composite
-    total_weighted = sum(v["weighted"] for v in variables.values())
-    max_possible = sum(v["weight"] * 10 for v in variables.values())
+    # Composite — only from AVAILABLE variables (skip those with no data)
+    active = {k: v for k, v in variables.items() if v.get("available", True)}
+    total_weighted = sum(v["weighted"] for v in active.values())
+    max_possible = sum(v["weight"] * 10 for v in active.values())
     composite = round(total_weighted / max_possible * 10, 2) if max_possible > 0 else 5.0
     composite = _apply_spread_amplifier(composite, variables)
 
