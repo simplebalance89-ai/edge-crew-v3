@@ -26,12 +26,7 @@ app = FastAPI(title="Edge Crew v3.0 - 20260404140021", version="3.0.0-railway")
 # CORS - Allow Vercel frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://web-7ikw69pm3-simplebalance89-ais-projects.vercel.app",
-        "https://web-seven-taupe-43.vercel.app",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
