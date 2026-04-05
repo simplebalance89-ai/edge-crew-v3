@@ -16,6 +16,13 @@ export interface Game {
     variance: number;
   };
   bookmaker?: string;
+  pick?: {
+    side: string;
+    type: string;
+    line: number;
+    confidence: number;
+    sizing: string;
+  };
 }
 
 export interface Odds {
