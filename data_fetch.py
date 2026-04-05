@@ -254,6 +254,10 @@ def _extract_team_detail(team: dict) -> dict:
                     except (ValueError, TypeError):
                         pass
                 elif sname in ("pointsagainst", "pointsAgainst"):
+                    try:
+                        profile["_pointsAgainst"] = float(sval)
+                    except (ValueError, TypeError):
+                        pass
         elif rtype == "home":
             profile["home_record"] = summary
         elif rtype in ("road", "away"):
