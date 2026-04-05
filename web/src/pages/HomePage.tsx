@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
 import { getGames, analyzeGames } from '@/services/api'
 import type { Sport } from '@/types'
@@ -178,13 +179,14 @@ export default function HomePage() {
       {/* Games List with Two-Lane Cards */}
       <div className="space-y-4">
         {games?.map((game) => (
-          <TwoLaneCard
-            key={game.id}
-            game={game}
-            ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
-            aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
-            convergence={game.convergence || {status: 'ALIGNED', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
-          />
+          <Link key={game.id} to={`/game/${game.id}`} className="block">
+            <TwoLaneCard
+              game={game}
+              ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
+              aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
+              convergence={game.convergence || {status: 'ALIGNED', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
+            />
+          </Link>
         ))}
       </div>
     </div>
