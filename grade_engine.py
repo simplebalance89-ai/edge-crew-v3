@@ -685,6 +685,32 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
             "composite": composite,
             "sizing": score_to_sizing(final),
             "chains_fired": base.get("chains_fired", []),
+            "pick_side": pick_side,
         }
+
+    # Also grade the OTHER side so each profile can show who they pick
+    other_side = "away" if pick_side == "home" else "home"
+    other_base = grade_game(game, other_side)
+    other_vars = other_base.get("variables", {})
+
+    for profile_name, multipliers in PROFILE_WEIGHTS.items():
+        total_w = 0
+        total_s = 0
+        for var_name, var_data in other_vars.items():
+            if not var_data.get("available", True):
+                continue
+            mult = multipliers.get(var_name, 1.0)
+            adjusted_weight = var_data["weight"] * mult
+            total_w += adjusted_weight * 10
+            total_s += var_data["score"] * adjusted_weight
+        other_composite = round(total_s / total_w * 10, 2) if total_w > 0 else 5.0
+        other_final = round(max(1.0, min(10.0, other_composite + other_base.get("chain_bonus", 0) * (0.5 if profile_name == "renzo" else 1.2 if profile_name == "edge" else 1.0))), 2)
+
+        # Each profile picks the side with the higher score
+        if profiles[profile_name]["final"] >= other_final:
+            profiles[profile_name]["picks"] = pick_side
+        else:
+            profiles[profile_name]["picks"] = other_side
+        profiles[profile_name]["margin"] = round(profiles[profile_name]["final"] - other_final, 2)
 
     return profiles
