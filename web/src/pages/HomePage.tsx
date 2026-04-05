@@ -5,18 +5,34 @@ import { getGames, analyzeGames } from '@/services/api'
 import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
-const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer']
+const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing']
+
+type MlbMode = 'games' | 'nrfi'
+type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls'
+
+const SOCCER_LEAGUES: { value: SoccerLeague; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'epl', label: 'EPL' },
+  { value: 'la_liga', label: 'La Liga' },
+  { value: 'serie_a', label: 'Serie A' },
+  { value: 'mls', label: 'MLS' },
+]
 
 export default function HomePage() {
   const [selectedSport, setSelectedSport] = useState<Sport>('nba')
+  const [mlbMode, setMlbMode] = useState<MlbMode>('games')
+  const [soccerLeague, setSoccerLeague] = useState<SoccerLeague>('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
+  const apiMode = selectedSport === 'mlb' ? mlbMode : undefined
+  const apiLeague = selectedSport === 'soccer' ? soccerLeague || undefined : undefined
+
   // Fetch games
   const { data: games, isLoading, error } = useQuery({
-    queryKey: ['games', selectedSport],
-    queryFn: () => getGames(selectedSport),
+    queryKey: ['games', selectedSport, apiMode, apiLeague],
+    queryFn: () => getGames(selectedSport, apiMode, apiLeague),
   })
 
   // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
@@ -29,7 +45,7 @@ export default function HomePage() {
       const enriched = await analyzeGames(selectedSport)
       // Update the query cache with enriched games so cards re-render
       if (Array.isArray(enriched)) {
-        queryClient.setQueryData(['games', selectedSport], enriched)
+        queryClient.setQueryData(['games', selectedSport, apiMode, apiLeague], enriched)
       }
     } catch (e) {
       console.error('Analysis failed:', e)
@@ -77,6 +93,44 @@ export default function HomePage() {
           </button>
         ))}
       </div>
+
+      {/* MLB Mode Toggle */}
+      {selectedSport === 'mlb' && (
+        <div className="flex gap-2 mb-4">
+          {(['games', 'nrfi'] as MlbMode[]).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setMlbMode(mode)}
+              className={`px-4 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all ${
+                mlbMode === mode
+                  ? 'bg-[#00E5FF] text-black'
+                  : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
+              }`}
+            >
+              {mode === 'games' ? 'Games' : 'NRFI'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Soccer League Filter */}
+      {selectedSport === 'soccer' && (
+        <div className="flex gap-2 mb-4">
+          {SOCCER_LEAGUES.map((lg) => (
+            <button
+              key={lg.value}
+              onClick={() => setSoccerLeague(lg.value)}
+              className={`px-4 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all ${
+                soccerLeague === lg.value
+                  ? 'bg-[#00E5FF] text-black'
+                  : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
+              }`}
+            >
+              {lg.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Analyze Button */}
       <div className="flex items-center justify-between mb-6">
