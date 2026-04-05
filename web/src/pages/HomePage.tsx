@@ -160,7 +160,7 @@ export default function HomePage() {
       {/* Analysis status */}
       {analyzing && (
         <div className="mb-4 p-3 bg-[#00E5FF]/5 border border-[#00E5FF]/20 rounded-lg text-sm text-[#00E5FF]">
-          Running DeepSeek R1, Grok 4.1, and Kimi K2.5 on {games?.length || 0} games... This may take 15-30 seconds.
+          Running 9 AI models (DeepSeek, Grok, Kimi, GPT, Claude, Phi-4, Qwen, Gemini, Perplexity) on {games?.length || 0} games... This may take 15-30 seconds.
         </div>
       )}
       {analyzeError && (

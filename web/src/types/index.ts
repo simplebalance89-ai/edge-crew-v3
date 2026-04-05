@@ -56,6 +56,12 @@ export interface Game {
     confidence: number;
     reason: string;
   };
+  arbitrage?: {
+    has_arb: boolean;
+    arb_pct: number;
+    best_home: { book: string; odds: number };
+    best_away: { book: string; odds: number };
+  } | null;
 }
 
 export interface Odds {
@@ -110,23 +116,50 @@ export interface Pick {
 }
 
 export interface User {
-  id: string;
+  username: string;
   name: string;
-  email: string;
-  avatar?: string;
-  role: "free" | "pro" | "elite";
   bankroll: Bankroll;
 }
 
 export interface Bankroll {
-  current: number;
   starting: number;
-  totalWagered: number;
-  totalProfit: number;
-  roi: number;
+  current: number;
+  wagered: number;
+  profit: number;
   wins: number;
   losses: number;
   pushes: number;
+}
+
+export interface LockedPick {
+  id: string;
+  game_id: string;
+  sport: string;
+  team: string;
+  type: string;
+  line: number;
+  amount: number;
+  odds: number;
+  result: "pending" | "W" | "L" | "P";
+  profit: number;
+  locked_at: string;
+}
+
+export interface BetSlip {
+  slip_id: string | null;
+  generated?: string;
+  user?: string;
+  picks?: Array<{
+    game: string;
+    pick: string;
+    type: string;
+    amount: string;
+    book: string;
+  }>;
+  total_risk?: string;
+  potential_payout?: string;
+  notes?: string;
+  error?: string;
 }
 
 export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing";
