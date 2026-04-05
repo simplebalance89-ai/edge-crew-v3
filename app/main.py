@@ -1072,4 +1072,4 @@ async def catch_all(path: str):
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return FileResponse(file_path)
     with open(os.path.join(STATIC_DIR, "index.html")) as f:
-        return f.read()
+        return HTMLResponse(content=f.read())
