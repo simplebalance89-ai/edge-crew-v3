@@ -68,8 +68,8 @@ AI_MODELS = [
         "personality": "sharp contrarian, challenges consensus, sniffs out trap games",
     },
     {
-        "name": "Kimi-K2.5",
-        "display": "Kimi K2.5",
+        "name": "Kimi-K2-Thinking",
+        "display": "Kimi K2 Thinking",
         "endpoint": "ai_services",
         "timeout": 60,
         "personality": "scout profiler, evaluates tactical DNA and structural edges",
