@@ -91,6 +91,26 @@ def _convergence(our, ai):
     else: status = 'CONFLICT'
     return {'status': status, 'consensusScore': consensus, 'consensusGrade': _score_to_grade(consensus), 'delta': delta, 'variance': round(delta / 2, 2)}
 
+
+def _compute_pick(event, odds, our, ai, conv):
+    consensus = conv["consensusScore"]
+    status = conv["status"]
+    spread = odds.get("spread", 0)
+    home = event["home_team"]
+    away = event["away_team"]
+    if spread <= 0:
+        fav, dog, fav_spread = home, away, spread
+    else:
+        fav, dog, fav_spread = away, home, -spread
+    if status in ("LOCK", "ALIGNED") and consensus >= 7.0:
+        return {"side": fav, "type": "spread", "line": fav_spread, "confidence": min(95, int(consensus * 10 + 10)), "sizing": "Strong Play"}
+    elif status == "ALIGNED" and consensus >= 6.0:
+        return {"side": fav, "type": "spread", "line": fav_spread, "confidence": min(80, int(consensus * 8 + 10)), "sizing": "Standard"}
+    elif consensus >= 6.0:
+        return {"side": dog, "type": "ml", "line": 0, "confidence": min(70, int(consensus * 7)), "sizing": "Lean"}
+    else:
+        return {"side": "", "type": "", "line": 0, "confidence": 0, "sizing": "No Play"}
+
 def _parse_event(event, sport_label):
     spread = total = ml_home = ml_away = None
     bookmaker_used = None
@@ -121,7 +141,7 @@ def _parse_event(event, sport_label):
     our = _grade_from_odds(odds)
     ai = _ai_grade(odds)
     conv = _convergence(our, ai)
-    return {'id': event['id'], 'sport': sport_label, 'homeTeam': event['home_team'], 'awayTeam': event['away_team'], 'scheduledAt': commence, 'status': status, 'odds': odds, 'bookmaker': bookmaker_used, 'ourGrade': our, 'aiGrade': ai, 'convergence': conv}
+    return {'id': event['id'], 'sport': sport_label, 'homeTeam': event['home_team'], 'awayTeam': event['away_team'], 'scheduledAt': commence, 'status': status, 'odds': odds, 'bookmaker': bookmaker_used, 'ourGrade': our, 'aiGrade': ai, 'convergence': conv, 'pick': _compute_pick(event, odds, our, ai, conv)}
 
 async def _fetch_live_games(sport):
     if not ODDS_API_KEY:
