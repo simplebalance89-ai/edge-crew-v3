@@ -8,14 +8,20 @@ import { SPORT_LABELS } from '@/types'
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing']
 
 type MlbMode = 'games' | 'nrfi'
-type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls'
+type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls' | 'bundesliga' | 'ligue_1' | 'ucl' | 'europa' | 'brazil' | 'liga_mx'
 
 const SOCCER_LEAGUES: { value: SoccerLeague; label: string }[] = [
   { value: '', label: 'All' },
+  { value: 'ucl', label: 'UCL' },
+  { value: 'europa', label: 'Europa' },
   { value: 'epl', label: 'EPL' },
   { value: 'la_liga', label: 'La Liga' },
   { value: 'serie_a', label: 'Serie A' },
+  { value: 'bundesliga', label: 'Bundesliga' },
+  { value: 'ligue_1', label: 'Ligue 1' },
   { value: 'mls', label: 'MLS' },
+  { value: 'liga_mx', label: 'Liga MX' },
+  { value: 'brazil', label: 'Brazil' },
 ]
 
 export default function HomePage() {
