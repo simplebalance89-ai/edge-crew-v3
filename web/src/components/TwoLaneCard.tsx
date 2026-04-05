@@ -106,9 +106,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
 
           {/* Grader Cards: Sintonia, Edge, Renzo */}
           {displayOur.profiles && Object.keys(displayOur.profiles).length > 0 && (
-            <div className="grid grid-cols-3 gap-1.5 mb-2">
+            <div className="grid grid-cols-4 gap-1.5 mb-2">
               {Object.entries(displayOur.profiles as Record<string, {grade: string; final: number; sizing: string; picks?: string; margin?: number}>).map(([name, p]) => {
-                const colors: Record<string, string> = { sintonia: '#F72585', edge: '#818cf8', renzo: '#9B59B6' }
+                const colors: Record<string, string> = { sintonia: '#F72585', edge: '#818cf8', renzo: '#9B59B6', crew: '#D4A017' }
                 const pickLabel = p.picks === 'home' ? game.homeTeam?.split(' ').pop() : p.picks === 'away' ? game.awayTeam?.split(' ').pop() : ''
                 return (
                   <div key={name} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-2 text-center">
