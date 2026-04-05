@@ -14,8 +14,6 @@ const gradeColor = (g: string) => {
   return '#ef4444'
 }
 
-const scoreColor = (s: number) => s >= 7 ? '#10B981' : s >= 5 ? '#d4a024' : '#ef4444'
-
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
   const displayStatus = convergence?.status || 'PENDING'
   const displayOur = ourGrade || { score: 0, grade: '-', confidence: 0, thesis: '' }
