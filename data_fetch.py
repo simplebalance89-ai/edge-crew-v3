@@ -233,31 +233,27 @@ def _extract_team_detail(team: dict) -> dict:
                         profile["league_position"] = int(float(sval))
                     except (ValueError, TypeError):
                         pass
-                elif sname == "avgpointsfor":
+                elif sname in ("avgpointsfor", "avgPointsFor"):
                     try:
                         profile["ppg_L5"] = round(float(sval), 1)
                     except (ValueError, TypeError):
                         pass
-                elif sname == "avgpointsagainst":
+                elif sname in ("avgpointsagainst", "avgPointsAgainst"):
                     try:
                         profile["opp_ppg_L5"] = round(float(sval), 1)
                     except (ValueError, TypeError):
                         pass
-                elif sname == "pointsfor":
-                    try:
-                        profile["_pointsFor"] = float(sval)
-                    except (ValueError, TypeError):
-                        pass
-                elif sname == "pointsagainst":
-                    try:
-                        profile["_pointsAgainst"] = float(sval)
-                    except (ValueError, TypeError):
-                        pass
-                elif sname in ("gamesplayed",):
+                elif sname in ("gamesplayed", "gamesPlayed"):
                     try:
                         profile["_gamesPlayed"] = int(float(sval))
                     except (ValueError, TypeError):
                         pass
+                elif sname in ("pointsfor", "pointsFor"):
+                    try:
+                        profile["_pointsFor"] = float(sval)
+                    except (ValueError, TypeError):
+                        pass
+                elif sname in ("pointsagainst", "pointsAgainst"):
         elif rtype == "home":
             profile["home_record"] = summary
         elif rtype in ("road", "away"):

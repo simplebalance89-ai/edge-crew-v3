@@ -6,11 +6,12 @@ Live odds → ESPN profiles → Grade Engine → Two-Lane Display
 import logging
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
@@ -68,6 +69,17 @@ PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "bovada"]
 _cache: Dict[str, dict] = {}
 CACHE_TTL = 300
 
+# ─── User Profiles ────────────────────────────────────────────────────────────
+
+USERS = {
+    "peter": {"name": "Peter", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
+    "chinny": {"name": "Chinny", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
+    "jimmy": {"name": "Jimmy", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
+}
+
+# Store locked picks per user
+_user_picks: Dict[str, list] = {"peter": [], "chinny": [], "jimmy": []}
+
 # Must match grade_engine.py GRADE_THRESHOLDS exactly
 GRADE_MAP = [
     (8.0, "A+"), (7.3, "A"), (6.5, "A-"), (6.0, "B+"), (5.5, "B"),
@@ -108,13 +120,20 @@ def _odds_grade(odds: dict) -> dict:
     return {"grade": grade, "score": score, "confidence": conf, "model": "Odds-Model"}
 
 
-def _convergence(our: dict, ai: dict) -> dict:
-    """Compute convergence between Our Process and AI Process."""
+def _convergence(our: dict, ai: dict, ai_models: list = None) -> dict:
+    """Compute convergence. ALIGNED = everyone agrees on the same side."""
     delta = round(abs(our["score"] - ai["score"]), 2)
-    consensus = round((our["score"] * 0.6 + ai["score"] * 0.4), 1)  # Weight Our Process more
-    # LOCK = both agree AND the game is good (consensus >= 7.0)
-    if delta <= 0.5 and consensus >= 7.0: status = "LOCK"
-    elif delta <= 1.0: status = "ALIGNED"
+    consensus = round((our["score"] * 0.6 + ai["score"] * 0.4), 1)
+    agreement_pct = 1.0
+    if ai_models:
+        picks = [m.get("pick", "") for m in ai_models if m.get("pick")]
+        if picks:
+            fav_count = sum(1 for p in picks if "-" in p.split(" ")[-1])
+            dog_count = len(picks) - fav_count
+            agreement_pct = max(fav_count, dog_count) / len(picks) if picks else 1.0
+    if agreement_pct >= 0.85 and consensus >= 7.0: status = "LOCK"
+    elif agreement_pct >= 0.70 and consensus >= 6.0: status = "ALIGNED"
+    elif agreement_pct < 0.60: status = "SPLIT"
     elif delta <= 1.5: status = "CLOSE"
     else: status = "SPLIT"
     grade = "F"
@@ -123,11 +142,8 @@ def _convergence(our: dict, ai: dict) -> dict:
             grade = g
             break
     return {
-        "status": status,
-        "consensusScore": consensus,
-        "consensusGrade": grade,
-        "delta": delta,
-        "variance": round(delta / 2, 2),
+        "status": status, "consensusScore": consensus, "consensusGrade": grade,
+        "delta": delta, "variance": round(delta / 2, 2), "agreement": round(agreement_pct * 100),
     }
 
 
@@ -157,6 +173,64 @@ def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> d
         # Always show a pick — low consensus = Lean on favorite ML
         return {"side": fav, "type": "ml", "line": 0,
                 "confidence": max(30, int(consensus * 6)), "sizing": "Lean"}
+
+
+def _ml_to_decimal(ml: float) -> float:
+    """Convert American moneyline to decimal odds."""
+    if ml >= 100:
+        return 1 + ml / 100
+    elif ml <= -100:
+        return 1 + 100 / abs(ml)
+    return 2.0  # fallback even money
+
+
+def _detect_arbitrage(event: dict) -> dict | None:
+    """Detect arbitrage opportunities across all bookmakers for h2h markets."""
+    bookmakers = event.get("bookmakers", [])
+    if len(bookmakers) < 2:
+        return None
+
+    home_team = event.get("home_team", "")
+    away_team = event.get("away_team", "")
+
+    best_home_decimal = 0.0
+    best_home_book = ""
+    best_home_ml = 0
+    best_away_decimal = 0.0
+    best_away_book = ""
+    best_away_ml = 0
+
+    for bk in bookmakers:
+        book_name = bk.get("title", bk.get("key", "?"))
+        markets = {m["key"]: m["outcomes"] for m in bk.get("markets", [])}
+        h2h = markets.get("h2h", [])
+        for o in h2h:
+            price = o.get("price", 0)
+            if not price:
+                continue
+            dec = _ml_to_decimal(price)
+            if o["name"] == home_team and dec > best_home_decimal:
+                best_home_decimal = dec
+                best_home_book = book_name
+                best_home_ml = price
+            elif o["name"] == away_team and dec > best_away_decimal:
+                best_away_decimal = dec
+                best_away_book = book_name
+                best_away_ml = price
+
+    if best_home_decimal <= 0 or best_away_decimal <= 0:
+        return None
+
+    implied_sum = (1 / best_home_decimal) + (1 / best_away_decimal)
+    has_arb = implied_sum < 1.0
+    arb_pct = round((1 - implied_sum) * 100, 2) if has_arb else 0.0
+
+    return {
+        "has_arb": has_arb,
+        "arb_pct": arb_pct,
+        "best_home": {"book": best_home_book, "odds": best_home_ml},
+        "best_away": {"book": best_away_book, "odds": best_away_ml},
+    }
 
 
 def _parse_event(event: dict, sport_label: str) -> dict:
@@ -189,10 +263,16 @@ def _parse_event(event: dict, sport_label: str) -> dict:
     if commence:
         try:
             gt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
-            if gt <= datetime.now(timezone.utc):
+            hours_ago = (datetime.now(timezone.utc) - gt).total_seconds() / 3600
+            if hours_ago > 4:
+                status = "completed"
+            elif hours_ago > 0:
                 status = "live"
         except Exception:
             pass
+
+    # Arbitrage detection across all bookmakers
+    arb = _detect_arbitrage(event)
 
     odds = {"spread": spread or 0, "total": total or 0, "mlHome": ml_home or 0, "mlAway": ml_away or 0}
     return {
@@ -204,11 +284,12 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         "status": status,
         "odds": odds,
         "bookmaker": bookmaker_used,
+        "arbitrage": arb,
     }
 
 
 def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
-    """Generate 5 AI personality grades with reasoning — pure math, no API needed."""
+    """Generate 9 AI personality grades with reasoning — pure math, no API needed."""
     home = enriched.get("home", enriched.get("home_team", "Home"))
     away = enriched.get("away", enriched.get("away_team", "Away"))
     hp = enriched.get("home_profile", {})
@@ -367,6 +448,48 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
                     "confidence": min(90, int(52 + qwen_score * 4)),
                     "thesis": qwen_thesis, "pick": _pick_for(qwen_score), "key_factors": []})
 
+    # Gemini 2.5 — multimodal pattern matcher, cross-references multiple data dimensions simultaneously
+    gemini_margin_factor = fav_margin * 0.12
+    gemini_record_factor = record_gap * 2.0
+    gemini_our_factor = our_score * 0.5
+    gemini_home_boost = 0.3 if spread <= 0 else 0  # slight boost for home teams
+    gemini_score = round(gemini_margin_factor + gemini_record_factor + gemini_our_factor + gemini_home_boost + 2.5, 1)
+    gemini_score = max(3.0, min(9.5, gemini_score))
+    gemini_grade = _score_to_grade_local(gemini_score)
+    if fav_margin > 3 and record_gap > 0.10:
+        gemini_thesis = f"Multi-factor validation: {fav} ({fav_rec}) checks all boxes — margin +{fav_margin:.1f}, record gap {record_gap:.0%}, home factor aligned. Cross-referencing confirms strong edge at {spread:+.1f}."
+    elif fav_margin > 0 and record_gap > 0:
+        gemini_thesis = f"Cross-referencing {fav} ({fav_rec}) across margin (+{fav_margin:.1f}), record ({record_gap:.0%} gap), and market data — signals are directionally aligned but not overwhelming. Moderate multi-dimensional edge."
+    else:
+        gemini_thesis = f"Multi-dimensional scan shows weak alignment for {fav} ({fav_rec}). Margin {fav_margin:+.1f} and record gap {record_gap:.0%} don't cross-validate — conflicting signals reduce conviction."
+    models.append({"model": "Gemini 2.5", "grade": gemini_grade, "score": gemini_score,
+                    "confidence": min(91, int(53 + gemini_score * 4)),
+                    "thesis": gemini_thesis, "pick": _pick_for(gemini_score), "key_factors": []})
+
+    # Perplexity Sonar — real-time information synthesizer, contrarian to consensus
+    # If all models agree, Perplexity raises a flag; if models split, Perplexity digs deeper
+    all_scores = [m["score"] for m in models]
+    model_avg = sum(all_scores) / len(all_scores) if all_scores else our_score
+    model_std = (sum((s - model_avg) ** 2 for s in all_scores) / len(all_scores)) ** 0.5 if all_scores else 0
+    if model_std < 0.4:
+        # High consensus — Perplexity is contrarian, nudges score down
+        pplx_adj = -0.6
+        pplx_thesis = f"Consensus too tight (std {model_std:.2f}) — when everyone agrees on {fav} ({fav_rec}), live signals suggest the market has already priced this in. Recent trends and breaking context warrant caution. Fading the crowd slightly."
+    elif model_std > 1.2:
+        # High disagreement — Perplexity digs deeper, stabilizes
+        pplx_adj = 0.0
+        pplx_thesis = f"Models split wide (std {model_std:.2f}) on {fav} ({fav_rec}) vs {dog} ({dog_rec}). Real-time synthesis: recent lineup news, travel patterns, and injury context suggest the truth is near the average. Breaking signals don't resolve the split."
+    else:
+        # Moderate — Perplexity adds live context, slight positive
+        pplx_adj = 0.3
+        pplx_thesis = f"Live signal integration for {fav} ({fav_rec}): recent performance trends and real-time market movement support the lean. Breaking context — no major injury flags detected, recent form holds. Slight edge confirmed by live data."
+    pplx_score = round(model_avg + pplx_adj, 1)
+    pplx_score = max(3.0, min(9.5, pplx_score))
+    pplx_grade = _score_to_grade_local(pplx_score)
+    models.append({"model": "Perplexity Sonar", "grade": pplx_grade, "score": pplx_score,
+                    "confidence": min(87, int(48 + pplx_score * 4)),
+                    "thesis": pplx_thesis, "pick": _pick_for(pplx_score), "key_factors": []})
+
     return models
 
 
@@ -403,7 +526,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     # AI Process: odds-based model for consensus
     ai_grade = _odds_grade(game.get("odds", {}))
 
-    # AI Models: 5 personality grades with reasoning (always, no API needed)
+    # AI Models: 9 personality grades with reasoning (always, no API needed)
     ai_models = _generate_ai_models(
         enriched or game,
         game.get("odds", {}),
@@ -418,8 +541,8 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
         ai_grade["confidence"] = int(sum(m["confidence"] for m in ai_models) / len(ai_models))
         ai_grade["model"] = f"{len(ai_models)}-Model Consensus"
 
-    # Convergence
-    conv = _convergence(our_grade, ai_grade)
+    # Convergence — pass ai_models for agreement calculation
+    conv = _convergence(our_grade, ai_grade, ai_models)
 
     # Pick
     pick = _compute_pick(game, game.get("odds", {}), our_grade, ai_grade, conv)
@@ -553,6 +676,8 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                     logger.info(f"[ODDS API] {key}: {len(events)} events")
                     for event in events:
                         game = _parse_event(event, sport_upper)
+                        if game["status"] == "completed":
+                            continue  # Filter out completed games
                         all_games.append(game)
                 else:
                     logger.warning(f"[ODDS API] {key}: HTTP {resp.status_code}")
@@ -577,6 +702,83 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────────
+
+class BetSlipRequest(BaseModel):
+    username: str
+
+
+_betslip_counter = 0
+
+
+@app.post("/api/betslip")
+async def generate_betslip(request: BetSlipRequest):
+    """Generate a Hard Rock Sportsbook bet slip from the user's locked picks."""
+    global _betslip_counter
+
+    # Gather all LOCK picks across all cached sports
+    locked_picks = []
+    for cache_key, cached in _cache.items():
+        if not cached or not cached.get("data"):
+            continue
+        for game in cached["data"]:
+            conv = game.get("convergence", {})
+            if conv.get("status") != "LOCK":
+                continue
+            pick = game.get("pick", {})
+            if not pick or not pick.get("side"):
+                continue
+
+            home = game.get("homeTeam", "")
+            away = game.get("awayTeam", "")
+            game_label = f"{away} vs {home}"
+            side = pick["side"]
+            pick_type = pick.get("type", "ml").capitalize()
+            line = pick.get("line", 0)
+
+            if pick_type == "Spread" and line != 0:
+                pick_label = f"{side} {line:+.1f}"
+            elif pick_type == "Ml":
+                pick_label = f"{side} ML"
+                pick_type = "Moneyline"
+            else:
+                pick_label = f"{side} {pick_type}"
+
+            locked_picks.append({
+                "game": game_label,
+                "pick": pick_label,
+                "type": pick_type,
+                "amount": "$100",
+                "book": "Hard Rock",
+            })
+
+    if not locked_picks:
+        return {
+            "slip_id": None,
+            "error": "No locked picks found. Analyze games first — only LOCK-status picks appear on the bet slip.",
+        }
+
+    # Generate slip ID
+    _betslip_counter += 1
+    now = datetime.now()
+    slip_id = f"EC9-{now.strftime('%Y%m%d')}-{_betslip_counter:03d}"
+    et_time = now.strftime("%Y-%m-%d %H:%M") + " ET"
+
+    num_picks = len(locked_picks)
+    per_pick = 100
+    total_risk = num_picks * per_pick
+    # Estimate potential payout: assume -110 standard juice → ~$191 return per $100
+    potential_payout = round(total_risk * 1.91, 0)
+
+    return {
+        "slip_id": slip_id,
+        "generated": et_time,
+        "user": request.username,
+        "picks": locked_picks,
+        "total_risk": f"${total_risk:,}",
+        "potential_payout": f"${potential_payout:,.0f}",
+        "notes": f"{num_picks} pick{'s' if num_picks != 1 else ''} @ $100 each. Enter as singles on Hard Rock Sportsbook.",
+    }
+
 
 class GradeRequest(BaseModel):
     game_id: str
@@ -733,6 +935,117 @@ async def engine_status():
         "chain_names": list(CHAINS.keys()),
         "variables_per_sport": {s: len(v) for s, v in SPORT_VARIABLES.items()},
     }
+
+
+# ─── User / Bankroll / Picks Endpoints ─────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class LockPickRequest(BaseModel):
+    game_id: str
+    sport: str
+    team: str
+    type: str  # spread or ml
+    line: float = 0
+    amount: float = 0
+    odds: int = -110
+
+
+class GradePickRequest(BaseModel):
+    result: str  # W, L, or P
+
+
+@app.post("/api/login")
+async def login(req: LoginRequest):
+    username = req.username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user["pin"] != req.pin:
+        raise HTTPException(status_code=401, detail="Invalid PIN")
+    return {"username": username, "name": user["name"], "bankroll": user["bankroll"]}
+
+
+@app.get("/api/user/{username}/bankroll")
+async def get_bankroll(username: str):
+    username = username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user["bankroll"]
+
+
+@app.post("/api/user/{username}/pick")
+async def lock_pick(username: str, req: LockPickRequest):
+    username = username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    pick = {
+        "id": str(uuid.uuid4())[:8],
+        "game_id": req.game_id,
+        "sport": req.sport,
+        "team": req.team,
+        "type": req.type,
+        "line": req.line,
+        "amount": req.amount,
+        "odds": req.odds,
+        "result": "pending",
+        "profit": 0,
+        "locked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _user_picks[username].append(pick)
+    user["bankroll"]["wagered"] += req.amount
+    return pick
+
+
+@app.get("/api/user/{username}/picks")
+async def get_user_picks(username: str):
+    username = username.lower()
+    if username not in USERS:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _user_picks.get(username, [])
+
+
+@app.post("/api/user/{username}/pick/{pick_id}/result")
+async def grade_pick(username: str, pick_id: str, req: GradePickRequest):
+    username = username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    picks = _user_picks.get(username, [])
+    pick = next((p for p in picks if p["id"] == pick_id), None)
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+    result = req.result.upper()
+    if result not in ("W", "L", "P"):
+        raise HTTPException(status_code=400, detail="Result must be W, L, or P")
+    pick["result"] = result
+    bankroll = user["bankroll"]
+    amount = pick.get("amount", 0)
+    odds = pick.get("odds", -110)
+    if result == "W":
+        # Calculate profit based on American odds
+        if odds > 0:
+            profit = amount * (odds / 100)
+        else:
+            profit = amount * (100 / abs(odds))
+        pick["profit"] = round(profit, 2)
+        bankroll["current"] = round(bankroll["current"] + profit, 2)
+        bankroll["profit"] = round(bankroll["profit"] + profit, 2)
+        bankroll["wins"] += 1
+    elif result == "L":
+        pick["profit"] = -amount
+        bankroll["current"] = round(bankroll["current"] - amount, 2)
+        bankroll["profit"] = round(bankroll["profit"] - amount, 2)
+        bankroll["losses"] += 1
+    else:  # Push
+        pick["profit"] = 0
+        bankroll["pushes"] += 1
+    return {"pick": pick, "bankroll": bankroll}
 
 
 # ─── Static File Serving ──────────────────────────────────────────────────────

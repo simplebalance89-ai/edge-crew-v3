@@ -39,7 +39,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <h3 className="text-base font-bold text-[#E8E8EC]">{game.awayTeam} <span className="text-[#6E6E80] font-normal">@</span> {game.homeTeam}</h3>
           <div className="flex items-center gap-3 mt-1">
             <span className="text-xs text-[#6E6E80]">
-              {game.scheduledAt ? new Date(game.scheduledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
+              {game.scheduledAt ? new Date(game.scheduledAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date(game.scheduledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
             </span>
             {game.odds && (
               <>
@@ -50,9 +50,21 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             )}
           </div>
         </div>
-        <span className={`px-3 py-1 rounded-full text-[10px] font-black tracking-wider border ${statusStyles[displayStatus] || statusStyles.PENDING}`}>
-          {displayStatus}
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className={`px-3 py-1 rounded-full text-[10px] font-black tracking-wider border ${statusStyles[displayStatus] || statusStyles.PENDING}`}>
+            {displayStatus}
+          </span>
+          {game.arbitrage?.has_arb && (
+            <div className="text-right">
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-gradient-to-r from-red-500/20 to-yellow-500/20 border border-yellow-500/50 text-yellow-400">
+                ARB {game.arbitrage.arb_pct}%
+              </span>
+              <div className="text-[8px] text-yellow-400/70 mt-0.5">
+                Home: {game.arbitrage.best_home.book} {game.arbitrage.best_home.odds} | Away: {game.arbitrage.best_away.book} {game.arbitrage.best_away.odds}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ═══ TWO-LANE FORK ═══ */}
@@ -134,7 +146,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           {game.aiModels && game.aiModels.length > 0 ? (
             <>
               <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MODEL GRADES</div>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
+              <div className="grid grid-cols-3 gap-1.5 mb-2">
                 {game.aiModels.map((m, i) => (
                   <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-1.5 text-center">
                     <div className="text-[7px] font-black text-[#00D4AA] uppercase truncate">{m.model}</div>

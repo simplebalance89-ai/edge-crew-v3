@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Game, ConvergenceResult, Pick, User } from '@/types';
+import type { Game, ConvergenceResult, Pick, User, Bankroll, LockedPick, BetSlip } from '@/types';
 
 const API_BASE = '';
 
@@ -43,15 +43,38 @@ export const getPicks = () =>
 export const createPick = (data: Partial<Pick>) => 
   api.post<Pick>('/api/picks', data).then(r => r.data);
 
-// User
-export const getUser = () => 
+// User / Auth
+export const login = (username: string, pin: string) =>
+  api.post<User>('/api/login', { username, pin }).then(r => r.data);
+
+export const getBankroll = (username: string) =>
+  api.get<Bankroll>(`/api/user/${username}/bankroll`).then(r => r.data);
+
+export const lockPick = (username: string, data: {
+  game_id: string; sport: string; team: string; type: string;
+  line?: number; amount?: number; odds?: number;
+}) =>
+  api.post<LockedPick>(`/api/user/${username}/pick`, data).then(r => r.data);
+
+export const getUserPicks = (username: string) =>
+  api.get<LockedPick[]>(`/api/user/${username}/picks`).then(r => r.data);
+
+export const gradePick = (username: string, pickId: string, result: string) =>
+  api.post(`/api/user/${username}/pick/${pickId}/result`, { result }).then(r => r.data);
+
+// Bet Slip
+export const generateBetSlip = (username: string) =>
+  api.post<BetSlip>('/api/betslip', { username }).then(r => r.data);
+
+// Legacy
+export const getUser = () =>
   api.get<User>('/api/user').then(r => r.data);
 
-export const updateUser = (data: Partial<User>) => 
+export const updateUser = (data: Partial<User>) =>
   api.put<User>('/api/user', data).then(r => r.data);
 
 // Stats
-export const getStats = () => 
+export const getStats = () =>
   api.get('/api/stats').then(r => r.data);
 
 export default api;

@@ -74,6 +74,34 @@ AI_MODELS = [
         "timeout": 60,
         "personality": "scout profiler, evaluates tactical DNA and structural edges",
     },
+    {
+        "name": "gpt-5.4-nano",
+        "display": "GPT 5.4 Nano",
+        "endpoint": "azure_openai",
+        "timeout": 45,
+        "personality": "balanced consensus builder, weighs all factors equally, finds the middle ground",
+    },
+    {
+        "name": "claude-opus-4-6",
+        "display": "Claude Opus 4.6",
+        "endpoint": "ai_services",
+        "timeout": 60,
+        "personality": "deep strategic thinker, momentum and narrative focus, contrarian on big spreads",
+    },
+    {
+        "name": "Phi-4-reasoning",
+        "display": "Phi-4 Reasoning",
+        "endpoint": "gce",
+        "timeout": 45,
+        "personality": "chain-of-thought reasoner, digs into process disagreements, sharp on thin edges",
+    },
+    {
+        "name": "qwen3-32b",
+        "display": "Qwen 3-32B",
+        "endpoint": "ai_services",
+        "timeout": 60,
+        "personality": "pattern recognition powerhouse, record differentials and historical trends, aggressive on mismatches",
+    },
 ]
 
 
@@ -170,18 +198,37 @@ Return ONLY valid JSON:
 Be specific and decisive. Name teams, cite stats, reference odds. Take a side — no hedging."""
 
 
-async def _call_azure_model(model_name: str, prompt: str, timeout: int = 60) -> Optional[str]:
-    """Call an Azure AI Services model."""
-    key = AI_SERVICES_KEY or GCE_KEY
-    endpoint = AI_SERVICES_ENDPOINT if AI_SERVICES_KEY else GCE_ENDPOINT
+AZURE_OPENAI_ENDPOINT = os.environ.get(
+    "AZURE_OPENAI_ENDPOINT",
+    "https://peterwilson.openai.azure.com/openai/deployments/"
+)
+AZURE_OPENAI_KEY = AI_SERVICES_KEY  # Same Sweden key works for peterwilson endpoint
+
+
+async def _call_azure_model(model_name: str, prompt: str, timeout: int = 60, endpoint_type: str = "ai_services") -> Optional[str]:
+    """Call an Azure AI model, routing to the correct endpoint."""
+    if endpoint_type == "gce":
+        key = GCE_KEY
+        endpoint = GCE_ENDPOINT
+    elif endpoint_type == "azure_openai":
+        key = AI_SERVICES_KEY or GCE_KEY
+        endpoint = f"{AZURE_OPENAI_ENDPOINT}{model_name}/chat/completions?api-version=2025-01-01-preview"
+    else:  # ai_services (default)
+        key = AI_SERVICES_KEY or GCE_KEY
+        endpoint = AI_SERVICES_ENDPOINT
 
     if not key:
         return None
 
     try:
+        if endpoint_type == "azure_openai":
+            url = endpoint
+        else:
+            url = f"{endpoint}chat/completions"
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                f"{endpoint}chat/completions",
+                url,
                 headers={"api-key": key, "Content-Type": "application/json"},
                 json={
                     "model": model_name,
@@ -294,9 +341,10 @@ async def crowdsource_grade(games: list, sport: str) -> Dict[str, list]:
         # Build batch prompt
         prompt = _build_batch_prompt(games, personality)
 
-        # Call model
-        logger.info(f"[CROWDSOURCE] Calling {display} ({model_name}) for {len(games)} games")
-        raw = await _call_azure_model(model_name, prompt, timeout)
+        # Call model — route to correct endpoint
+        endpoint_type = model_cfg.get("endpoint", "ai_services")
+        logger.info(f"[CROWDSOURCE] Calling {display} ({model_name}) via {endpoint_type} for {len(games)} games")
+        raw = await _call_azure_model(model_name, prompt, timeout, endpoint_type=endpoint_type)
         parsed = _parse_model_response(raw, display)
 
         if isinstance(parsed, dict) and "games" in parsed:
