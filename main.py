@@ -27,9 +27,8 @@ app = FastAPI(title="Edge Crew v3.0 - 20260404140021", version="3.0.0-railway")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://web-nasrhavf5-simplebalance89-ais-projects.vercel.app",
+        "https://web-7ikw69pm3-simplebalance89-ais-projects.vercel.app",
         "https://web-seven-taupe-43.vercel.app",
-        "https://web-m7yw97rdj-simplebalance89-ais-projects.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
     ],
@@ -41,9 +40,9 @@ print("✅ FastAPI app created", flush=True)
 
 # API Keys from environment
 AZURE_KEYS = {
-    "sweden": os.environ.get("AZURE_SWEDEN_KEY", ""),
-    "nc": os.environ.get("AZURE_NC_KEY", ""),
-    "gce": os.environ.get("AZURE_GCE_KEY", ""),
+    "sweden": os.environ.get("KIMI_SCOUT_KEY", ""),
+    "nc": os.environ.get("AZURE_OPENAI_KEY", ""),
+    "gce": os.environ.get("AZURE_OPENAI_KEY", ""),
 }
 
 class GradeRequest(BaseModel):
