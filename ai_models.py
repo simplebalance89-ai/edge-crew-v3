@@ -32,6 +32,9 @@ GCE_KEY = os.environ.get("AZURE_GCE_KEY", "") or os.environ.get("AZURE_OPENAI_KE
 # Anthropic (Claude)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Google Gemini
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
 GRADE_MAP = {
     "A+": 9.5, "A": 8.5, "A-": 7.5, "B+": 7.0, "B": 6.5, "B-": 6.0,
     "C+": 5.5, "C": 5.0, "D": 3.5, "F": 2.0,
@@ -277,6 +280,31 @@ async def _call_anthropic(prompt: str, timeout: int = 60) -> Optional[str]:
                 return None
     except Exception as e:
         logger.warning(f"[AI] Claude: {e}")
+        return None
+
+
+async def _call_gemini(prompt: str, timeout: int = 60) -> Optional[str]:
+    """Call Google Gemini API."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.4, "maxOutputTokens": 4000},
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            else:
+                logger.warning(f"[AI] Gemini: HTTP {resp.status_code}")
+                return None
+    except Exception as e:
+        logger.warning(f"[AI] Gemini: {e}")
         return None
 
 
