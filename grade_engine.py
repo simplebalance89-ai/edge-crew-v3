@@ -723,6 +723,35 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
             profiles[profile_name]["picks"] = other_side
         profiles[profile_name]["margin"] = round(profiles[profile_name]["final"] - other_final, 2)
 
+    # Add "crew" — random-weighted blend of all 3 profiles
+    import random
+    if len(profiles) >= 3:
+        blend_weights = {name: random.uniform(0.2, 0.5) for name in profiles}
+        total_w = sum(blend_weights.values())
+        blend_weights = {k: v / total_w for k, v in blend_weights.items()}  # normalize to 1.0
+
+        crew_final = sum(profiles[name]["final"] * blend_weights[name] for name in profiles)
+        crew_final = round(max(1.0, min(10.0, crew_final)), 2)
+        crew_grade = score_to_grade(crew_final)
+
+        # Crew picks whichever side the majority of profiles pick
+        side_votes = {}
+        for name in profiles:
+            side = profiles[name].get("picks", pick_side)
+            side_votes[side] = side_votes.get(side, 0) + 1
+        crew_pick = max(side_votes, key=side_votes.get)
+
+        profiles["crew"] = {
+            "grade": crew_grade,
+            "final": crew_final,
+            "composite": crew_final,
+            "sizing": score_to_sizing(crew_final),
+            "chains_fired": [],
+            "picks": crew_pick,
+            "margin": round(crew_final - 5.0, 2),
+            "blend": {k: round(v, 2) for k, v in blend_weights.items()},
+        }
+
     return profiles
 
 
