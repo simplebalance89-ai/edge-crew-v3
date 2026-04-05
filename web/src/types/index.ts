@@ -51,6 +51,8 @@ export interface Grade {
   confidence: number;
   thesis?: string;
   keyFactors?: string[];
+  profiles?: Record<string, { grade: string; final: number; composite: number; sizing: string; chains_fired: string[] }>;
+  variables?: Record<string, { score: number; name: string; available: boolean }>;
 }
 
 export interface ConvergenceResult {

@@ -62,19 +62,54 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         <div className="bg-[#F72585]/[0.04] border border-[#F72585]/20 rounded-xl p-3">
           <div className="text-[10px] font-black tracking-[1.5px] text-[#F72585] mb-2 pb-1.5 border-b border-white/[0.06]">OUR PROCESS</div>
 
-          {/* Main Matrix — variable scores */}
-          {displayOur.keyFactors && displayOur.keyFactors.length > 0 ? (
+          {/* Main Matrix — top variable scores */}
+          {displayOur.variables && Object.keys(displayOur.variables).length > 0 && (
             <div className="mb-2">
-              <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">CHAINS FIRED</div>
-              <div className="flex flex-wrap gap-1">
-                {displayOur.keyFactors.map((chain: string, i: number) => (
-                  <span key={i} className="text-[8px] px-1.5 py-0.5 bg-[#F72585]/10 border border-[#F72585]/30 text-[#F72585] rounded">
-                    {chain}
-                  </span>
+              <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MAIN MATRIX</div>
+              {Object.entries(displayOur.variables as Record<string, {score: number; name: string; available: boolean}>)
+                .filter(([, v]) => v.available)
+                .sort(([, a], [, b]) => b.score - a.score)
+                .slice(0, 8)
+                .map(([key, v]) => (
+                  <div key={key} className="flex justify-between text-[10px] py-[1px]">
+                    <span className="text-white/50">{v.name}</span>
+                    <span className="font-bold" style={{ color: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444' }}>
+                      {v.score}
+                    </span>
+                  </div>
                 ))}
-              </div>
             </div>
-          ) : null}
+          )}
+
+          {/* Chains fired */}
+          {displayOur.keyFactors && displayOur.keyFactors.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1">
+              {displayOur.keyFactors.map((chain: string, i: number) => (
+                <span key={i} className="text-[8px] px-1.5 py-0.5 bg-[#F72585]/10 border border-[#F72585]/30 text-[#F72585] rounded">
+                  {chain}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Grader Cards: Sintonia, Edge, Renzo */}
+          {displayOur.profiles && Object.keys(displayOur.profiles).length > 0 && (
+            <div className="grid grid-cols-3 gap-1.5 mb-2">
+              {Object.entries(displayOur.profiles as Record<string, {grade: string; final: number; sizing: string}>).map(([name, p]) => {
+                const colors: Record<string, string> = { sintonia: '#F72585', edge: '#818cf8', renzo: '#9B59B6' }
+                return (
+                  <div key={name} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-2 text-center">
+                    <div className="text-[8px] font-black uppercase" style={{ color: colors[name] || '#F72585' }}>{name}</div>
+                    <div className="text-[20px] font-black leading-tight" style={{ color: gradeColor(p.grade) }}>{p.grade}</div>
+                    <div className="text-[9px] text-white/40">{p.final.toFixed(1)}</div>
+                    {p.sizing && p.sizing !== 'PASS' && (
+                      <div className="text-[8px] text-white/50 mt-0.5">{p.sizing}</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Engine Grade Card */}
           <div className="text-center py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg">
@@ -85,11 +120,6 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             <div className="text-[10px] text-white/40">{displayOur.score.toFixed(1)}</div>
             <div className="text-[10px] text-white/30">{displayOur.confidence}% conf</div>
           </div>
-
-          {/* Thesis */}
-          {displayOur.thesis && (
-            <div className="mt-2 text-[9px] text-white/40 leading-relaxed">{displayOur.thesis}</div>
-          )}
         </div>
 
         {/* ── RIGHT LANE: AI PROCESS ── */}
