@@ -42,7 +42,7 @@ export default function Layout({ children }: LayoutProps) {
                     }`}
                   >
                     <Icon size={18} />
-                    <span className="hidden sm:inline">{label}</span>
+                    <span>{label}</span>
                   </Link>
                 )
               })}
