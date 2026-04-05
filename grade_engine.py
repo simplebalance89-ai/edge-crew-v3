@@ -459,6 +459,16 @@ SPORT_VARIABLES = {
         "home_away": 7, "rest": 7, "h2h": 6, "ats": 7,
         "line_movement": 6, "motivation": 6, "depth": 5,
     },
+    "MMA": {
+        "form": 9, "off_ranking": 8, "def_ranking": 8, "star_player": 7,
+        "motivation": 7, "h2h": 6, "ats": 6, "home_away": 3,
+        "rest": 5, "depth": 3,
+    },
+    "BOXING": {
+        "form": 9, "off_ranking": 9, "def_ranking": 8, "star_player": 7,
+        "motivation": 7, "h2h": 7, "ats": 6, "home_away": 2,
+        "rest": 4, "depth": 2,
+    },
 }
 
 

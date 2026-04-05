@@ -24,6 +24,8 @@ SPORT_ESPN_MAP = {
     "NFL": ("football", "nfl"),
     "NCAAB": ("basketball", "mens-college-basketball"),
     "SOCCER": ("soccer", "usa.1"),
+    "MMA": ("mma", "ufc"),
+    "BOXING": ("boxing", "boxing"),
 }
 
 SOCCER_LEAGUE_MAP = {

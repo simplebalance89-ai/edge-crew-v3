@@ -51,6 +51,11 @@ export interface Game {
     has_kill: boolean;
   };
   kalshi_prob?: number | null;
+  nrfi?: {
+    verdict: string;
+    confidence: number;
+    reason: string;
+  };
 }
 
 export interface Odds {
@@ -124,7 +129,7 @@ export interface Bankroll {
   pushes: number;
 }
 
-export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer";
+export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing";
 
 export const SPORT_LABELS: Record<Sport, string> = {
   nba: "NBA",
@@ -133,6 +138,8 @@ export const SPORT_LABELS: Record<Sport, string> = {
   nfl: "NFL",
   ncaab: "NCAAB",
   soccer: "Soccer",
+  mma: "MMA",
+  boxing: "Boxing",
 };
 
 export const GRADE_COLORS: Record<string, string> = {

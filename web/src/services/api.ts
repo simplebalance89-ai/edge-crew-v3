@@ -14,8 +14,8 @@ const api = axios.create({
 export const checkHealth = () => api.get('/health').then(r => r.data);
 
 // Games
-export const getGames = (sport: string) => 
-  api.get<Game[]>('/api/games', { params: { sport } }).then(r => r.data);
+export const getGames = (sport: string, mode?: string, league?: string) =>
+  api.get<Game[]>('/api/games', { params: { sport, ...(mode ? { mode } : {}), ...(league ? { league } : {}) } }).then(r => r.data);
 
 export const getGame = (id: string) => 
   api.get<Game>(`/api/games/${id}`).then(r => r.data);

@@ -46,6 +46,21 @@ SPORT_KEYS = {
     "nfl": ["americanfootball_nfl"],
     "ncaab": ["basketball_ncaab"],
     "soccer": ["soccer_usa_mls", "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a"],
+    "mma": ["mma_mixed_martial_arts"],
+    "boxing": ["boxing_boxing"],
+}
+
+SOCCER_LEAGUE_MAP = {
+    "epl": ["soccer_epl"],
+    "la_liga": ["soccer_spain_la_liga"],
+    "serie_a": ["soccer_italy_serie_a"],
+    "mls": ["soccer_usa_mls"],
+}
+
+# High-scoring MLB parks (hitter-friendly) — park factor proxy
+HITTER_FRIENDLY_PARKS = {
+    "Colorado Rockies", "Texas Rangers", "Boston Red Sox",
+    "Cincinnati Reds", "Philadelphia Phillies", "Arizona Diamondbacks",
 }
 
 PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "bovada"]
@@ -208,6 +223,13 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     dog_margin = ap.get("avg_margin_L10", 0) if spread <= 0 else hp.get("avg_margin_L10", 0)
 
     models = []
+    abs_spread = abs(spread)
+
+    def _pick_for(score: float) -> str:
+        """Each model picks fav if score >= 5.5, else dog."""
+        if score >= 5.5:
+            return f"{fav} {'-' if spread <= 0 else '+'}{abs_spread}"
+        return f"{dog} {'+'if spread <= 0 else '-'}{abs_spread}"
 
     # DeepSeek — data-driven, stats-heavy
     ds_score = round(our_score * 0.85 + (fav_margin / 10) * 1.5, 1)
@@ -221,7 +243,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         ds_thesis = f"Numbers don't back {fav} strongly — margin only {fav_margin:+.1f}. {dog} ({dog_rec}) has underdog value here."
     models.append({"model": "DeepSeek R1", "grade": ds_grade, "score": ds_score,
                     "confidence": min(90, int(55 + ds_score * 4)),
-                    "thesis": ds_thesis, "key_factors": []})
+                    "thesis": ds_thesis, "pick": _pick_for(ds_score), "key_factors": []})
 
     # Grok — contrarian, looks for traps
     grok_adj = -0.5 if abs(spread) > 10 else (0.3 if abs(spread) < 3 else 0)
@@ -236,7 +258,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         grok_thesis = f"Line at {spread:+.1f} is fair. {fav} ({fav_rec}) should cover but not by much. No strong contrarian signal."
     models.append({"model": "Grok 4.1", "grade": grok_grade, "score": grok_score,
                     "confidence": min(85, int(50 + grok_score * 4)),
-                    "thesis": grok_thesis, "key_factors": []})
+                    "thesis": grok_thesis, "pick": _pick_for(grok_score), "key_factors": []})
 
     # Kimi — structural/tactical scout
     home_rec = hp.get("home_record", "")
@@ -268,7 +290,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         kimi_thesis = f"No strong structural edge detected. {fav} ({fav_rec}) vs {dog} ({dog_rec}) — standard matchup, grade from fundamentals only."
     models.append({"model": "Kimi K2.5", "grade": kimi_grade, "score": kimi_score,
                     "confidence": min(88, int(52 + kimi_score * 4)),
-                    "thesis": kimi_thesis, "key_factors": []})
+                    "thesis": kimi_thesis, "pick": _pick_for(kimi_score), "key_factors": []})
 
     # GPT Nano — balanced consensus builder, weighs all factors equally
     odds_score = _odds_grade(odds)["score"]
@@ -283,7 +305,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         gpt_thesis = f"Mixed signals: {stronger} say {fav} ({fav_rec}) is the play ({max(our_score, odds_score):.1f}) but {weaker} lag behind ({min(our_score, odds_score):.1f}). Middle ground lands at {gpt_score:.1f}."
     models.append({"model": "GPT 5.4 Nano", "grade": gpt_grade, "score": gpt_score,
                     "confidence": min(90, int(55 + gpt_score * 4)),
-                    "thesis": gpt_thesis, "key_factors": []})
+                    "thesis": gpt_thesis, "pick": _pick_for(gpt_score), "key_factors": []})
 
     # Claude Opus — deep strategic thinker, momentum & narrative focus, contrarian on big spreads
     momentum_weight = fav_margin * 0.2  # heavier momentum factor
@@ -299,7 +321,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         claude_thesis = f"Regression risk: {fav} favored at {spread:+.1f} but margin is only {fav_margin:+.1f}. {dog} ({dog_rec}) narrative is stronger than the line implies — contrarian value."
     models.append({"model": "Claude Opus 4.6", "grade": claude_grade, "score": claude_score,
                     "confidence": min(92, int(54 + claude_score * 4)),
-                    "thesis": claude_thesis, "key_factors": []})
+                    "thesis": claude_thesis, "pick": _pick_for(claude_score), "key_factors": []})
 
     # Phi-4 Reasoning — small but sharp reasoning model, chain-of-thought approach
     # Weighs the delta between processes heavily — if Our and AI disagree, Phi digs into why
@@ -318,7 +340,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     phi_grade = _score_to_grade_local(phi_score)
     models.append({"model": "Phi-4 Reasoning", "grade": phi_grade, "score": phi_score,
                     "confidence": min(88, int(50 + phi_score * 4)),
-                    "thesis": phi_thesis, "key_factors": []})
+                    "thesis": phi_thesis, "pick": _pick_for(phi_score), "key_factors": []})
 
     # Qwen 3-32B — multilingual powerhouse, excels at pattern recognition across large datasets
     # Focuses on record differentials and historical patterns, slightly aggressive on clear mismatches
@@ -343,7 +365,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         qwen_thesis = f"Near-even matchup: {fav} ({fav_rec}) vs {dog} ({dog_rec}) separated by only {record_gap:.0%}. This is a coin flip the market got right — pass or go small."
     models.append({"model": "Qwen 3-32B", "grade": qwen_grade, "score": qwen_score,
                     "confidence": min(90, int(52 + qwen_score * 4)),
-                    "thesis": qwen_thesis, "key_factors": []})
+                    "thesis": qwen_thesis, "pick": _pick_for(qwen_score), "key_factors": []})
 
     return models
 
@@ -426,13 +448,91 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     }
 
 
-async def _fetch_and_grade(sport: str) -> list:
+def _evaluate_nrfi(game: dict) -> dict:
+    """Evaluate NRFI (No Run First Inning) probability for an MLB game."""
+    odds = game.get("odds", {})
+    spread = abs(odds.get("spread", 0))
+    total = odds.get("total", 0)
+    home = game.get("homeTeam", "")
+    away = game.get("awayTeam", "")
+
+    # Estimate RPG from total (total is combined runs, so per-team = total / 2)
+    home_rpg = total / 2 if total > 0 else 4.5
+    away_rpg = total / 2 if total > 0 else 4.5
+
+    # Adjust based on spread — bigger favorite implies run differential
+    if spread > 0:
+        home_rpg += spread * 0.15
+        away_rpg -= spread * 0.15
+
+    # Park factor — hitter-friendly parks boost run expectation
+    hitter_park = home in HITTER_FRIENDLY_PARKS
+
+    # Pitcher quality proxy — tight spread + low total = good pitching
+    pitcher_quality = "good" if total < 8.5 and spread < 2.5 else ("average" if total < 9.5 else "poor")
+
+    # NRFI logic
+    reasons = []
+    nrfi_score = 0
+
+    if home_rpg < 4.5 and away_rpg < 4.5:
+        nrfi_score += 2
+        reasons.append(f"Low-scoring matchup ({total:.1f} O/U)")
+    elif home_rpg > 5.5 or away_rpg > 5.5:
+        nrfi_score -= 2
+        reasons.append(f"High-scoring game expected ({total:.1f} O/U)")
+
+    if spread < 2:
+        nrfi_score += 1
+        reasons.append(f"Tight spread ({spread:.1f}) — evenly matched pitching")
+    elif spread > 3:
+        nrfi_score -= 1
+        reasons.append(f"Wide spread ({spread:.1f}) — mismatch risk")
+
+    if hitter_park:
+        nrfi_score -= 2
+        reasons.append(f"{home} plays in a hitter-friendly park")
+    else:
+        nrfi_score += 1
+        reasons.append("Neutral/pitcher-friendly park")
+
+    if pitcher_quality == "good":
+        nrfi_score += 2
+        reasons.append("Strong pitching indicators (low total + tight line)")
+    elif pitcher_quality == "poor":
+        nrfi_score -= 1
+        reasons.append("Weak pitching indicators")
+
+    if total < 8.0:
+        nrfi_score += 1
+        reasons.append(f"Sub-8 total ({total:.1f}) — pitcher's duel")
+
+    # Determine verdict
+    if nrfi_score >= 3:
+        verdict = "NRFI"
+        confidence = min(85, 60 + nrfi_score * 5)
+    elif nrfi_score <= -1:
+        verdict = "YRFI"
+        confidence = min(85, 60 + abs(nrfi_score) * 5)
+    else:
+        verdict = "SKIP"
+        confidence = 45
+
+    reason = ". ".join(reasons[:3])
+    return {"verdict": verdict, "confidence": confidence, "reason": reason}
+
+
+async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") -> list:
     """Fetch live games from Odds API, then grade each one."""
     if not ODDS_API_KEY:
         logger.error("ODDS_API_KEY not configured")
         return []
 
-    keys = SPORT_KEYS.get(sport.lower(), [sport.lower()])
+    # Soccer league filtering
+    if sport.lower() == "soccer" and league and league in SOCCER_LEAGUE_MAP:
+        keys = SOCCER_LEAGUE_MAP[league]
+    else:
+        keys = SPORT_KEYS.get(sport.lower(), [sport.lower()])
     sport_upper = sport.upper()
     all_games = []
 
@@ -469,6 +569,10 @@ async def _fetch_and_grade(sport: str) -> list:
         grades = await _grade_game_full(game, sport_upper, odds_key)
         game.update(grades)
 
+        # NRFI mode for MLB
+        if sport_upper == "MLB" and mode == "nrfi":
+            game["nrfi"] = _evaluate_nrfi(game)
+
     return all_games
 
 
@@ -498,16 +602,17 @@ async def health():
 
 
 @app.get("/api/games")
-async def get_games(sport: str = "nba"):
+async def get_games(sport: str = "nba", mode: str = "games", league: str = ""):
     sport_lower = sport.lower()
-    cached = _cache.get(sport_lower)
+    cache_key = f"{sport_lower}:{mode}:{league}"
+    cached = _cache.get(cache_key)
     if cached:
         age = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
         if age < CACHE_TTL:
             return cached["data"]
-    games = await _fetch_and_grade(sport_lower)
+    games = await _fetch_and_grade(sport_lower, mode=mode, league=league)
     if games:
-        _cache[sport_lower] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
+        _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
     return games
 
 

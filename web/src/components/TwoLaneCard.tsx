@@ -142,6 +142,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                       {m.grade}
                     </div>
                     <div className="text-[9px] text-white/40">{m.score}</div>
+                    {(m as any).pick && <div className="text-[7px] font-bold text-[#00D4AA] mt-0.5 truncate">{(m as any).pick}</div>}
                   </div>
                 ))}
               </div>
@@ -152,6 +153,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                     <div className="flex items-center gap-1">
                       <span className="text-[8px] font-bold text-[#00D4AA]/80">{m.model}</span>
                       <span className="text-[8px] font-mono text-white/50">{m.grade}</span>
+                      {(m as any).pick && <span className="text-[8px] font-bold text-[#38BDF8]">{(m as any).pick}</span>}
                     </div>
                     {m.thesis && (
                       <div className="text-[9px] text-white/35 leading-snug line-clamp-2">{m.thesis}</div>
@@ -177,6 +179,32 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           )}
         </div>
       </div>
+
+      {/* ═══ NRFI VERDICT (replaces convergence header when present) ═══ */}
+      {game.nrfi ? (
+        <div className="bg-[#D4A017]/[0.06] border border-[#D4A017]/25 rounded-xl p-4 text-center mb-3">
+          <div className="text-[10px] font-black tracking-[2px] text-[#D4A017] mb-2">NRFI ANALYSIS</div>
+
+          {/* NRFI verdict badge */}
+          <span className={`inline-block px-4 py-1.5 rounded-full text-sm font-black tracking-wider border ${
+            game.nrfi.verdict === 'NRFI'
+              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+              : game.nrfi.verdict === 'YRFI'
+              ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+              : 'bg-white/10 text-white/50 border-white/20'
+          }`}>
+            {game.nrfi.verdict}
+          </span>
+
+          <div className="text-lg font-black mt-2" style={{ color: game.nrfi.verdict === 'NRFI' ? '#10B981' : game.nrfi.verdict === 'YRFI' ? '#EF4444' : '#6E6E80' }}>
+            {game.nrfi.confidence}% confidence
+          </div>
+
+          <div className="text-[10px] text-white/40 mt-1 leading-snug max-w-md mx-auto">
+            {game.nrfi.reason}
+          </div>
+        </div>
+      ) : null}
 
       {/* ═══ CONVERGENCE ═══ */}
       <div className="bg-[#D4A017]/[0.06] border border-[#D4A017]/25 rounded-xl p-4 text-center">
