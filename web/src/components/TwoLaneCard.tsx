@@ -95,8 +95,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           {/* Grader Cards: Sintonia, Edge, Renzo */}
           {displayOur.profiles && Object.keys(displayOur.profiles).length > 0 && (
             <div className="grid grid-cols-3 gap-1.5 mb-2">
-              {Object.entries(displayOur.profiles as Record<string, {grade: string; final: number; sizing: string}>).map(([name, p]) => {
+              {Object.entries(displayOur.profiles as Record<string, {grade: string; final: number; sizing: string; picks?: string; margin?: number}>).map(([name, p]) => {
                 const colors: Record<string, string> = { sintonia: '#F72585', edge: '#818cf8', renzo: '#9B59B6' }
+                const pickLabel = p.picks === 'home' ? game.homeTeam?.split(' ').pop() : p.picks === 'away' ? game.awayTeam?.split(' ').pop() : ''
                 return (
                   <div key={name} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-2 text-center">
                     <div className="text-[8px] font-black uppercase" style={{ color: colors[name] || '#F72585' }}>{name}</div>
@@ -104,6 +105,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                     <div className="text-[9px] text-white/40">{p.final.toFixed(1)}</div>
                     {p.sizing && p.sizing !== 'PASS' && (
                       <div className="text-[8px] text-white/50 mt-0.5">{p.sizing}</div>
+                    )}
+                    {pickLabel && (
+                      <div className="text-[8px] font-bold mt-0.5" style={{ color: colors[name] || '#F72585' }}>{pickLabel}</div>
                     )}
                   </div>
                 )

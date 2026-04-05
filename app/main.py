@@ -53,9 +53,10 @@ PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "bovada"]
 _cache: Dict[str, dict] = {}
 CACHE_TTL = 300
 
+# Must match grade_engine.py GRADE_THRESHOLDS exactly
 GRADE_MAP = [
-    (9.0, "A+"), (8.5, "A"), (8.0, "A-"), (7.5, "B+"), (7.0, "B"),
-    (6.5, "B-"), (6.0, "C+"), (5.5, "C"), (5.0, "D"), (0.0, "F"),
+    (8.0, "A+"), (7.3, "A"), (6.5, "A-"), (6.0, "B+"), (5.5, "B"),
+    (5.0, "B-"), (4.5, "C+"), (3.5, "C"), (2.5, "D"), (0.0, "F"),
 ]
 
 
