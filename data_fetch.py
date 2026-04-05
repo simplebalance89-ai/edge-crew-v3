@@ -83,7 +83,8 @@ def _name_match(needle: str, candidates: list) -> bool:
     return False
 
 
-async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "") -> dict:
+async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
+                             opponent_name: str = "") -> dict:
     """Fetch team profile from ESPN. Returns dict with record, ppg, rest, injuries, L5, etc."""
     cache_key = f"{sport}:{team_name}"
     cached = _team_cache.get(cache_key)
@@ -130,7 +131,7 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "") -> 
             # ── Injuries + Schedule (parallel if we have team_id) ─────
             if team_id:
                 inj_task = _fetch_injuries(client, espn_sport, espn_league, team_id)
-                sched_task = _fetch_schedule_data(client, espn_sport, espn_league, team_id, team_name)
+                sched_task = _fetch_schedule_data(client, espn_sport, espn_league, team_id, team_name, opponent_name)
                 injuries, schedule_data = await asyncio.gather(inj_task, sched_task)
                 profile["injuries"] = injuries
                 profile.update(schedule_data)
@@ -321,17 +322,24 @@ async def _fetch_injuries(client: httpx.AsyncClient, sport: str, league: str,
 # ── Schedule / L5 / Road Trip ────────────────────────────────────────
 
 async def _fetch_schedule_data(client: httpx.AsyncClient, sport: str, league: str,
-                                team_id: str, team_name: str) -> dict:
-    """Fetch team schedule to derive L5 record, margin, and road trip length. Cached."""
+                                team_id: str, team_name: str,
+                                opponent_name: str = "") -> dict:
+    """Fetch team schedule to derive L5 record, margin, road trip, H2H, and congestion. Cached."""
     cache_key = f"{sport}/{league}/{team_id}/schedule"
     cached = _schedule_cache.get(cache_key)
     if cached:
         age = (datetime.now(timezone.utc) - cached.get("_ts", datetime.min.replace(tzinfo=timezone.utc))).total_seconds()
         if age < _SCHEDULE_CACHE_TTL:
-            return cached.get("data", {})
+            base = cached.get("data", {})
+            # H2H needs opponent context — compute on-the-fly from cached events
+            if opponent_name and cached.get("events"):
+                base["h2h_season"] = _calc_h2h(cached["events"], team_name, opponent_name)
+            return base
 
-    result = {"L5": "", "L5_margin": 0, "road_trip_len": 0, "home_stand_len": 0}
+    result = {"L5": "", "L5_margin": 0, "road_trip_len": 0, "home_stand_len": 0,
+              "h2h_season": "0-0", "matches_in_10d": 0}
 
+    raw_events = []
     try:
         url = f"{ESPN_BASE}/{sport}/{league}/teams/{team_id}/schedule"
         resp = await client.get(url)
@@ -341,6 +349,7 @@ async def _fetch_schedule_data(client: httpx.AsyncClient, sport: str, league: st
 
         data = resp.json()
         events = data.get("events", [])
+        raw_events = events
 
         # Filter to completed games
         completed = []
@@ -368,10 +377,17 @@ async def _fetch_schedule_data(client: httpx.AsyncClient, sport: str, league: st
         # Road trip / home stand
         result.update(_calc_trip_info(events, team_name))
 
+        # H2H season record
+        if opponent_name:
+            result["h2h_season"] = _calc_h2h(events, team_name, opponent_name)
+
+        # Fixture congestion (matches in +/- 10 days)
+        result["matches_in_10d"] = _calc_congestion(events)
+
     except Exception as e:
         logger.debug(f"[ESPN] Schedule fetch failed for team {team_id}: {e}")
 
-    _schedule_cache[cache_key] = {"data": result, "_ts": datetime.now(timezone.utc)}
+    _schedule_cache[cache_key] = {"data": result, "events": raw_events, "_ts": datetime.now(timezone.utc)}
     return result
 
 
@@ -496,6 +512,77 @@ def _calc_trip_info(events: list, team_name: str) -> dict:
     return result
 
 
+# ── H2H Season Record ────────────────────────────────────────────────
+
+def _calc_h2h(events: list, team_name: str, opponent_name: str) -> str:
+    """Calculate H2H season record from completed schedule events.
+    Returns W-L string like '2-1'."""
+    wins = 0
+    losses = 0
+    for ev in events:
+        # Must be completed
+        status_name = ev.get("status", {}).get("type", {}).get("name", "")
+        comps = ev.get("competitions", [])
+        if comps:
+            comp_status = comps[0].get("status", {}).get("type", {}).get("name", "")
+        else:
+            comp_status = ""
+        if status_name not in ("STATUS_FINAL", "STATUS_FULL_TIME") and \
+           comp_status not in ("STATUS_FINAL", "STATUS_FULL_TIME"):
+            continue
+
+        if not comps:
+            continue
+        comp = comps[0]
+        our_team = None
+        opp_team = None
+        is_h2h_game = False
+        for c in comp.get("competitors", []):
+            team = c.get("team", {})
+            names = [
+                team.get("displayName", ""),
+                team.get("shortDisplayName", ""),
+                team.get("name", ""),
+                team.get("abbreviation", ""),
+            ]
+            if _name_match(team_name, names):
+                our_team = c
+            elif _name_match(opponent_name, names):
+                opp_team = c
+                is_h2h_game = True
+
+        if our_team and opp_team and is_h2h_game:
+            our_score = _safe_score(our_team)
+            opp_score = _safe_score(opp_team)
+            if our_score > opp_score:
+                wins += 1
+            elif opp_score > our_score:
+                losses += 1
+
+    if wins + losses == 0:
+        return "0-0"
+    return f"{wins}-{losses}"
+
+
+# ── Fixture Congestion (Soccer) ──────────────────────────────────────
+
+def _calc_congestion(events: list) -> int:
+    """Count matches within 10 days before and after today from schedule events."""
+    today = datetime.now(timezone.utc).date()
+    count = 0
+    for ev in events:
+        try:
+            ev_date = datetime.fromisoformat(
+                ev.get("date", "").replace("Z", "+00:00")
+            ).date()
+        except (ValueError, AttributeError):
+            continue
+        days_diff = (ev_date - today).days
+        if -10 <= days_diff <= 10 and days_diff != 0:
+            count += 1
+    return count
+
+
 # ── Finders ────────────────────────────────────────────────────────────
 
 def _find_team_in_scoreboard(data: dict, team_name: str) -> Optional[dict]:
@@ -510,7 +597,7 @@ def _find_team_in_scoreboard(data: dict, team_name: str) -> Optional[dict]:
                     team.get("abbreviation", ""),
                 ]
                 if _name_match(team_name, names):
-                    return {"competitor": competitor, "team": team}
+                    return {"competitor": competitor, "team": team, "competition": comp}
     return None
 
 
@@ -530,6 +617,56 @@ def _extract_scoreboard_data(data: dict, sport: str = "NBA") -> dict:
         elif rtype in ("road", "away"):
             profile["away_record"] = summary
     _derive_ppg_from_record(profile, sport)
+
+    # ── Pace proxy (NBA/NCAAB) ──
+    if sport in ("NBA", "NCAAB") and profile.get("ppg_L5") and profile.get("opp_ppg_L5"):
+        profile["pace_L5"] = round(profile["ppg_L5"] + profile["opp_ppg_L5"], 1)
+
+    # ── Starting Pitcher (MLB) — extract from competition probables ──
+    if sport == "MLB":
+        competition = data.get("competition", {})
+        # ESPN puts probables on each competitor
+        probables = comp.get("probables", [])
+        if probables:
+            for prob in probables:
+                athlete = prob.get("athlete", {})
+                if athlete:
+                    sp_info = {"name": athlete.get("displayName", athlete.get("fullName", "Unknown"))}
+                    # Try to get ERA from athlete stats
+                    for stat_block in athlete.get("statistics", []):
+                        for stat in stat_block.get("stats", []):
+                            pass  # ESPN stats are positional
+                        # Sometimes stats is a flat list with names
+                        splits = stat_block.get("splits", {})
+                        for cat in splits.get("categories", []):
+                            for s in cat.get("stats", []):
+                                if s.get("name", "").lower() == "era":
+                                    sp_info["era"] = s.get("displayValue", s.get("value"))
+                    profile["starting_pitcher"] = sp_info
+                    break
+        # Fallback: check competition-level probables
+        if not profile.get("starting_pitcher") or not profile["starting_pitcher"].get("name"):
+            for c in competition.get("competitors", []):
+                c_team = c.get("team", {})
+                c_id = str(c_team.get("id", ""))
+                comp_team_id = str(data.get("team", {}).get("id", ""))
+                if c_id == comp_team_id or _name_match(
+                        c_team.get("displayName", ""),
+                        [data.get("team", {}).get("displayName", "")]):
+                    for prob in c.get("probables", []):
+                        athlete = prob.get("athlete", {})
+                        if athlete:
+                            sp_info = {"name": athlete.get("displayName", "Unknown")}
+                            stats = athlete.get("stats", [])
+                            # ESPN sometimes has stats as flat array: [W, L, ERA, ...]
+                            if len(stats) >= 3:
+                                try:
+                                    sp_info["era"] = float(stats[2])
+                                except (ValueError, TypeError, IndexError):
+                                    pass
+                            profile["starting_pitcher"] = sp_info
+                            break
+
     return profile
 
 
@@ -605,6 +742,11 @@ def _extract_team_detail(team: dict, sport: str = "NBA") -> dict:
             profile["avg_margin_L10"] = round(profile["ppg_L5"] - profile["opp_ppg_L5"], 1)
 
     _derive_ppg_from_record(profile, sport)
+
+    # ── Pace proxy (NBA/NCAAB): pace_L5 = team_ppg + opp_ppg ──
+    if sport in ("NBA", "NCAAB") and profile.get("ppg_L5") and profile.get("opp_ppg_L5"):
+        profile["pace_L5"] = round(profile["ppg_L5"] + profile["opp_ppg_L5"], 1)
+
     return profile
 
 
@@ -665,6 +807,8 @@ def _default_profile(team_name: str) -> dict:
         "home_stand_len": 0,
         "pace_L5": 0,
         "h2h_season": "0-0",
+        "matches_in_10d": 0,
+        "starting_pitcher": {},
         "injuries": [],
     }
 
@@ -673,14 +817,31 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
     home = game_data.get("homeTeam", "")
     away = game_data.get("awayTeam", "")
     home_profile, away_profile = await asyncio.gather(
-        fetch_team_profile(home, sport, odds_key),
-        fetch_team_profile(away, sport, odds_key),
+        fetch_team_profile(home, sport, odds_key, opponent_name=away),
+        fetch_team_profile(away, sport, odds_key, opponent_name=home),
     )
     odds = game_data.get("odds", {})
 
     # Pull injuries from profiles for the grade engine
-    home_injuries = home_profile.get("injuries", [])
-    away_injuries = away_profile.get("injuries", [])
+    # Ensure each injury has the fields the grade engine expects:
+    #   player, status, position, ppg (default 0)
+    home_injuries = []
+    for inj in home_profile.get("injuries", []):
+        home_injuries.append({
+            "player": inj.get("player", "Unknown"),
+            "status": inj.get("status", "UNKNOWN"),
+            "position": inj.get("position", ""),
+            "ppg": inj.get("ppg", 0),
+        })
+    away_injuries = []
+    for inj in away_profile.get("injuries", []):
+        away_injuries.append({
+            "player": inj.get("player", "Unknown"),
+            "status": inj.get("status", "UNKNOWN"),
+            "position": inj.get("position", ""),
+            "ppg": inj.get("ppg", 0),
+        })
+
     home_out = [i for i in home_injuries if i.get("status") in ("OUT", "DOUBTFUL")]
     away_out = [i for i in away_injuries if i.get("status") in ("OUT", "DOUBTFUL")]
 

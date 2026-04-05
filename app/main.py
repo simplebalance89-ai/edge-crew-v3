@@ -338,6 +338,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         "odds": odds,
         "bookmaker": bookmaker_used,
         "arbitrage": arb,
+        "shifts": _get_line_movement(event["id"], spread or 0, ml_home or 0),
     }
 
 
@@ -1052,6 +1053,144 @@ class GradeRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     sport: str
+
+
+# ─── Odds Snapshot / Line Movement Sync ────────────────────────────────────────
+
+_ODDS_HISTORY_FILE = "odds_history.json"
+
+
+def _load_odds_history() -> dict:
+    return _load_json(_ODDS_HISTORY_FILE, {})
+
+
+def _save_odds_history(data: dict):
+    _save_json(_ODDS_HISTORY_FILE, data)
+
+
+def _get_line_movement(game_id: str, current_spread: float, current_ml_home: float) -> dict:
+    """Compare current odds to first snapshot for this game → spread_delta."""
+    history = _load_odds_history()
+    snapshots = history.get(game_id, [])
+    if not snapshots:
+        return {"spread_delta": 0, "ml_moved": False}
+    first = snapshots[0]
+    spread_delta = round(current_spread - first.get("spread", current_spread), 1)
+    ml_moved = abs((current_ml_home or 0) - first.get("ml_home", current_ml_home or 0)) > 15
+    return {"spread_delta": spread_delta, "ml_moved": ml_moved}
+
+
+@app.post("/api/sync/odds")
+async def sync_odds():
+    """Cron endpoint: snapshot ALL current odds for line movement tracking.
+    Schedule: 1am, 9am, 11am, 3:30pm, 6:30pm PST — 7 days/week.
+    Also runs real AI analysis on all sports."""
+    if not ODDS_API_KEY:
+        return {"error": "ODDS_API_KEY not configured"}
+
+    history = _load_odds_history()
+    now_ts = datetime.now(timezone.utc).isoformat()
+    total_snapped = 0
+    sports_synced = []
+
+    all_sport_keys = list(SPORT_KEYS.keys())
+
+    for sport in all_sport_keys:
+        try:
+            keys = SPORT_KEYS.get(sport, [])
+            async with httpx.AsyncClient(timeout=15) as client:
+                for key in keys:
+                    try:
+                        resp = await client.get(
+                            f"{ODDS_API_BASE}/{key}/odds/",
+                            params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                                    "markets": "h2h,spreads,totals", "oddsFormat": "american"},
+                        )
+                        if resp.status_code != 200:
+                            continue
+                        events = resp.json()
+                        for event in events:
+                            game_id = event.get("id", "")
+                            if not game_id:
+                                continue
+                            # Parse current odds
+                            spread = total = ml_home = ml_away = 0
+                            for bk in event.get("bookmakers", [])[:3]:
+                                markets = {m["key"]: m["outcomes"] for m in bk.get("markets", [])}
+                                for o in markets.get("spreads", []):
+                                    if o["name"] == event.get("home_team") and not spread:
+                                        spread = o.get("point", 0)
+                                for o in markets.get("h2h", []):
+                                    if o["name"] == event.get("home_team") and not ml_home:
+                                        ml_home = o.get("price", 0)
+                                    elif o["name"] == event.get("away_team") and not ml_away:
+                                        ml_away = o.get("price", 0)
+                                for o in markets.get("totals", []):
+                                    if o["name"] == "Over" and not total:
+                                        total = o.get("point", 0)
+                                if spread and ml_home:
+                                    break
+
+                            snapshot = {
+                                "ts": now_ts,
+                                "spread": spread,
+                                "total": total,
+                                "ml_home": ml_home,
+                                "ml_away": ml_away,
+                            }
+
+                            if game_id not in history:
+                                history[game_id] = []
+                            history[game_id].append(snapshot)
+                            total_snapped += 1
+
+                    except Exception as e:
+                        logger.warning(f"[SYNC] {key}: {e}")
+
+            sports_synced.append(sport)
+        except Exception as e:
+            logger.warning(f"[SYNC] sport {sport}: {e}")
+
+    # Prune old games (> 3 days old)
+    cutoff = (datetime.now(timezone.utc).timestamp() - 3 * 86400)
+    for gid in list(history.keys()):
+        snaps = history[gid]
+        if snaps and snaps[-1].get("ts", ""):
+            try:
+                last_ts = datetime.fromisoformat(snaps[-1]["ts"].replace("Z", "+00:00")).timestamp()
+                if last_ts < cutoff:
+                    del history[gid]
+            except Exception:
+                pass
+
+    _save_odds_history(history)
+    logger.info(f"[SYNC] Snapped {total_snapped} games across {sports_synced}")
+
+    # Now run AI analysis on active sports (the real model calls)
+    for sport in ["nba", "nhl", "mlb", "soccer"]:
+        try:
+            cache_key = f"{sport}:games:"
+            cached = _cache.get(cache_key)
+            if cached and cached.get("data"):
+                games = cached["data"]
+                model_grades = await crowdsource_grade(games, sport)
+                # Enrich games with real AI grades
+                for game in games:
+                    gid = game.get("id", "")
+                    if gid in model_grades and model_grades[gid]:
+                        game["aiModels"] = model_grades[gid]
+                _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
+                logger.info(f"[SYNC] AI analysis complete for {sport}: {len(games)} games")
+        except Exception as e:
+            logger.warning(f"[SYNC] AI analysis failed for {sport}: {e}")
+
+    return {
+        "status": "synced",
+        "timestamp": now_ts,
+        "games_snapped": total_snapped,
+        "sports": sports_synced,
+        "history_size": len(history),
+    }
 
 
 @app.get("/health")
