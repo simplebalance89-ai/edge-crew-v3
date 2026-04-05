@@ -320,6 +320,31 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
                     "confidence": min(88, int(50 + phi_score * 4)),
                     "thesis": phi_thesis, "key_factors": []})
 
+    # Qwen 3-32B — multilingual powerhouse, excels at pattern recognition across large datasets
+    # Focuses on record differentials and historical patterns, slightly aggressive on clear mismatches
+    record_gap = 0
+    try:
+        fw, fl = int(fav_rec.split("-")[0]), int(fav_rec.split("-")[1])
+        dw, dl = int(dog_rec.split("-")[0]), int(dog_rec.split("-")[1])
+        fav_pct = fw / max(fw + fl, 1)
+        dog_pct = dw / max(dw + dl, 1)
+        record_gap = fav_pct - dog_pct
+    except (ValueError, IndexError):
+        fav_pct = dog_pct = 0.5
+    qwen_boost = record_gap * 3  # Aggressive on clear record gaps
+    qwen_score = round(our_score * 0.75 + qwen_boost + fav_margin * 0.1 + 1.0, 1)
+    qwen_score = max(3.0, min(9.5, qwen_score))
+    qwen_grade = _score_to_grade_local(qwen_score)
+    if record_gap > 0.15:
+        qwen_thesis = f"Pattern clear: {fav} ({fav_rec}, {fav_pct:.0%}) dominant over {dog} ({dog_rec}, {dog_pct:.0%}). {record_gap:.0%} win rate gap is significant — market hasn't fully priced the class difference."
+    elif record_gap > 0.05:
+        qwen_thesis = f"{fav} ({fav_rec}) edges {dog} ({dog_rec}) but gap is narrow ({record_gap:.0%}). Line {spread:+.1f} looks accurate — value is thin, need secondary signals to confirm."
+    else:
+        qwen_thesis = f"Near-even matchup: {fav} ({fav_rec}) vs {dog} ({dog_rec}) separated by only {record_gap:.0%}. This is a coin flip the market got right — pass or go small."
+    models.append({"model": "Qwen 3-32B", "grade": qwen_grade, "score": qwen_score,
+                    "confidence": min(90, int(52 + qwen_score * 4)),
+                    "thesis": qwen_thesis, "key_factors": []})
+
     return models
 
 
