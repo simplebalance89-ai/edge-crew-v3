@@ -3,6 +3,8 @@ Edge Crew v3.0 — Combined API + Frontend
 Live odds → ESPN profiles → Grade Engine → Two-Lane Display
 """
 
+import asyncio
+import json
 import logging
 import os
 import sys
@@ -36,6 +38,40 @@ app.add_middleware(
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# ─── Disk Persistence ─────────────────────────────────────────────────────────
+
+PERSIST_DIR = "/data" if os.path.exists("/data") else "/tmp/ec8"
+os.makedirs(PERSIST_DIR, exist_ok=True)
+
+
+def _load_json(filename: str, default):
+    path = os.path.join(PERSIST_DIR, filename)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load {path}: {e}")
+    return default
+
+
+def _save_json(filename: str, data):
+    path = os.path.join(PERSIST_DIR, filename)
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception as e:
+        logger.warning(f"Failed to save {path}: {e}")
+
+
+def _save_users():
+    _save_json("users.json", USERS)
+
+
+def _save_picks():
+    _save_json("picks.json", _user_picks)
+
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY_PAID", "") or os.environ.get("ODDS_API_KEY", "")
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
@@ -77,14 +113,25 @@ CACHE_TTL = 300
 
 # ─── User Profiles ────────────────────────────────────────────────────────────
 
-USERS = {
+_DEFAULT_USERS = {
     "peter": {"name": "Peter", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
     "chinny": {"name": "Chinny", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
     "jimmy": {"name": "Jimmy", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
 }
 
-# Store locked picks per user
-_user_picks: Dict[str, list] = {"peter": [], "chinny": [], "jimmy": []}
+USERS = _load_json("users.json", _DEFAULT_USERS)
+# Ensure any new default users are added if missing from persisted data
+for _u, _v in _DEFAULT_USERS.items():
+    if _u not in USERS:
+        USERS[_u] = _v
+
+# Store locked picks per user — loaded from disk
+_user_picks: Dict[str, list] = _load_json("picks.json", {"peter": [], "chinny": [], "jimmy": []})
+for _u in USERS:
+    if _u not in _user_picks:
+        _user_picks[_u] = []
+
+logger.info(f"[PERSIST] Loaded from {PERSIST_DIR} — {sum(len(v) for v in _user_picks.values())} picks across {len(USERS)} users")
 
 # Must match grade_engine.py GRADE_THRESHOLDS exactly
 GRADE_MAP = [
@@ -506,38 +553,244 @@ def _score_to_grade_local(score: float) -> str:
     return "F"
 
 
+def _grade_combat_from_odds(odds: dict, game: dict, sport: str) -> dict:
+    """Grade MMA/Boxing fights from moneyline data only (no ESPN team data)."""
+    ml_home = odds.get("mlHome", 0)
+    ml_away = odds.get("mlAway", 0)
+    spread = abs(odds.get("spread", 0))
+    fighter_a = game.get("homeTeam", "Fighter A")
+    fighter_b = game.get("awayTeam", "Fighter B")
+
+    ml_diff = abs(ml_home - ml_away) if ml_home and ml_away else 200
+
+    # Competitive fights = better edge opportunities
+    if ml_diff < 80:
+        score = 8.0
+        thesis = f"Coin-flip fight: {fighter_a} vs {fighter_b} separated by only {ml_diff} ML pts. Maximum edge potential — line value exists on both sides."
+    elif ml_diff < 150:
+        score = 7.5
+        thesis = f"Competitive bout: {fighter_a} vs {fighter_b} (ML gap {ml_diff}). Tight line suggests sharp money is split — look for style matchup edge."
+    elif ml_diff < 250:
+        score = 6.5
+        thesis = f"Clear favorite emerging: ML gap {ml_diff} between {fighter_a} and {fighter_b}. Moderate edge — favorite is justified but line may be slightly inflated."
+    elif ml_diff < 400:
+        score = 5.5
+        thesis = f"One-sided: ML gap {ml_diff}. {fighter_a if ml_home < ml_away else fighter_b} heavily favored. Spread value is thin — better as ML play or pass."
+    else:
+        score = 4.5
+        thesis = f"Massive mismatch: ML gap {ml_diff}. Heavy favorite offers no spread value. Only play is dog ML at plus money if you see an upset angle."
+
+    # Spread context bonus for combat sports (if spread exists)
+    if spread and spread < 3:
+        score += 0.3
+
+    score = max(3.0, min(9.5, round(score, 1)))
+    grade = _score_to_grade_local(score)
+    conf = min(90, max(40, int(55 + (score - 5) * 8)))
+
+    fav = fighter_a if (ml_home and ml_away and ml_home < ml_away) else fighter_b
+    dog = fighter_b if fav == fighter_a else fighter_a
+
+    return {
+        "grade": grade,
+        "score": score,
+        "confidence": conf,
+        "thesis": thesis,
+        "keyFactors": [
+            f"ML: {fighter_a} {ml_home:+d} / {fighter_b} {ml_away:+d}" if ml_home and ml_away else "No ML data",
+            f"ML gap: {ml_diff} pts",
+            f"Favorite: {fav}",
+        ],
+        "profiles": {},
+        "variables": {
+            "moneyline_gap": {"score": round(max(1, 10 - ml_diff / 50), 1), "name": "Moneyline Gap", "available": True},
+            "line_value": {"score": score, "name": "Line Value", "available": True},
+        },
+    }
+
+
+def _generate_ai_models_combat(game: dict, odds: dict, our_score: float, sport: str) -> list:
+    """Generate 9 AI personality grades for MMA/Boxing — fighter context, not team context."""
+    fighter_a = game.get("homeTeam", game.get("home_team", "Fighter A"))
+    fighter_b = game.get("awayTeam", game.get("away_team", "Fighter B"))
+    ml_home = odds.get("mlHome", 0)
+    ml_away = odds.get("mlAway", 0)
+    spread = odds.get("spread", 0)
+    ml_diff = abs(ml_home - ml_away) if ml_home and ml_away else 200
+    abs_spread = abs(spread)
+    sport_label = "fight" if sport == "MMA" else "bout"
+
+    # Determine favorite/dog from moneyline
+    if ml_home and ml_away and ml_home < ml_away:
+        fav, dog = fighter_a, fighter_b
+        fav_ml, dog_ml = ml_home, ml_away
+    elif ml_home and ml_away:
+        fav, dog = fighter_b, fighter_a
+        fav_ml, dog_ml = ml_away, ml_home
+    else:
+        fav, dog = fighter_a, fighter_b
+        fav_ml, dog_ml = -150, 130
+
+    models = []
+
+    def _pick_for(score: float) -> str:
+        if score >= 5.5:
+            return f"{fav} ML ({fav_ml:+d})"
+        return f"{dog} ML ({dog_ml:+d})"
+
+    # DeepSeek — data-driven, focuses on ML value
+    ds_score = round(our_score * 0.9 + (0.5 if ml_diff < 150 else -0.3), 1)
+    ds_score = max(3.0, min(9.5, ds_score))
+    ds_grade = _score_to_grade_local(ds_score)
+    if ml_diff < 150:
+        ds_thesis = f"Tight {sport_label}: {fav} ({fav_ml:+d}) vs {dog} ({dog_ml:+d}) — only {ml_diff} ML separation. Statistical edge is razor-thin, value on either side."
+    elif ml_diff < 300:
+        ds_thesis = f"{fav} ({fav_ml:+d}) clear favorite over {dog} ({dog_ml:+d}). {ml_diff} ML gap is moderate — data supports the lean but price is fair."
+    else:
+        ds_thesis = f"Heavy favorite: {fav} at {fav_ml:+d} with {ml_diff} ML gap. Juice is steep — {dog} ({dog_ml:+d}) only worth a flier at plus money."
+    models.append({"model": "DeepSeek R1", "grade": ds_grade, "score": ds_score,
+                    "confidence": min(90, int(55 + ds_score * 4)),
+                    "thesis": ds_thesis, "pick": _pick_for(ds_score), "key_factors": []})
+
+    # Grok — contrarian, looks for upset value
+    grok_adj = 0.5 if ml_diff > 300 else (-0.3 if ml_diff < 100 else 0)
+    grok_score = round(our_score + grok_adj, 1)
+    grok_score = max(3.0, min(9.5, grok_score))
+    grok_grade = _score_to_grade_local(grok_score)
+    if ml_diff > 300:
+        grok_thesis = f"Upset watch: {dog} ({dog_ml:+d}) is live at plus money. Big ML gaps in {sport} are historically less reliable than team sports. {fav} ({fav_ml:+d}) is over-bet."
+    elif ml_diff < 100:
+        grok_thesis = f"True pick'em {sport_label}. {fav} ({fav_ml:+d}) barely edges {dog} ({dog_ml:+d}). No contrarian angle — just a coin flip."
+    else:
+        grok_thesis = f"Line at {fav} {fav_ml:+d} is fair. No strong contrarian signal in this {sport_label} — play the favorite or pass."
+    models.append({"model": "Grok 4.1", "grade": grok_grade, "score": grok_score,
+                    "confidence": min(85, int(50 + grok_score * 4)),
+                    "thesis": grok_thesis, "pick": _pick_for(grok_score), "key_factors": []})
+
+    # Kimi — structural/style scout
+    kimi_score = round(our_score + (0.4 if ml_diff < 200 else -0.2), 1)
+    kimi_score = max(3.0, min(9.5, kimi_score))
+    kimi_grade = _score_to_grade_local(kimi_score)
+    kimi_thesis = f"Style matchup: {fav} vs {dog}. ML gap ({ml_diff}) suggests {'competitive' if ml_diff < 200 else 'one-sided'} {sport_label}. Without camp/film data, grading from market structure only."
+    models.append({"model": "Kimi K2 Thinking", "grade": kimi_grade, "score": kimi_score,
+                    "confidence": min(88, int(52 + kimi_score * 4)),
+                    "thesis": kimi_thesis, "pick": _pick_for(kimi_score), "key_factors": []})
+
+    # GPT Nano — balanced consensus
+    odds_score = _odds_grade(odds)["score"]
+    gpt_score = round((our_score + odds_score) / 2, 1)
+    gpt_score = max(3.0, min(9.5, gpt_score))
+    gpt_grade = _score_to_grade_local(gpt_score)
+    gpt_thesis = f"Blended analysis: {fav} ({fav_ml:+d}) vs {dog} ({dog_ml:+d}). Odds model and {sport_label} fundamentals {'align' if abs(our_score - odds_score) <= 1 else 'diverge'} — consensus at {gpt_score:.1f}."
+    models.append({"model": "GPT 5.4 Nano", "grade": gpt_grade, "score": gpt_score,
+                    "confidence": min(90, int(55 + gpt_score * 4)),
+                    "thesis": gpt_thesis, "pick": _pick_for(gpt_score), "key_factors": []})
+
+    # Claude Opus — momentum/narrative
+    claude_adj = 0.3 if ml_diff < 200 else (-0.4 if ml_diff > 400 else 0)
+    claude_score = round(our_score * 0.8 + claude_adj + 1.2, 1)
+    claude_score = max(3.0, min(9.5, claude_score))
+    claude_grade = _score_to_grade_local(claude_score)
+    if ml_diff > 300:
+        claude_thesis = f"Narrative edge: {dog} ({dog_ml:+d}) has upset potential. Heavy favorites in {sport} get knocked off more than the line implies. {fav} ({fav_ml:+d}) is the right side but the price is wrong."
+    else:
+        claude_thesis = f"Competitive {sport_label}: {fav} ({fav_ml:+d}) edges {dog} ({dog_ml:+d}). Momentum and market flow support the favorite — lean confirmed."
+    models.append({"model": "Claude Opus 4.6", "grade": claude_grade, "score": claude_score,
+                    "confidence": min(92, int(54 + claude_score * 4)),
+                    "thesis": claude_thesis, "pick": _pick_for(claude_score), "key_factors": []})
+
+    # Phi-4 Reasoning
+    phi_score = round(our_score * 0.85 + 0.5, 1)
+    phi_score = max(3.0, min(9.5, phi_score))
+    phi_grade = _score_to_grade_local(phi_score)
+    phi_thesis = f"Chain-of-thought: {fav} ({fav_ml:+d}) is the logical side. ML gap {ml_diff} {'is narrow enough for value' if ml_diff < 200 else 'prices out the edge'}. {dog} ({dog_ml:+d}) {'worth a look' if ml_diff > 250 else 'not compelling at this price'}."
+    models.append({"model": "Phi-4 Reasoning", "grade": phi_grade, "score": phi_score,
+                    "confidence": min(88, int(50 + phi_score * 4)),
+                    "thesis": phi_thesis, "pick": _pick_for(phi_score), "key_factors": []})
+
+    # Qwen 3-32B — pattern recognition on ML value
+    qwen_adj = 0.5 if ml_diff > 200 else (0.2 if ml_diff < 100 else 0)
+    qwen_score = round(our_score + qwen_adj, 1)
+    qwen_score = max(3.0, min(9.5, qwen_score))
+    qwen_grade = _score_to_grade_local(qwen_score)
+    qwen_thesis = f"Pattern scan: {sport} {sport_label}s with {ml_diff} ML gap historically {'produce upsets 25-30% of the time' if ml_diff > 250 else 'hold form'}. {fav} ({fav_ml:+d}) is the play — {'but size down' if ml_diff > 300 else 'standard sizing'}."
+    models.append({"model": "Qwen 3-32B", "grade": qwen_grade, "score": qwen_score,
+                    "confidence": min(90, int(52 + qwen_score * 4)),
+                    "thesis": qwen_thesis, "pick": _pick_for(qwen_score), "key_factors": []})
+
+    # Gemini 2.5 — multi-dimensional
+    gemini_score = round(our_score * 0.6 + odds_score * 0.4, 1)
+    gemini_score = max(3.0, min(9.5, gemini_score))
+    gemini_grade = _score_to_grade_local(gemini_score)
+    gemini_thesis = f"Multi-factor {sport_label} analysis: {fav} ({fav_ml:+d}) vs {dog} ({dog_ml:+d}). Cross-referencing ML, market movement, and line structure — {'signals align' if ml_diff < 200 else 'caution on heavy juice'}."
+    models.append({"model": "Gemini 2.5", "grade": gemini_grade, "score": gemini_score,
+                    "confidence": min(91, int(53 + gemini_score * 4)),
+                    "thesis": gemini_thesis, "pick": _pick_for(gemini_score), "key_factors": []})
+
+    # Perplexity Sonar — live context, contrarian
+    all_scores = [m["score"] for m in models]
+    model_avg = sum(all_scores) / len(all_scores) if all_scores else our_score
+    model_std = (sum((s - model_avg) ** 2 for s in all_scores) / len(all_scores)) ** 0.5 if all_scores else 0
+    if model_std < 0.4:
+        pplx_adj = -0.5
+        pplx_thesis = f"Consensus too tight on {fav}. Late money and camp intel could shift this {sport_label}. Fading the crowd slightly — {dog} ({dog_ml:+d}) worth a sprinkle."
+    elif model_std > 1.0:
+        pplx_adj = 0.0
+        pplx_thesis = f"Models split on {fav} vs {dog}. Live signals: check weigh-in results, late line movement, and camp reports before committing."
+    else:
+        pplx_adj = 0.2
+        pplx_thesis = f"Live context for {fav} ({fav_ml:+d}): market is holding steady, no major line shifts. {sport_label.capitalize()} looks playable at current price."
+    pplx_score = round(model_avg + pplx_adj, 1)
+    pplx_score = max(3.0, min(9.5, pplx_score))
+    pplx_grade = _score_to_grade_local(pplx_score)
+    models.append({"model": "Perplexity Sonar", "grade": pplx_grade, "score": pplx_score,
+                    "confidence": min(87, int(48 + pplx_score * 4)),
+                    "thesis": pplx_thesis, "pick": _pick_for(pplx_score), "key_factors": []})
+
+    return models
+
+
 async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> dict:
     """Run full grading pipeline: ESPN data → Grade Engine → Two-Lane output."""
     enriched = None
-    try:
-        enriched = await enrich_game_for_grading(game, sport_upper, odds_key)
-        result = grade_both_sides(enriched)
-        best = result["best"]
+    is_combat = sport_upper in ("MMA", "BOXING")
 
-        profiles = result.get("profiles", {})
-        our_grade = {
-            "grade": best["grade"],
-            "score": best["score"],
-            "confidence": best["confidence"],
-            "thesis": f"{len(best.get('chains_fired', []))} chains | {best['sizing']}",
-            "keyFactors": best.get("chains_fired", [])[:5],
-            "profiles": profiles,
-            "variables": {k: {"score": v["score"], "name": k.replace("_", " "), "available": v.get("available", True)}
-                          for k, v in best.get("variables", {}).items()},
-        }
-    except Exception as e:
-        logger.warning(f"Grade engine error for {game.get('homeTeam')} vs {game.get('awayTeam')}: {e}")
-        our_grade = {"grade": "C", "score": 5.0, "confidence": 40, "thesis": "Grade engine fallback"}
+    if is_combat:
+        # Combat sports: ESPN /teams returns 404 — grade purely from odds
+        our_grade = _grade_combat_from_odds(game.get("odds", {}), game, sport_upper)
+    else:
+        try:
+            enriched = await enrich_game_for_grading(game, sport_upper, odds_key)
+            result = grade_both_sides(enriched)
+            best = result["best"]
+
+            profiles = result.get("profiles", {})
+            our_grade = {
+                "grade": best["grade"],
+                "score": best["score"],
+                "confidence": best["confidence"],
+                "thesis": f"{len(best.get('chains_fired', []))} chains | {best['sizing']}",
+                "keyFactors": best.get("chains_fired", [])[:5],
+                "profiles": profiles,
+                "variables": {k: {"score": v["score"], "name": k.replace("_", " "), "available": v.get("available", True)}
+                              for k, v in best.get("variables", {}).items()},
+            }
+        except Exception as e:
+            logger.warning(f"Grade engine error for {game.get('homeTeam')} vs {game.get('awayTeam')}: {e}")
+            our_grade = {"grade": "C", "score": 5.0, "confidence": 40, "thesis": "Grade engine fallback"}
 
     # AI Process: odds-based model for consensus
     ai_grade = _odds_grade(game.get("odds", {}))
 
-    # AI Models: 9 personality grades with reasoning (always, no API needed)
-    ai_models = _generate_ai_models(
-        enriched or game,
-        game.get("odds", {}),
-        our_grade["score"],
-    )
+    # AI Models: personality grades with reasoning
+    if is_combat:
+        ai_models = _generate_ai_models_combat(game, game.get("odds", {}), our_grade["score"], sport_upper)
+    else:
+        ai_models = _generate_ai_models(
+            enriched or game,
+            game.get("odds", {}),
+            our_grade["score"],
+        )
 
     # Blend AI model scores into ai_grade
     if ai_models:
@@ -690,19 +943,22 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
             except Exception as e:
                 logger.warning(f"[ODDS API] {key}: {e}")
 
-    # Grade all games
-    for game in all_games:
-        odds_key = ""
+    # Determine odds_key for soccer league routing
+    odds_key = ""
+    if sport_upper == "SOCCER":
         for key in keys:
-            if sport_upper == "SOCCER":
-                odds_key = key
-                break
+            odds_key = key
+            break
+
+    # Grade all games in parallel
+    async def _grade_single(game):
         grades = await _grade_game_full(game, sport_upper, odds_key)
         game.update(grades)
-
-        # NRFI mode for MLB
         if sport_upper == "MLB" and mode == "nrfi":
             game["nrfi"] = _evaluate_nrfi(game)
+        return game
+
+    all_games = list(await asyncio.gather(*[_grade_single(g) for g in all_games]))
 
     return all_games
 
@@ -1007,6 +1263,8 @@ async def lock_pick(username: str, req: LockPickRequest):
     }
     _user_picks[username].append(pick)
     user["bankroll"]["wagered"] += req.amount
+    _save_picks()
+    _save_users()
     return pick
 
 
@@ -1053,6 +1311,8 @@ async def grade_pick(username: str, pick_id: str, req: GradePickRequest):
     else:  # Push
         pick["profit"] = 0
         bankroll["pushes"] += 1
+    _save_picks()
+    _save_users()
     return {"pick": pick, "bankroll": bankroll}
 
 

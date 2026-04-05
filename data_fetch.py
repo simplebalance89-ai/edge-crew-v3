@@ -7,6 +7,7 @@ Strategy:
   2. /teams list — get team ID, then /teams/{id} for full profile (ALL teams)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -90,13 +91,13 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "") -> 
             team_data = _find_team_in_scoreboard(scoreboard, team_name)
 
             if team_data:
-                profile.update(_extract_scoreboard_data(team_data))
+                profile.update(_extract_scoreboard_data(team_data, sport))
                 logger.info(f"[ESPN] Scoreboard hit: {team_name} → {profile.get('record','?')}")
             else:
                 # 2) Get team ID, then fetch /teams/{id} for full profile
                 team_id = await _get_team_id(client, espn_sport, espn_league, team_name)
                 if team_id:
-                    detail = await _fetch_team_detail(client, espn_sport, espn_league, team_id)
+                    detail = await _fetch_team_detail(client, espn_sport, espn_league, team_id, sport)
                     if detail:
                         profile.update(detail)
                         logger.info(f"[ESPN] Team detail hit: {team_name} → {profile.get('record','?')}")
@@ -164,7 +165,7 @@ async def _get_team_id(client: httpx.AsyncClient, sport: str, league: str, team_
     return None
 
 
-async def _fetch_team_detail(client: httpx.AsyncClient, sport: str, league: str, team_id: str) -> Optional[dict]:
+async def _fetch_team_detail(client: httpx.AsyncClient, sport: str, league: str, team_id: str, sport_label: str = "NBA") -> Optional[dict]:
     """Fetch /teams/{id} — has full record, ppg, home/away splits."""
     url = f"{ESPN_BASE}/{sport}/{league}/teams/{team_id}"
     resp = await client.get(url)
@@ -172,7 +173,7 @@ async def _fetch_team_detail(client: httpx.AsyncClient, sport: str, league: str,
         return None
     data = resp.json()
     team = data.get("team", {})
-    return _extract_team_detail(team)
+    return _extract_team_detail(team, sport_label)
 
 
 # ── Finders ────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ def _find_team_in_scoreboard(data: dict, team_name: str) -> Optional[dict]:
 
 # ── Extractors ─────────────────────────────────────────────────────────
 
-def _extract_scoreboard_data(data: dict) -> dict:
+def _extract_scoreboard_data(data: dict, sport: str = "NBA") -> dict:
     """Extract from scoreboard competitor (records + stats)."""
     comp = data["competitor"]
     profile = {}
@@ -208,11 +209,11 @@ def _extract_scoreboard_data(data: dict) -> dict:
             profile["home_record"] = summary
         elif rtype in ("road", "away"):
             profile["away_record"] = summary
-    _derive_ppg_from_record(profile)
+    _derive_ppg_from_record(profile, sport)
     return profile
 
 
-def _extract_team_detail(team: dict) -> dict:
+def _extract_team_detail(team: dict, sport: str = "NBA") -> dict:
     """Extract from /teams/{id} — has record.items with full stats."""
     profile = {}
     record_block = team.get("record", {})
@@ -283,7 +284,7 @@ def _extract_team_detail(team: dict) -> dict:
         if profile.get("ppg_L5") and profile.get("opp_ppg_L5"):
             profile["avg_margin_L10"] = round(profile["ppg_L5"] - profile["opp_ppg_L5"], 1)
 
-    _derive_ppg_from_record(profile)
+    _derive_ppg_from_record(profile, sport)
     return profile
 
 
@@ -296,8 +297,10 @@ def _games_from_record(record: str) -> int:
         return 0
 
 
-def _derive_ppg_from_record(profile: dict) -> None:
-    """Fill win_pct context from record if ppg is still missing."""
+def _derive_ppg_from_record(profile: dict, sport: str = "NBA") -> None:
+    """Fill win_pct context from record if ppg is still missing.
+    Sport-specific PPG ranges so soccer doesn't get NBA-scale numbers.
+    """
     if not profile.get("record"):
         return
     try:
@@ -305,11 +308,19 @@ def _derive_ppg_from_record(profile: dict) -> None:
         w, l = int(parts[0]), int(parts[1])
         total = w + l
         if total > 0 and not profile.get("ppg_L5"):
-            # Use win% as a proxy signal — 60%+ team = above average
             pct = w / total
-            # Map to approximate NBA ppg range (104-120)
-            profile["ppg_L5"] = round(104 + pct * 16, 1)
-            profile["opp_ppg_L5"] = round(120 - pct * 16, 1)
+            # Sport-specific PPG derivation from win%
+            PPG_RANGES = {
+                "SOCCER": (0.8, 1.5),    # goals/game: 0.8 – 2.3
+                "NHL":    (2.0, 1.5),     # goals/game: 2.0 – 3.5
+                "MLB":    (3.5, 2.5),     # runs/game:  3.5 – 6.0
+                "NBA":    (95.0, 25.0),   # points:     95 – 120
+                "NFL":    (17.0, 10.0),   # points:     17 – 27
+                "NCAAB":  (60.0, 20.0),   # points:     60 – 80
+            }
+            base, span = PPG_RANGES.get(sport, PPG_RANGES["NBA"])
+            profile["ppg_L5"] = round(base + pct * span, 1)
+            profile["opp_ppg_L5"] = round(base + span - pct * span, 1)
             profile["avg_margin_L10"] = round(profile["ppg_L5"] - profile["opp_ppg_L5"], 1)
     except (ValueError, IndexError):
         pass
@@ -339,8 +350,10 @@ def _default_profile(team_name: str) -> dict:
 async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "") -> dict:
     home = game_data.get("homeTeam", "")
     away = game_data.get("awayTeam", "")
-    home_profile = await fetch_team_profile(home, sport, odds_key)
-    away_profile = await fetch_team_profile(away, sport, odds_key)
+    home_profile, away_profile = await asyncio.gather(
+        fetch_team_profile(home, sport, odds_key),
+        fetch_team_profile(away, sport, odds_key),
+    )
     odds = game_data.get("odds", {})
     return {
         "game_id": game_data.get("id", ""),
