@@ -46,7 +46,7 @@ SPORT_KEYS = {
     "mlb": ["baseball_mlb"],
     "nfl": ["americanfootball_nfl"],
     "ncaab": ["basketball_ncaab"],
-    "soccer": ["soccer_usa_mls", "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a"],
+    "soccer": ["soccer_usa_mls", "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga", "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_uefa_europa_league", "soccer_brazil_campeonato", "soccer_mexico_ligamx"],
     "mma": ["mma_mixed_martial_arts"],
     "boxing": ["boxing_boxing"],
 }
@@ -56,6 +56,12 @@ SOCCER_LEAGUE_MAP = {
     "la_liga": ["soccer_spain_la_liga"],
     "serie_a": ["soccer_italy_serie_a"],
     "mls": ["soccer_usa_mls"],
+    "bundesliga": ["soccer_germany_bundesliga"],
+    "ligue_1": ["soccer_france_ligue_one"],
+    "ucl": ["soccer_uefa_champs_league"],
+    "europa": ["soccer_uefa_europa_league"],
+    "brazil": ["soccer_brazil_campeonato"],
+    "liga_mx": ["soccer_mexico_ligamx"],
 }
 
 # High-scoring MLB parks (hitter-friendly) — park factor proxy
@@ -813,6 +819,8 @@ async def get_games(sport: str = "nba", mode: str = "games", league: str = ""):
         if age < CACHE_TTL:
             return cached["data"]
     games = await _fetch_and_grade(sport_lower, mode=mode, league=league)
+    # Sort by date — soonest games first
+    games.sort(key=lambda g: g.get("scheduledAt", "9999"))
     if games:
         _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
     return games
