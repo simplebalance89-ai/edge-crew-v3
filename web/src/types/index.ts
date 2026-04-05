@@ -9,7 +9,7 @@ export interface Game {
   ourGrade?: Grade;
   aiGrade?: Grade & { model?: string };
   convergence?: {
-    status: "LOCK" | "ALIGNED" | "DIVERGENT" | "CONFLICT";
+    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT";
     consensusScore: number;
     consensusGrade: string;
     delta: number;
@@ -22,6 +22,19 @@ export interface Game {
     line: number;
     confidence: number;
     sizing: string;
+  };
+  aiModels?: Array<{
+    model: string;
+    grade: string;
+    score: number;
+    confidence: number;
+    thesis: string;
+    key_factors?: string[];
+  }>;
+  gatekeeper?: {
+    action: string;
+    adjustment: number;
+    reason: string;
   };
 }
 
@@ -48,7 +61,7 @@ export interface ConvergenceResult {
   ourProcess: Grade;
   aiProcess: Grade & { model: string };
   convergence: {
-    status: "LOCK" | "ALIGNED" | "DIVERGENT" | "CONFLICT";
+    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT";
     consensusScore: number;
     consensusGrade: string;
     delta: number;
@@ -121,6 +134,6 @@ export const GRADE_COLORS: Record<string, string> = {
 export const CONVERGENCE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   LOCK: { bg: "rgba(16, 185, 129, 0.15)", border: "#10B981", text: "#10B981" },
   ALIGNED: { bg: "rgba(56, 189, 248, 0.15)", border: "#38BDF8", text: "#38BDF8" },
-  DIVERGENT: { bg: "rgba(245, 158, 11, 0.15)", border: "#F59E0B", text: "#F59E0B" },
-  CONFLICT: { bg: "rgba(239, 68, 68, 0.15)", border: "#EF4444", text: "#EF4444" },
+  CLOSE: { bg: "rgba(245, 158, 11, 0.15)", border: "#F59E0B", text: "#F59E0B" },
+  SPLIT: { bg: "rgba(239, 68, 68, 0.15)", border: "#EF4444", text: "#EF4444" },
 };

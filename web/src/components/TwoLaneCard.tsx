@@ -12,10 +12,10 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
     const styles: Record<string, string> = {
       LOCK: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
       ALIGNED: 'bg-[#00E5FF]/10 text-[#00E5FF] border-[#00E5FF]/30',
-      DIVERGENT: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-      CONFLICT: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
+      CLOSE: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+      SPLIT: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
     }
-    return styles[status] || styles.DIVERGENT
+    return styles[status] || styles.CLOSE
   }
 
   const getSizingColor = (sizing: string) => {
@@ -83,7 +83,24 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <div className="text-xs font-bold text-[#00E5FF] uppercase tracking-wider mb-2">AI Process</div>
           <div className="text-3xl font-black text-white">{displayAI.score.toFixed(1)}</div>
           <div className="text-sm font-semibold text-[#00E5FF]">{displayAI.grade}</div>
-          <div className="text-xs text-[#6E6E80] mt-1">{displayAI.model || 'Odds-Model'}</div>
+          <div className="text-xs text-[#6E6E80] mt-1">{(displayAI as any).model || 'Odds-Model'}</div>
+
+          {/* Per-model breakdown (deep analysis) */}
+          {game.aiModels && game.aiModels.length > 0 && (
+            <div className="mt-3 space-y-2 border-t border-[#00E5FF]/10 pt-2">
+              {game.aiModels.map((m, i) => (
+                <div key={i} className="text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[#00E5FF]/80">{m.model}</span>
+                    <span className="font-mono text-white">{m.grade} <span className="text-[#6E6E80]">{m.score}</span></span>
+                  </div>
+                  {m.thesis && (
+                    <div className="text-[#9E9EA8] leading-snug mt-0.5">{m.thesis}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -96,6 +113,21 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               {consensusScore.toFixed(1)} {consensusGrade}
             </div>
             <div className="text-xs text-[#6E6E80]">{'\u0394'} {delta.toFixed(2)} variance</div>
+
+            {/* Gatekeeper Verdict */}
+            {game.gatekeeper && (
+              <div className={`mt-2 text-[11px] font-semibold ${
+                game.gatekeeper.action === 'BOOST' ? 'text-emerald-400' :
+                game.gatekeeper.action === 'CHALLENGE' ? 'text-rose-400' :
+                'text-[#6E6E80]'
+              }`}>
+                Kimi: {game.gatekeeper.action}
+                {game.gatekeeper.adjustment !== 0 && ` (${game.gatekeeper.adjustment > 0 ? '+' : ''}${game.gatekeeper.adjustment})`}
+                {game.gatekeeper.reason && (
+                  <span className="font-normal text-[#9E9EA8] ml-1">-- {game.gatekeeper.reason}</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Pick Badge */}

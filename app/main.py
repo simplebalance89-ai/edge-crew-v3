@@ -19,6 +19,7 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from grade_engine import grade_both_sides, score_to_grade
 from data_fetch import enrich_game_for_grading, fetch_team_profile
+from ai_models import crowdsource_grade, kimi_gatekeeper
 
 logger = logging.getLogger("edge-crew-v3")
 logging.basicConfig(level=logging.INFO)
@@ -65,24 +66,23 @@ def _odds_grade(odds: dict) -> dict:
     ml_away = odds.get("mlAway", 0)
     total = odds.get("total", 0)
 
-    # Tighter spreads = more competitive = higher grade
-    if spread <= 2: spread_score = 8.0
-    elif spread <= 4: spread_score = 7.2
-    elif spread <= 7: spread_score = 6.0
-    elif spread <= 10: spread_score = 5.0
-    else: spread_score = 4.0
+    # Spread scoring — big spread means clear favorite, not a penalty
+    if spread <= 3: spread_score = 8.0      # tight competitive game
+    elif spread <= 6: spread_score = 7.0
+    elif spread <= 10: spread_score = 6.0
+    else: spread_score = 5.5                # one-sided but still real
 
-    # ML gap = competitiveness
+    # ML gap scoring
     ml_diff = abs(ml_home - ml_away) if ml_home and ml_away else 200
-    if ml_diff <= 100: ml_score = 8.0
-    elif ml_diff <= 200: ml_score = 7.0
-    elif ml_diff <= 400: ml_score = 5.5
-    else: ml_score = 4.5
+    if ml_diff < 100: ml_score = 8.0       # tight
+    elif ml_diff <= 250: ml_score = 7.0    # medium
+    else: ml_score = 5.5                   # wide
 
     # Total context
     total_score = 7.0 if 200 <= total <= 240 else (6.0 if total > 0 else 5.5)
 
     score = round(spread_score * 0.45 + ml_score * 0.35 + total_score * 0.20, 1)
+    score = max(5.0, score)  # Floor: no real game drops below 5.0
     conf = min(95, max(45, int(60 + (score - 5) * 7)))
     grade = "F"
     for threshold, g in GRADE_MAP:
@@ -96,10 +96,11 @@ def _convergence(our: dict, ai: dict) -> dict:
     """Compute convergence between Our Process and AI Process."""
     delta = round(abs(our["score"] - ai["score"]), 2)
     consensus = round((our["score"] * 0.6 + ai["score"] * 0.4), 1)  # Weight Our Process more
-    if delta <= 0.3: status = "LOCK"
-    elif delta <= 0.8: status = "ALIGNED"
-    elif delta <= 1.5: status = "DIVERGENT"
-    else: status = "CONFLICT"
+    # LOCK = both agree AND the game is good (consensus >= 7.0)
+    if delta <= 0.5 and consensus >= 7.0: status = "LOCK"
+    elif delta <= 1.0: status = "ALIGNED"
+    elif delta <= 1.5: status = "CLOSE"
+    else: status = "SPLIT"
     grade = "F"
     for threshold, g in GRADE_MAP:
         if consensus >= threshold:
@@ -133,11 +134,13 @@ def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> d
     elif status == "ALIGNED" and consensus >= 6.0:
         return {"side": fav, "type": "spread", "line": fav_spread,
                 "confidence": min(80, int(consensus * 8 + 10)), "sizing": "Standard"}
-    elif consensus >= 6.0:
-        return {"side": dog, "type": "ml", "line": 0,
+    elif consensus >= 5.5:
+        return {"side": fav, "type": "ml", "line": 0,
                 "confidence": min(70, int(consensus * 7)), "sizing": "Lean"}
     else:
-        return {"side": "", "type": "", "line": 0, "confidence": 0, "sizing": "No Play"}
+        # Always show a pick — low consensus = Lean on favorite ML
+        return {"side": fav, "type": "ml", "line": 0,
+                "confidence": max(30, int(consensus * 6)), "sizing": "Lean"}
 
 
 def _parse_event(event: dict, sport_label: str) -> dict:
@@ -279,6 +282,10 @@ class GradeRequest(BaseModel):
     context: Dict = {}
 
 
+class AnalyzeRequest(BaseModel):
+    sport: str
+
+
 @app.get("/health")
 async def health():
     return {
@@ -323,6 +330,92 @@ async def grade_game_endpoint(request: GradeRequest):
         "convergence": grades["convergence"],
         "pick": grades["pick"],
     }
+
+
+@app.post("/api/analyze")
+async def analyze_games(request: AnalyzeRequest):
+    """Deep analysis: call AI models for crowdsource grades + Kimi gatekeeper.
+    Two-tier system -- this is the SLOW path triggered by 'Analyze All'."""
+    sport_lower = request.sport.lower()
+
+    # Get cached games (fast path must have run first)
+    cached = _cache.get(sport_lower)
+    if not cached or not cached.get("data"):
+        games = await _fetch_and_grade(sport_lower)
+        if games:
+            _cache[sport_lower] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
+    else:
+        games = cached["data"]
+
+    if not games:
+        return {"error": "No games found", "sport": sport_lower}
+
+    # Call AI crowdsource for all games
+    logger.info(f"[ANALYZE] Deep analysis for {sport_lower}: {len(games)} games")
+    model_grades = await crowdsource_grade(games, sport_lower)
+
+    # Enrich each game with per-model grades + gatekeeper
+    enriched = []
+    for game in games:
+        game_id = game.get("id", "")
+        ai_grades_list = model_grades.get(game_id, [])
+
+        # Attach per-model grades
+        game["aiModels"] = ai_grades_list
+
+        # If we got AI model grades, compute a blended AI score from them
+        if ai_grades_list:
+            valid_scores = [m.get("score", 0) for m in ai_grades_list if m.get("score", 0) > 0]
+            if valid_scores:
+                avg_score = round(sum(valid_scores) / len(valid_scores), 1)
+                avg_conf = int(sum(m.get("confidence", 50) for m in ai_grades_list) / len(ai_grades_list))
+                blended_grade = "F"
+                for threshold, g in GRADE_MAP:
+                    if avg_score >= threshold:
+                        blended_grade = g
+                        break
+                game["aiGrade"] = {
+                    "grade": blended_grade,
+                    "score": avg_score,
+                    "confidence": avg_conf,
+                    "model": f"{len(valid_scores)}-Model Consensus",
+                }
+                # Recompute convergence with blended AI grade
+                our_grade = game.get("ourGrade", {"score": 5.0})
+                game["convergence"] = _convergence(our_grade, game["aiGrade"])
+                game["pick"] = _compute_pick(
+                    game, game.get("odds", {}), our_grade, game["aiGrade"], game["convergence"]
+                )
+
+        # Run Kimi gatekeeper
+        if ai_grades_list:
+            gk = await kimi_gatekeeper(
+                game,
+                game.get("ourGrade", {}),
+                ai_grades_list,
+                game.get("convergence", {}),
+            )
+            game["gatekeeper"] = gk
+
+            # Apply gatekeeper adjustment to consensus
+            adj = gk.get("adjustment", 0)
+            if adj != 0 and game.get("convergence"):
+                adjusted = round(game["convergence"]["consensusScore"] + adj, 1)
+                adjusted = max(1.0, min(10.0, adjusted))
+                adj_grade = "F"
+                for threshold, g in GRADE_MAP:
+                    if adjusted >= threshold:
+                        adj_grade = g
+                        break
+                game["convergence"]["consensusScore"] = adjusted
+                game["convergence"]["consensusGrade"] = adj_grade
+
+        enriched.append(game)
+
+    # Update cache with enriched data
+    _cache[sport_lower] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
+
+    return enriched
 
 
 @app.get("/api/engine/status")
