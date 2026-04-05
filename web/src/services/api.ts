@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { Game, ConvergenceResult, Pick, User } from '@/types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'https://edge-crew-ai-production.up.railway.app';
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE,
