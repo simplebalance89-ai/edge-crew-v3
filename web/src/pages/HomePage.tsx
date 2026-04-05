@@ -110,26 +110,9 @@ export default function HomePage() {
           <TwoLaneCard
             key={game.id}
             game={game}
-            ourGrade={{
-              grade: 'A-',
-              score: 7.2,
-              confidence: 82,
-              thesis: 'Strong home court advantage',
-            }}
-            aiGrade={{
-              grade: 'A',
-              score: 7.8,
-              confidence: 85,
-              thesis: 'Market mispricing detected',
-              model: 'DeepSeek-V3',
-            }}
-            convergence={{
-              status: 'ALIGNED',
-              consensusScore: 7.5,
-              consensusGrade: 'A-',
-              delta: 0.6,
-              variance: 0.3,
-            }}
+            ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
+            aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
+            convergence={game.convergence || {status: 'PENDING', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
           />
         ))}
       </div>
