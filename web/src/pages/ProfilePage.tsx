@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { User as UserIcon, LogOut, Check, X, Minus } from 'lucide-react'
 import { login, getBankroll, getUserPicks, gradePick } from '@/services/api'
 import { useAppStore } from '@/store/useAppStore'
-import type { User, Bankroll, LockedPick } from '@/types'
+import type { Bankroll, LockedPick } from '@/types'
 
 const CREW_MEMBERS = ['Peter', 'Chinny', 'Jimmy'] as const
 
