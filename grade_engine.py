@@ -600,11 +600,91 @@ def grade_both_sides(game: dict) -> dict:
     if home["score"] >= away["score"]:
         best = home
         best["pick_team"] = game.get("home", game.get("home_team", "Home"))
+        pick_side = "home"
     else:
         best = away
         best["pick_team"] = game.get("away", game.get("away_team", "Away"))
+        pick_side = "away"
+
+    # Run grader profiles on the best side
+    profiles = grade_profiles(game, pick_side)
+
     return {
         "home": home,
         "away": away,
         "best": best,
+        "profiles": profiles,
     }
+
+
+# ─── Grader Profiles (Sintonia, Edge, Renzo) ──────────────────────────────────
+
+# Each profile re-weights the same variables differently
+PROFILE_WEIGHTS = {
+    "sintonia": {
+        # Main matrix — balanced, weights everything
+        "off_ranking": 1.2, "def_ranking": 1.2, "form": 1.0, "home_away": 1.0,
+        "star_player": 1.1, "rest": 1.0, "ats": 0.9, "h2h": 0.8,
+        "motivation": 0.8, "depth": 0.7, "line_movement": 0.6,
+        "pace": 0.7, "road_trip": 0.6, "starting_pitcher": 1.3, "congestion": 1.2,
+    },
+    "edge": {
+        # Situational — calendar, rest, travel, motivation
+        "rest": 1.5, "road_trip": 1.4, "motivation": 1.3, "home_away": 1.2,
+        "form": 1.0, "depth": 1.0, "line_movement": 0.9,
+        "off_ranking": 0.7, "def_ranking": 0.7, "star_player": 0.8,
+        "ats": 0.8, "h2h": 0.7, "pace": 0.5,
+        "starting_pitcher": 0.8, "congestion": 1.4,
+    },
+    "renzo": {
+        # Conservative — only bets strong edges, penalizes uncertainty
+        "off_ranking": 1.3, "def_ranking": 1.3, "ats": 1.2, "form": 1.1,
+        "line_movement": 1.0, "h2h": 1.0,
+        "home_away": 0.8, "rest": 0.7, "star_player": 0.7,
+        "motivation": 0.5, "depth": 0.5, "road_trip": 0.5,
+        "pace": 0.4, "starting_pitcher": 1.2, "congestion": 0.8,
+    },
+}
+
+
+def grade_profiles(game: dict, pick_side: str) -> dict:
+    """Run all 3 grader profiles on a game. Returns {name: {grade, score, ...}}"""
+    base = grade_game(game, pick_side)
+    base_vars = base.get("variables", {})
+    profiles = {}
+
+    for profile_name, multipliers in PROFILE_WEIGHTS.items():
+        # Re-weight the base variables
+        total_w = 0
+        total_s = 0
+        for var_name, var_data in base_vars.items():
+            if not var_data.get("available", True):
+                continue
+            mult = multipliers.get(var_name, 1.0)
+            adjusted_weight = var_data["weight"] * mult
+            total_w += adjusted_weight * 10
+            total_s += var_data["score"] * adjusted_weight
+
+        composite = round(total_s / total_w * 10, 2) if total_w > 0 else 5.0
+
+        # Apply chain bonus from base
+        chain_bonus = base.get("chain_bonus", 0)
+        # Renzo is conservative — halve chain bonus
+        if profile_name == "renzo":
+            chain_bonus *= 0.5
+        # Edge amplifies situational chains
+        elif profile_name == "edge":
+            chain_bonus *= 1.2
+
+        final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+        grade = score_to_grade(final)
+
+        profiles[profile_name] = {
+            "grade": grade,
+            "final": final,
+            "composite": composite,
+            "sizing": score_to_sizing(final),
+            "chains_fired": base.get("chains_fired", []),
+        }
+
+    return profiles

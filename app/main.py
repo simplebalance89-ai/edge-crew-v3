@@ -287,12 +287,16 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
         result = grade_both_sides(enriched)
         best = result["best"]
 
+        profiles = result.get("profiles", {})
         our_grade = {
             "grade": best["grade"],
             "score": best["score"],
             "confidence": best["confidence"],
             "thesis": f"{len(best.get('chains_fired', []))} chains | {best['sizing']}",
             "keyFactors": best.get("chains_fired", [])[:5],
+            "profiles": profiles,
+            "variables": {k: {"score": v["score"], "name": k.replace("_", " "), "available": v.get("available", True)}
+                          for k, v in best.get("variables", {}).items()},
         }
     except Exception as e:
         logger.warning(f"Grade engine error for {game.get('homeTeam')} vs {game.get('awayTeam')}: {e}")
