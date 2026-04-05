@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 # Add parent dir to path for grade_engine / data_fetch imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from grade_engine import grade_both_sides, score_to_grade
+from grade_engine import grade_both_sides, score_to_grade, calculate_ev, peter_rules
 from data_fetch import enrich_game_for_grading, fetch_team_profile
 from ai_models import crowdsource_grade, kimi_gatekeeper
 
@@ -193,7 +193,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 
 
 def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
-    """Generate 3 AI personality grades with reasoning — pure math, no API needed."""
+    """Generate 5 AI personality grades with reasoning — pure math, no API needed."""
     home = enriched.get("home", enriched.get("home_team", "Home"))
     away = enriched.get("away", enriched.get("away_team", "Away"))
     hp = enriched.get("home_profile", {})
@@ -270,6 +270,37 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
                     "confidence": min(88, int(52 + kimi_score * 4)),
                     "thesis": kimi_thesis, "key_factors": []})
 
+    # GPT Nano — balanced consensus builder, weighs all factors equally
+    odds_score = _odds_grade(odds)["score"]
+    gpt_score = round((our_score + odds_score) / 2, 1)
+    gpt_score = max(3.0, min(9.5, gpt_score))
+    gpt_grade = _score_to_grade_local(gpt_score)
+    if abs(our_score - odds_score) <= 1.0:
+        gpt_thesis = f"Both fundamental and market analysis align on {fav} ({fav_rec}). Consensus score {gpt_score:.1f} reflects agreement across processes — steady value."
+    else:
+        stronger = "fundamentals" if our_score > odds_score else "market"
+        weaker = "market" if our_score > odds_score else "fundamentals"
+        gpt_thesis = f"Mixed signals: {stronger} say {fav} ({fav_rec}) is the play ({max(our_score, odds_score):.1f}) but {weaker} lag behind ({min(our_score, odds_score):.1f}). Middle ground lands at {gpt_score:.1f}."
+    models.append({"model": "GPT 5.4 Nano", "grade": gpt_grade, "score": gpt_score,
+                    "confidence": min(90, int(55 + gpt_score * 4)),
+                    "thesis": gpt_thesis, "key_factors": []})
+
+    # Claude Opus — deep strategic thinker, momentum & narrative focus, contrarian on big spreads
+    momentum_weight = fav_margin * 0.2  # heavier momentum factor
+    contrarian_adj = -0.4 if abs(spread) > 10 else (0.2 if abs(spread) < 3 else 0)
+    claude_score = round(our_score * 0.7 + momentum_weight + contrarian_adj + 1.5, 1)
+    claude_score = max(3.0, min(9.5, claude_score))
+    claude_grade = _score_to_grade_local(claude_score)
+    if fav_margin > 5:
+        claude_thesis = f"Sustainable edge — {fav} ({fav_rec}) trajectory shows +{fav_margin:.1f} margin, a durable pattern not fluky variance. Momentum supports the line."
+    elif fav_margin > 0:
+        claude_thesis = f"{fav} ({fav_rec}) holding slim +{fav_margin:.1f} margin. Trajectory positive but regression risk exists if {dog} ({dog_rec}) tightens up. Lean cautiously."
+    else:
+        claude_thesis = f"Regression risk: {fav} favored at {spread:+.1f} but margin is only {fav_margin:+.1f}. {dog} ({dog_rec}) narrative is stronger than the line implies — contrarian value."
+    models.append({"model": "Claude Opus 4.6", "grade": claude_grade, "score": claude_score,
+                    "confidence": min(92, int(54 + claude_score * 4)),
+                    "thesis": claude_thesis, "key_factors": []})
+
     return models
 
 
@@ -306,7 +337,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     # AI Process: odds-based model for consensus
     ai_grade = _odds_grade(game.get("odds", {}))
 
-    # AI Models: 3 personality grades with reasoning (always, no API needed)
+    # AI Models: 5 personality grades with reasoning (always, no API needed)
     ai_models = _generate_ai_models(
         enriched or game,
         game.get("odds", {}),
@@ -327,12 +358,27 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     # Pick
     pick = _compute_pick(game, game.get("odds", {}), our_grade, ai_grade, conv)
 
+    # Determine pick side for EV/Peter's Rules
+    pick_side = "home"
+    if pick and pick.get("side"):
+        if pick["side"] == game.get("awayTeam", ""):
+            pick_side = "away"
+
+    # EV calculation
+    ev = calculate_ev(enriched or game, pick_side, conv["consensusScore"])
+
+    # Peter's Rules
+    pr = peter_rules(enriched or game, pick_side)
+
     return {
         "ourGrade": our_grade,
         "aiGrade": ai_grade,
         "convergence": conv,
         "pick": pick,
         "aiModels": ai_models,
+        "ev": ev,
+        "peterRules": pr,
+        "kalshi_prob": None,
     }
 
 

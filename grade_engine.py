@@ -714,3 +714,207 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
         profiles[profile_name]["margin"] = round(profiles[profile_name]["final"] - other_final, 2)
 
     return profiles
+
+
+# ─── Expected Value Calculator ────────────────────────────────────────────────
+
+
+def ml_to_implied_prob(ml: int | float | None) -> float | None:
+    """Convert American moneyline to implied probability."""
+    if ml is None:
+        return None
+    if ml > 0:
+        return 100 / (ml + 100)
+    elif ml < 0:
+        return abs(ml) / (abs(ml) + 100)
+    return 0.5
+
+
+def grade_to_true_prob(final_score: float, implied_prob: float | None = None) -> float:
+    """
+    Convert consensus grade score to estimated true win probability.
+    Grade 5.0 = market is right, 7.0+ = market undervalues, 3.0- = market overvalues.
+    Each point of deviation = ~3% edge.
+    """
+    if implied_prob is None:
+        prob = 0.30 + (final_score / 10) * 0.45
+        return max(0.25, min(0.80, prob))
+    deviation = final_score - 5.0
+    edge = deviation * 0.03
+    true_prob = implied_prob + edge
+    return max(0.15, min(0.90, true_prob))
+
+
+def calculate_ev(game: dict, pick_side: str, consensus_final: float) -> dict:
+    """
+    Calculate expected value for a pick.
+    EV = (true_prob * payout) - ((1 - true_prob) * stake)
+    Kelly = (bp - q) / b
+    """
+    odds = game.get("odds", {})
+
+    # Get moneyline for our pick side
+    if pick_side == "home":
+        ml = odds.get("mlHome") or odds.get("home_ml_current") or odds.get("ml_home")
+    else:
+        ml = odds.get("mlAway") or odds.get("away_ml_current") or odds.get("ml_away")
+
+    implied_prob = ml_to_implied_prob(ml)
+    true_prob = grade_to_true_prob(consensus_final, implied_prob)
+
+    if implied_prob is None or ml is None or ml == 0:
+        return {
+            "ev_pct": None,
+            "ev_grade": "N/A",
+            "kelly_units": "N/A",
+            "true_prob": None,
+            "implied_prob": None,
+            "edge": None,
+            "moneyline": None,
+        }
+
+    # Decimal odds
+    if ml > 0:
+        decimal_odds = 1 + (ml / 100)
+    else:
+        decimal_odds = 1 + (100 / abs(ml))
+
+    b = decimal_odds - 1  # Net odds
+    p = true_prob
+    q = 1 - p
+
+    # EV calculation
+    ev = (p * b) - q
+    ev_pct = round(ev * 100, 2)
+
+    # Kelly criterion (quarter Kelly)
+    kelly_full = (b * p - q) / b if b > 0 else 0
+    kelly_quarter = max(0, kelly_full * 0.25)
+
+    # Kelly to units
+    if kelly_quarter >= 0.06:
+        kelly_units = "2u"
+    elif kelly_quarter >= 0.04:
+        kelly_units = "1.5u"
+    elif kelly_quarter >= 0.02:
+        kelly_units = "1u"
+    elif kelly_quarter > 0:
+        kelly_units = "0.5u"
+    else:
+        kelly_units = "PASS"
+
+    # EV grade
+    if ev_pct >= 10:
+        ev_grade = "A+"
+    elif ev_pct >= 7:
+        ev_grade = "A"
+    elif ev_pct >= 5:
+        ev_grade = "B+"
+    elif ev_pct >= 3:
+        ev_grade = "B"
+    elif ev_pct >= 0:
+        ev_grade = "C"
+    else:
+        ev_grade = "F"
+
+    return {
+        "ev_pct": ev_pct,
+        "ev_grade": ev_grade,
+        "kelly_units": kelly_units,
+        "true_prob": round(true_prob, 4),
+        "implied_prob": round(implied_prob, 4),
+        "edge": round(true_prob - implied_prob, 4),
+        "moneyline": ml,
+    }
+
+
+# ─── Peter's Rules ───────────────────────────────────────────────────────────
+
+
+def peter_rules(game: dict, pick_side: str) -> dict:
+    """
+    Peter's hard rules — kill/boost/downgrade flags that override or adjust consensus.
+    Rule 1: Big fav ATS trap
+    Rule 2: Fresh injury boost
+    Rule 3: Established injury priced
+    Rule 4: Massive NCAAB spread
+    """
+    sport = (game.get("sport", "") or "").upper()
+    odds = game.get("odds", {})
+    opp_side = "away" if pick_side == "home" else "home"
+    opp_profile = game.get(f"{opp_side}_profile", {})
+    opp_injuries = game.get("injuries", {}).get(opp_side, [])
+
+    flags = []
+    adjustment = 0.0
+
+    spread = odds.get("spread", odds.get("spread_home", 0)) or 0
+    abs_spread = abs(spread)
+
+    # Sport-specific thresholds
+    big_fav_spread = {
+        "NBA": 15, "WNBA": 12, "NCAAB": 20, "NCAAF": 21,
+        "NHL": 2.5, "MLB": 2.5, "NFL": 14, "SOCCER": 2.5,
+    }.get(sport, 15)
+    star_ppg = {
+        "NBA": 15, "WNBA": 15, "NCAAB": 12, "NCAAF": 0,
+        "NHL": 0.8, "MLB": 0, "NFL": 0, "SOCCER": 0.3,
+    }.get(sport, 15)
+
+    # Rule 1: Big fav ATS trap — spread beyond threshold against winning team
+    opp_record = opp_profile.get("record", "0-0")
+    opp_w, opp_l = _parse_record(opp_record)
+    opp_pct = opp_w / max(opp_w + opp_l, 1)
+
+    if abs_spread > big_fav_spread and opp_pct > 0.45:
+        flags.append({
+            "rule": "Big Fav ATS Trap",
+            "action": "KILL",
+            "severity": "CRITICAL",
+            "note": f"Spread {abs_spread} against {opp_record} team ({opp_pct:.0%}) — public trap",
+        })
+        adjustment -= 3.0
+
+    # Rule 2: Fresh injury boost — star OUT < 3 days, books may not have adjusted
+    for inj in opp_injuries:
+        if (inj.get("status") == "OUT" and
+            inj.get("freshness") == "FRESH" and
+            star_ppg > 0 and (inj.get("ppg") or 0) >= star_ppg):
+            flags.append({
+                "rule": "Fresh Injury Boost",
+                "action": "BOOST",
+                "severity": "EDGE",
+                "note": f"FRESH: {inj.get('player', '?')} ({inj.get('ppg')} PPG) OUT — books may lag",
+            })
+            adjustment += 1.0
+
+    # Rule 3: Established injury = already priced in
+    for inj in opp_injuries:
+        if (inj.get("status") == "OUT" and
+            inj.get("freshness") in ("ESTABLISHED", "SEASON") and
+            star_ppg > 0 and (inj.get("ppg") or 0) >= star_ppg):
+            flags.append({
+                "rule": "Injury Already Priced",
+                "action": "DOWNGRADE",
+                "severity": "WARNING",
+                "note": f"PRICED: {inj.get('player', '?')} ({inj.get('ppg')} PPG) out long — team adapted",
+            })
+            adjustment -= 0.5
+
+    # Rule 4: Massive NCAAB spread
+    if sport == "NCAAB" and abs_spread > 20:
+        flags.append({
+            "rule": "NCAAB Massive Spread",
+            "action": "DOWNGRADE",
+            "severity": "WARNING",
+            "note": f"NCAAB spread {abs_spread} — massive spreads ATS unreliable",
+        })
+        adjustment -= 1.0
+
+    has_kill = any(f["action"] == "KILL" for f in flags)
+
+    return {
+        "flags": flags,
+        "adjustment": round(adjustment, 1),
+        "has_kill": has_kill,
+    }

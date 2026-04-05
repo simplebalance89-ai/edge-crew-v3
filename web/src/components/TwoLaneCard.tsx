@@ -134,7 +134,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           {game.aiModels && game.aiModels.length > 0 ? (
             <>
               <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MODEL GRADES</div>
-              <div className="grid grid-cols-3 gap-1.5 mb-2">
+              <div className="grid grid-cols-5 gap-1.5 mb-2">
                 {game.aiModels.map((m, i) => (
                   <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-2 text-center">
                     <div className="text-[7px] font-black text-[#00D4AA] uppercase truncate">{m.model}</div>
@@ -216,6 +216,76 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             {pick.side}
             {pick.type === 'spread' && pick.line !== 0 ? ` ${pick.line > 0 ? '+' : ''}${pick.line}` : ` ${pick.type.toUpperCase()}`}
             {pick.sizing && pick.sizing !== 'No Play' ? ` (${pick.sizing})` : ''}
+          </div>
+        )}
+
+        {/* ── EV Display ── */}
+        {game.ev && game.ev.ev_pct !== null && game.ev.ev_pct !== undefined && (
+          <div className="mt-3 flex items-center justify-center gap-4">
+            <div className="text-center">
+              <div className="text-[9px] text-white/35 font-bold tracking-wide">EV%</div>
+              <div className={`text-lg font-black ${game.ev.ev_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {game.ev.ev_pct > 0 ? '+' : ''}{game.ev.ev_pct}%
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-[9px] text-white/35 font-bold tracking-wide">EV GRADE</div>
+              <div className="text-lg font-black" style={{ color: gradeColor(game.ev.ev_grade) }}>
+                {game.ev.ev_grade}
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-[9px] text-white/35 font-bold tracking-wide">KELLY</div>
+              <div className="text-sm font-bold text-white/70">{game.ev.kelly_units}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-[9px] text-white/35 font-bold tracking-wide">WIN PROB</div>
+              <div className="text-sm font-bold text-white/70">
+                {game.ev.true_prob != null ? `${(game.ev.true_prob * 100).toFixed(1)}%` : '-'}
+              </div>
+            </div>
+            {game.ev.edge != null && (
+              <div className="text-center">
+                <div className="text-[9px] text-white/35 font-bold tracking-wide">EDGE</div>
+                <div className={`text-sm font-bold ${game.ev.edge >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {game.ev.edge > 0 ? '+' : ''}{(game.ev.edge * 100).toFixed(1)}%
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Peter's Rules ── */}
+        {game.peterRules && (
+          <div className="mt-3">
+            {game.peterRules.has_kill && (
+              <div className="mb-2 text-center py-2 bg-rose-500/20 border border-rose-500/50 rounded-lg">
+                <span className="text-sm font-black text-rose-400 tracking-wider">PETER SAYS: KILL</span>
+              </div>
+            )}
+            {game.peterRules.flags.length > 0 ? (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {game.peterRules.flags.map((f, i) => (
+                  <div key={i} className={`px-2 py-1 rounded-md border text-[9px] font-bold ${
+                    f.action === 'KILL' ? 'bg-rose-500/15 border-rose-500/40 text-rose-400' :
+                    f.action === 'BOOST' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
+                    'bg-amber-500/15 border-amber-500/40 text-amber-400'
+                  }`}>
+                    <span className="font-black">{f.action}</span>
+                    <span className="ml-1 font-normal text-white/50">{f.note}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-[10px] text-emerald-400 font-bold">CLEAN — No flags</div>
+            )}
+          </div>
+        )}
+
+        {/* ── Kalshi ── */}
+        {game.kalshi_prob != null && (
+          <div className="mt-2 text-center text-[10px] text-[#38BDF8] font-bold">
+            Kalshi: {(game.kalshi_prob * 100).toFixed(0)}% implied
           </div>
         )}
 

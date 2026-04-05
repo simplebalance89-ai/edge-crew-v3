@@ -36,6 +36,21 @@ export interface Game {
     adjustment: number;
     reason: string;
   };
+  ev?: {
+    ev_pct: number | null;
+    ev_grade: string;
+    kelly_units: string;
+    true_prob: number | null;
+    implied_prob: number | null;
+    edge: number | null;
+    moneyline: number | null;
+  };
+  peterRules?: {
+    flags: Array<{ rule: string; action: string; severity: string; note: string }>;
+    adjustment: number;
+    has_kill: boolean;
+  };
+  kalshi_prob?: number | null;
 }
 
 export interface Odds {
