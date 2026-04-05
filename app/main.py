@@ -288,7 +288,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         kimi_thesis = "Structural edge: " + ". ".join(kimi_parts) + f". Tactical profile favors {fav}."
     else:
         kimi_thesis = f"No strong structural edge detected. {fav} ({fav_rec}) vs {dog} ({dog_rec}) — standard matchup, grade from fundamentals only."
-    models.append({"model": "Kimi K2.5", "grade": kimi_grade, "score": kimi_score,
+    models.append({"model": "Kimi K2 Thinking", "grade": kimi_grade, "score": kimi_score,
                     "confidence": min(88, int(52 + kimi_score * 4)),
                     "thesis": kimi_thesis, "pick": _pick_for(kimi_score), "key_factors": []})
 
