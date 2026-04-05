@@ -1,0 +1,569 @@
+"""
+Edge Crew v3 — Compact Grade Engine
+Ported from v2's 3K-line engine into a clean, self-contained module.
+Pure math grading: variables → composite → chains → final grade.
+"""
+
+import math
+
+# ─── Grade Thresholds ──────────────────────────────────────────────────────────
+
+GRADE_THRESHOLDS = [
+    (8.0, "A+"), (7.3, "A"), (6.5, "A-"),
+    (6.0, "B+"), (5.5, "B"), (5.0, "B-"),
+    (4.5, "C+"), (3.5, "C"), (2.5, "D"), (0.0, "F"),
+]
+
+SIZING_MAP = {
+    "A+": "2u", "A": "1.5u", "A-": "1u", "B+": "1u",
+    "B": "PASS", "B-": "PASS", "C+": "PASS", "C": "PASS",
+    "D": "PASS", "F": "PASS",
+}
+
+
+def score_to_grade(score: float) -> str:
+    for threshold, grade in GRADE_THRESHOLDS:
+        if score >= threshold:
+            return grade
+    return "F"
+
+
+def score_to_sizing(score: float) -> str:
+    return SIZING_MAP.get(score_to_grade(score), "PASS")
+
+
+def _clamp(val, lo=1, hi=10) -> float:
+    return max(lo, min(hi, round(float(val), 1)))
+
+
+def _parse_record(rec: str | None) -> tuple:
+    if not rec:
+        return 0, 0
+    try:
+        parts = rec.split("-")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 0, 0
+
+
+def _win_pct(rec: str | None) -> float:
+    w, l = _parse_record(rec)
+    return w / (w + l) if (w + l) > 0 else 0.5
+
+
+# ─── Variable Scoring Functions ────────────────────────────────────────────────
+# Each returns (score: 1-10, note: str)
+
+def score_off_ranking(profile: dict, opp: dict, sport: str) -> tuple:
+    ppg = profile.get("ppg_L5", 0)
+    opp_def = opp.get("opp_ppg_L5", 0)
+    if not ppg:
+        return 5, "No PPG data"
+    breakpoints = {
+        "NBA":   [(122,9),(118,7.5),(114,6),(110,5),(105,4),(0,2.5)],
+        "NHL":   [(4.0,9),(3.5,7),(3.0,5),(2.5,3.5),(0,2)],
+        "MLB":   [(6.0,9),(5.5,7.5),(5.0,6),(4.5,5),(4.0,3.5),(0,2)],
+        "SOCCER":[(2.5,9),(2.0,7.5),(1.5,6),(1.2,5),(0.8,3.5),(0,2)],
+        "NCAAB": [(82,9),(78,7.5),(74,6),(70,5),(65,3.5),(0,2)],
+    }
+    base = 5
+    for threshold, val in breakpoints.get(sport, breakpoints["NBA"]):
+        if ppg >= threshold:
+            base = val
+            break
+    if opp_def:
+        avg_map = {"NBA": (115, 100), "NHL": (3.5, 2.5), "MLB": (5.5, 3.5), "SOCCER": (2.0, 1.0)}
+        hi, lo = avg_map.get(sport, (115, 100))
+        if opp_def >= hi:
+            base += 0.5
+        elif opp_def <= lo:
+            base -= 0.5
+    return _clamp(base), f"PPG L5: {ppg} | OPP allows: {opp_def}"
+
+
+def score_def_ranking(profile: dict, opp: dict, sport: str) -> tuple:
+    opp_ppg = profile.get("opp_ppg_L5", 0)
+    if not opp_ppg:
+        return 5, "No OPP PPG data"
+    breakpoints = {
+        "NBA":   [(100,9),(105,7.5),(110,6),(114,5),(118,3.5),(999,2)],
+        "NHL":   [(2.0,9),(2.5,7),(3.0,5),(3.5,3.5),(999,2)],
+        "MLB":   [(3.0,9),(3.5,7.5),(4.0,6),(4.5,5),(5.5,3.5),(999,2)],
+        "SOCCER":[(0.5,9),(0.8,7.5),(1.0,6),(1.3,5),(1.8,3.5),(999,2)],
+        "NCAAB": [(62,9),(66,7.5),(70,5),(75,3.5),(999,2)],
+    }
+    base = 5
+    for threshold, val in breakpoints.get(sport, breakpoints["NBA"]):
+        if opp_ppg <= threshold:
+            base = val
+            break
+    return _clamp(base), f"Allow L5: {opp_ppg}"
+
+
+def score_recent_form(profile: dict, opp: dict) -> tuple:
+    w, l = _parse_record(profile.get("L5"))
+    ow, _ = _parse_record(opp.get("L5"))
+    streak = profile.get("streak", "")
+    margin = profile.get("margin_L5", 0)
+    if w + l == 0:
+        return 5, "No L5 data"
+    base = {5: 9, 4: 7, 3: 5, 2: 3.5, 1: 2, 0: 1}.get(w, 5)
+    if streak.startswith("W"):
+        n = int(streak[1:]) if streak[1:].isdigit() else 0
+        base += 1.5 if n >= 6 else (0.5 if n >= 3 else 0)
+    elif streak.startswith("L"):
+        n = int(streak[1:]) if streak[1:].isdigit() else 0
+        base -= 1.5 if n >= 6 else (0.5 if n >= 3 else 0)
+    form_edge = w - ow
+    if form_edge >= 3: base += 1
+    elif form_edge <= -3: base -= 1
+    if margin > 10: base += 0.5
+    elif margin < -10: base -= 0.5
+    return _clamp(base), f"L5: {profile.get('L5','?')} streak:{streak} margin:{margin:+.1f}"
+
+
+def score_home_away(game: dict, side: str) -> tuple:
+    profile = game.get(f"{side}_profile", {})
+    is_home = side == "home"
+    base = 5.5 if is_home else 4.5
+    rec_key = "home_record" if is_home else "away_record"
+    w, l = _parse_record(profile.get(rec_key))
+    if w + l > 0:
+        pct = w / (w + l)
+        if pct >= 0.7: base += 2
+        elif pct >= 0.55: base += 1
+        elif pct <= 0.3: base -= 2
+        elif pct <= 0.4: base -= 1
+    return _clamp(base), f"{'Home' if is_home else 'Away'}: {profile.get(rec_key, '?')}"
+
+
+def score_rest_advantage(profile: dict, opp: dict) -> tuple:
+    our_rest = profile.get("rest_days")
+    opp_rest = opp.get("rest_days")
+    our_b2b = profile.get("is_b2b", False)
+    opp_b2b = opp.get("is_b2b", False)
+    if our_rest is None or opp_rest is None:
+        return 5, "Rest data unavailable"
+    score = 5
+    parts = []
+    if opp_b2b and not our_b2b:
+        score += 3; parts.append("OPP on B2B")
+    elif our_b2b and not opp_b2b:
+        score -= 3; parts.append("WE on B2B")
+    rest_diff = (our_rest or 0) - (opp_rest or 0)
+    if rest_diff >= 3: score += 2
+    elif rest_diff >= 1: score += 1
+    elif rest_diff <= -3: score -= 2
+    elif rest_diff <= -1: score -= 1
+    return _clamp(score), f"Us:{our_rest}d Them:{opp_rest}d {'; '.join(parts)}"
+
+
+def score_h2h(profile: dict) -> tuple:
+    h2h = profile.get("h2h_season", "0-0")
+    w, l = _parse_record(h2h)
+    if w + l == 0:
+        return 5, "No H2H"
+    pct = w / (w + l)
+    if pct >= 0.75 and w + l >= 2: score = 9
+    elif pct >= 0.6: score = 7
+    elif pct == 0.5: score = 5
+    elif pct <= 0.25 and w + l >= 2: score = 2
+    elif pct <= 0.4: score = 3
+    else: score = 5
+    return _clamp(score), f"H2H: {h2h}"
+
+
+def score_star_player(game: dict, side: str) -> tuple:
+    opp_side = "away" if side == "home" else "home"
+    opp_inj = game.get("injuries", {}).get(opp_side, [])
+    our_inj = game.get("injuries", {}).get(side, [])
+    opp_impact = our_impact = 0
+    for inj in opp_inj:
+        if inj.get("status") in ("OUT", "DOUBTFUL"):
+            ppg = inj.get("ppg", 0)
+            disc = 0.5 if inj.get("freshness") in ("ESTABLISHED", "SEASON") else 1.0
+            opp_impact += (3 if ppg >= 20 else 2 if ppg >= 12 else 0.5) * disc
+    for inj in our_inj:
+        if inj.get("status") in ("OUT", "DOUBTFUL"):
+            ppg = inj.get("ppg", 0)
+            disc = 0.5 if inj.get("freshness") in ("ESTABLISHED", "SEASON") else 1.0
+            our_impact += (3 if ppg >= 20 else 2 if ppg >= 12 else 0.5) * disc
+    return _clamp(5 + opp_impact - our_impact), f"Injury diff: +{opp_impact:.1f} -{our_impact:.1f}"
+
+
+def score_depth_injuries(game: dict, side: str) -> tuple:
+    opp_side = "away" if side == "home" else "home"
+    opp_out = len([i for i in game.get("injuries", {}).get(opp_side, []) if i.get("status") in ("OUT", "DOUBTFUL")])
+    our_out = len([i for i in game.get("injuries", {}).get(side, []) if i.get("status") in ("OUT", "DOUBTFUL")])
+    diff = opp_out - our_out
+    if diff >= 4: score = 9
+    elif diff >= 2: score = 7
+    elif diff >= 0: score = 5
+    elif diff >= -2: score = 4
+    else: score = 2
+    return _clamp(score), f"Them:{opp_out} out Us:{our_out} out"
+
+
+def score_line_movement(game: dict) -> tuple:
+    shifts = game.get("shifts", {})
+    delta = abs(shifts.get("spread_delta", 0))
+    if delta >= 3: return 9, f"BIG MOVE: {delta:.1f} pts"
+    elif delta >= 1.5: return 7, f"Sig move: {delta:.1f} pts"
+    elif delta >= 0.5: return 5, f"Moved {delta:.1f} pts"
+    return 5, "Line flat"
+
+
+def score_ats_trend(profile: dict) -> tuple:
+    margin = profile.get("avg_margin_L10", 0)
+    if margin >= 10: return 9, f"Margin L10: {margin:+.1f}"
+    elif margin >= 5: return 7, f"Margin L10: {margin:+.1f}"
+    elif margin >= 0: return 5.5, f"Margin L10: {margin:+.1f}"
+    elif margin >= -5: return 4, f"Margin L10: {margin:+.1f}"
+    return 2, f"Margin L10: {margin:+.1f}"
+
+
+def score_road_trip(profile: dict) -> tuple:
+    road = profile.get("road_trip_len", 0)
+    home = profile.get("home_stand_len", 0)
+    if home >= 4: return 6, f"Home stand: {home}"
+    elif home >= 2: return 5.5, f"Home stand: {home}"
+    elif road >= 5: return 2, f"Road trip: {road}"
+    elif road >= 3: return 4, f"Road trip: {road}"
+    return 5, "Neutral"
+
+
+def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
+    our = profile.get("pace_L5", 0)
+    their = opp.get("pace_L5", 0)
+    if not our or not their:
+        return 5, "No pace data"
+    diff = abs(our - their)
+    if sport == "NBA":
+        if our >= 235 and their >= 235: return 6.5, "FAST matchup"
+        elif our <= 210 and their <= 210: return 5, "Grind game"
+        elif diff >= 20: return 3.5, f"PACE MISMATCH: {diff:.0f}"
+    return 5, f"Pace diff: {diff:.0f}"
+
+
+# ─── Sport-Specific Variables ──────────────────────────────────────────────────
+
+def score_starting_pitcher(game: dict, side: str) -> tuple:
+    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {})
+    opp_sp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}).get("starting_pitcher", {})
+    era = sp.get("era") or sp.get("ERA")
+    opp_era = opp_sp.get("era") or opp_sp.get("ERA")
+    if era and opp_era:
+        try:
+            diff = float(opp_era) - float(era)
+            return _clamp(5 + diff * 1.2), f"SP ERA {era} vs {opp_era}"
+        except (ValueError, TypeError):
+            pass
+    margin = game.get(f"{side}_profile", {}).get("margin_L5", 0)
+    return _clamp(5 + margin / 3), f"SP proxy from margin: {margin:+.1f}"
+
+
+def score_fixture_congestion(game: dict, side: str) -> tuple:
+    p = game.get(f"{side}_profile", {})
+    opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {})
+    our = p.get("matches_in_10d") or p.get("congestion_10d")
+    their = opp.get("matches_in_10d") or opp.get("congestion_10d")
+    if our and their:
+        try:
+            diff = int(their) - int(our)
+            if diff >= 2: return 9, f"Them:{their} vs Us:{our} in 10d"
+            elif diff >= 1: return 7, f"Them:{their} vs Us:{our} in 10d"
+            return 5, f"Even:{our} matches"
+        except (ValueError, TypeError):
+            pass
+    return 5, "No congestion data"
+
+
+def score_motivation(game: dict, side: str) -> tuple:
+    p = game.get(f"{side}_profile", {})
+    opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {})
+    our_pct = _win_pct(p.get("record"))
+    opp_pct = _win_pct(opp.get("record"))
+    if opp_pct < 0.35 and our_pct > 0.55:
+        return 8, f"Motivation: us {our_pct:.0%} vs them {opp_pct:.0%}"
+    elif our_pct < 0.35 and opp_pct > 0.55:
+        return 2, f"They're motivated: {opp_pct:.0%} vs us {our_pct:.0%}"
+    return _clamp(5 + (our_pct - opp_pct) * 6), f"Records: {our_pct:.0%} vs {opp_pct:.0%}"
+
+
+# ─── Spread Amplifier ──────────────────────────────────────────────────────────
+
+def _apply_spread_amplifier(composite: float, variables: dict) -> float:
+    scores = sorted(
+        [(v.get("score", 5), v.get("weight", 5)) for v in variables.values()],
+        key=lambda x: x[0] * x[1], reverse=True
+    )
+    if not scores:
+        return composite
+    top3 = scores[:3]
+    bot3 = scores[-3:]
+    top3_avg = sum(s for s, _ in top3) / len(top3)
+    bot3_avg = sum(s for s, _ in bot3) / len(bot3)
+    if top3_avg >= 8.0:
+        composite = composite * 0.7 + top3_avg * 0.3
+    elif bot3_avg <= 3.0:
+        composite = composite * 0.7 + bot3_avg * 0.3
+    elif top3_avg >= 7.0 and bot3_avg >= 5.0:
+        composite = composite * 0.85 + top3_avg * 0.15
+    all_scores = [s for s, _ in scores]
+    if max(all_scores) >= 9.5 and composite < 7.0:
+        composite = max(composite, 7.0)
+    if min(all_scores) <= 1.5 and composite > 4.0:
+        composite = min(composite, 4.0)
+    return round(composite, 2)
+
+
+# ─── Chain System (30 chains) ──────────────────────────────────────────────────
+
+CHAINS = {
+    # Positive chains (+bonus)
+    "THE_MISPRICING":    {"bonus": 1.0, "sports": None},
+    "FATIGUE_FADE":      {"bonus": 0.8, "sports": None},
+    "FORM_WAVE":         {"bonus": 0.7, "sports": None},
+    "INJURY_GOLDMINE":   {"bonus": 0.8, "sports": None},
+    "REST_DOMINATION":   {"bonus": 0.7, "sports": None},
+    "SHARPS_LOVE":       {"bonus": 0.8, "sports": None},
+    "BLOWOUT_INCOMING":  {"bonus": 0.7, "sports": ["NBA", "NCAAB"]},
+    "MISMATCH_MASSACRE": {"bonus": 0.8, "sports": None},
+    "ROAD_WARRIOR":      {"bonus": 0.6, "sports": None},
+    "BENCH_MOB":         {"bonus": 0.5, "sports": None},
+    "REVENGE_GAME":      {"bonus": 0.5, "sports": None},
+    "BOUNCE_BACK":       {"bonus": 0.5, "sports": None},
+    "HUNGRY_DOG":        {"bonus": 0.6, "sports": None},
+    # Negative chains (-penalty)
+    "DUMPSTER_FIRE":     {"bonus": -1.0, "sports": None},
+    "COLD_TAKE":         {"bonus": -0.7, "sports": None},
+    "GLASS_CANNON":      {"bonus": -0.5, "sports": None},
+    "SCHEDULE_LOSS":     {"bonus": -0.7, "sports": None},
+    "THIN_ROSTER":       {"bonus": -0.6, "sports": None},
+    "COASTING_FAV":      {"bonus": -0.5, "sports": None},
+    "FADE_THE_STREAK":   {"bonus": -0.5, "sports": None},
+    # Sport-specific
+    "GOALIE_EDGE":       {"bonus": 0.7, "sports": ["NHL"]},
+    "ACE_DOMINATION":    {"bonus": 0.8, "sports": ["MLB"]},
+    "COORS_OVER":        {"bonus": 0.7, "sports": ["MLB"]},
+    "PITCHING_DUEL":     {"bonus": 0.5, "sports": ["MLB"]},
+    "CONGESTION_FADE":   {"bonus": 0.8, "sports": ["SOCCER"]},
+    "CLASS_GAP":         {"bonus": 0.7, "sports": ["SOCCER"]},
+    "FORTRESS_HOME":     {"bonus": 0.6, "sports": ["SOCCER"]},
+    "TOURIST_TRAP":      {"bonus": -0.6, "sports": ["SOCCER"]},
+    "DERBY_CHAOS":       {"bonus": 0.5, "sports": ["SOCCER"]},
+    "BLUE_BLOOD_TRAP":   {"bonus": -0.5, "sports": ["NCAAB"]},
+}
+
+CHAIN_CAP = 3.0
+
+
+def check_chain(name: str, v: dict) -> bool:
+    """Check if chain triggers. v = {var_name: score}"""
+    g = lambda k, default=0: v.get(k, default)
+
+    if name == "THE_MISPRICING":
+        return g("star_player") >= 8 and g("line_movement") <= 3
+    elif name == "FATIGUE_FADE":
+        return g("rest") >= 8 and g("road_trip") >= 7 and g("depth") >= 7
+    elif name == "FORM_WAVE":
+        return g("form") >= 8 and g("off_ranking") >= 8 and g("ats") >= 7
+    elif name == "INJURY_GOLDMINE":
+        return g("star_player") >= 8 and g("line_movement") <= 3 and g("form") >= 6
+    elif name == "REST_DOMINATION":
+        return g("rest") >= 8 and g("home_away") >= 6 and g("road_trip") >= 6
+    elif name == "SHARPS_LOVE":
+        return g("line_movement") >= 8 and g("form") >= 6
+    elif name == "BLOWOUT_INCOMING":
+        return g("off_ranking") >= 8 and g("def_ranking") >= 7 and g("home_away") >= 6
+    elif name == "MISMATCH_MASSACRE":
+        return g("off_ranking") >= 8 and g("def_ranking") >= 7
+    elif name == "ROAD_WARRIOR":
+        return g("home_away") <= 4 and g("form") >= 7 and g("rest") >= 6
+    elif name == "BENCH_MOB":
+        return g("depth") >= 7 and g("star_player") >= 6 and g("form") >= 6
+    elif name == "REVENGE_GAME":
+        return g("h2h", 10) <= 3 and g("form") >= 7 and g("home_away") >= 6
+    elif name == "BOUNCE_BACK":
+        return g("form", 10) <= 3 and g("off_ranking") >= 7 and g("home_away") >= 6
+    elif name == "HUNGRY_DOG":
+        return g("form") >= 7 and g("motivation") >= 7 and g("line_movement") >= 6
+    elif name == "DUMPSTER_FIRE":
+        return g("form", 10) <= 3 and g("off_ranking", 10) <= 3 and g("star_player", 10) <= 4
+    elif name == "COLD_TAKE":
+        avg = sum(v.values()) / len(v) if v else 5
+        return avg <= 4.5
+    elif name == "GLASS_CANNON":
+        return g("off_ranking") >= 7 and g("def_ranking", 10) <= 3
+    elif name == "SCHEDULE_LOSS":
+        return g("rest", 10) <= 3 and g("road_trip", 10) <= 3 and g("form", 10) <= 4
+    elif name == "THIN_ROSTER":
+        return g("depth", 10) <= 3 and g("star_player", 10) <= 4
+    elif name == "COASTING_FAV":
+        return g("form", 10) <= 4 and g("motivation", 10) <= 4 and g("off_ranking", 10) <= 5
+    elif name == "FADE_THE_STREAK":
+        return g("form") >= 9 and g("home_away", 10) <= 4 and g("rest", 10) <= 4
+    elif name == "GOALIE_EDGE":
+        return g("star_player") >= 8 and g("def_ranking") >= 7 and g("rest") >= 7
+    elif name == "ACE_DOMINATION":
+        return g("starting_pitcher") >= 9 and g("off_ranking") >= 7
+    elif name == "COORS_OVER":
+        return g("park_factor") >= 8 and g("off_ranking") >= 7
+    elif name == "PITCHING_DUEL":
+        return g("starting_pitcher") >= 8 and g("def_ranking") >= 7
+    elif name == "CONGESTION_FADE":
+        return g("congestion") >= 8 and g("rest") >= 7
+    elif name == "CLASS_GAP":
+        return g("form") >= 8 and g("off_ranking") >= 7 and g("home_away") >= 7
+    elif name == "FORTRESS_HOME":
+        return g("home_away") >= 8 and g("def_ranking") >= 7 and g("form") >= 7
+    elif name == "TOURIST_TRAP":
+        return g("home_away", 10) <= 4 and g("congestion", 10) <= 3
+    elif name == "DERBY_CHAOS":
+        return g("h2h") >= 7 and g("form") >= 6 and g("motivation") >= 6
+    elif name == "BLUE_BLOOD_TRAP":
+        return g("line_movement") >= 8 and g("off_ranking", 10) <= 5
+    return False
+
+
+# ─── Variable Config Per Sport ─────────────────────────────────────────────────
+
+SPORT_VARIABLES = {
+    "NBA": {
+        "star_player": 9, "rest": 9, "off_ranking": 8, "def_ranking": 8,
+        "pace": 7, "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
+        "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+    },
+    "NHL": {
+        "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
+        "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
+        "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+    },
+    "MLB": {
+        "starting_pitcher": 10, "star_player": 8, "off_ranking": 7, "def_ranking": 7,
+        "form": 7, "rest": 6, "h2h": 6, "ats": 6,
+        "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+    },
+    "SOCCER": {
+        "congestion": 10, "form": 9, "star_player": 8, "off_ranking": 8,
+        "def_ranking": 8, "home_away": 8, "rest": 7, "h2h": 7,
+        "motivation": 7, "ats": 6, "line_movement": 5, "depth": 4,
+    },
+    "NCAAB": {
+        "off_ranking": 9, "def_ranking": 9, "star_player": 9, "line_movement": 9,
+        "pace": 8, "ats": 8, "form": 7, "h2h": 6,
+        "home_away": 6, "depth": 7, "motivation": 6, "rest": 5,
+    },
+    "NFL": {
+        "off_ranking": 9, "def_ranking": 9, "star_player": 8, "form": 8,
+        "home_away": 7, "rest": 7, "h2h": 6, "ats": 7,
+        "line_movement": 6, "motivation": 6, "depth": 5,
+    },
+}
+
+
+# ─── Main Grade Function ──────────────────────────────────────────────────────
+
+def grade_game(game: dict, pick_side: str) -> dict:
+    """
+    Grade a game for one side. Returns full breakdown.
+    game dict needs: sport, home_profile, away_profile, odds, injuries, shifts
+    """
+    sport = game.get("sport", "NBA").upper()
+    profile = game.get(f"{pick_side}_profile", {})
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {})
+
+    var_weights = SPORT_VARIABLES.get(sport, SPORT_VARIABLES["NBA"])
+    variables = {}
+
+    for var_name, weight in var_weights.items():
+        if var_name == "star_player":
+            score, note = score_star_player(game, pick_side)
+        elif var_name == "rest":
+            score, note = score_rest_advantage(profile, opp)
+        elif var_name == "off_ranking":
+            score, note = score_off_ranking(profile, opp, sport)
+        elif var_name == "def_ranking":
+            score, note = score_def_ranking(profile, opp, sport)
+        elif var_name == "form":
+            score, note = score_recent_form(profile, opp)
+        elif var_name == "home_away":
+            score, note = score_home_away(game, pick_side)
+        elif var_name == "h2h":
+            score, note = score_h2h(profile)
+        elif var_name == "ats":
+            score, note = score_ats_trend(profile)
+        elif var_name == "line_movement":
+            score, note = score_line_movement(game)
+        elif var_name == "road_trip":
+            score, note = score_road_trip(profile)
+        elif var_name == "depth":
+            score, note = score_depth_injuries(game, pick_side)
+        elif var_name == "pace":
+            score, note = score_pace_matchup(profile, opp, sport)
+        elif var_name == "motivation":
+            score, note = score_motivation(game, pick_side)
+        elif var_name == "starting_pitcher":
+            score, note = score_starting_pitcher(game, pick_side)
+        elif var_name == "congestion":
+            score, note = score_fixture_congestion(game, pick_side)
+        else:
+            score, note = 5, f"{var_name}: no data"
+
+        variables[var_name] = {
+            "score": _clamp(score),
+            "weight": weight,
+            "weighted": round(_clamp(score) * weight, 1),
+            "note": note,
+        }
+
+    # Composite
+    total_weighted = sum(v["weighted"] for v in variables.values())
+    max_possible = sum(v["weight"] * 10 for v in variables.values())
+    composite = round(total_weighted / max_possible * 10, 2) if max_possible > 0 else 5.0
+    composite = _apply_spread_amplifier(composite, variables)
+
+    # Chains
+    v_scores = {k: var["score"] for k, var in variables.items()}
+    chains_fired = []
+    chain_bonus = 0.0
+    for chain_name, cfg in CHAINS.items():
+        if cfg["sports"] and sport not in cfg["sports"]:
+            continue
+        if check_chain(chain_name, v_scores):
+            chain_bonus += cfg["bonus"]
+            chains_fired.append(chain_name)
+
+    chain_bonus = max(-CHAIN_CAP, min(chain_bonus, CHAIN_CAP))
+    final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+    grade = score_to_grade(final)
+
+    return {
+        "grade": grade,
+        "score": final,
+        "composite": composite,
+        "chain_bonus": chain_bonus,
+        "chains_fired": chains_fired,
+        "sizing": score_to_sizing(final),
+        "confidence": min(95, max(40, int(55 + (final - 5) * 8))),
+        "variables": variables,
+        "pick_side": pick_side,
+    }
+
+
+def grade_both_sides(game: dict) -> dict:
+    """Grade both home and away, pick the better side."""
+    home = grade_game(game, "home")
+    away = grade_game(game, "away")
+    if home["score"] >= away["score"]:
+        best = home
+        best["pick_team"] = game.get("home", game.get("home_team", "Home"))
+    else:
+        best = away
+        best["pick_team"] = game.get("away", game.get("away_team", "Away"))
+    return {
+        "home": home,
+        "away": away,
+        "best": best,
+    }

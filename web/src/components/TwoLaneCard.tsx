@@ -18,12 +18,20 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
     return styles[status] || styles.DIVERGENT
   }
 
+  const getSizingColor = (sizing: string) => {
+    if (sizing === 'Strong Play') return 'text-emerald-400'
+    if (sizing === 'Standard') return 'text-[#00E5FF]'
+    if (sizing === 'Lean') return 'text-amber-400'
+    return 'text-[#6E6E80]'
+  }
+
   const displayStatus = convergence?.status || 'PENDING'
-  const displayOur = ourGrade || { score: 0, grade: '-', confidence: 0 }
+  const displayOur = ourGrade || { score: 0, grade: '-', confidence: 0, thesis: '' }
   const displayAI = aiGrade || { score: 0, grade: '-', confidence: 0, model: 'AI' }
   const consensusScore = convergence?.consensusScore || 0
   const consensusGrade = convergence?.consensusGrade || '-'
   const delta = convergence?.delta || 0
+  const pick = game.pick
 
   return (
     <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5 hover:border-[#1A1A28]/80 transition-all">
@@ -31,7 +39,17 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
       <div className="flex justify-between items-start mb-4">
         <div>
           <h3 className="text-lg font-bold text-[#E8E8EC]">{game.homeTeam} vs {game.awayTeam}</h3>
-          <p className="text-sm text-[#6E6E80]">{new Date(game.scheduledAt).toLocaleTimeString()}</p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-sm text-[#6E6E80]">
+              {game.scheduledAt ? new Date(game.scheduledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
+            </p>
+            {game.odds && (
+              <p className="text-xs text-[#6E6E80]">
+                {game.odds.spread !== 0 && <span>Spread: {game.odds.spread > 0 ? '+' : ''}{game.odds.spread}</span>}
+                {game.odds.total > 0 && <span className="ml-2">O/U: {game.odds.total}</span>}
+              </p>
+            )}
+          </div>
         </div>
         <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusBadge(displayStatus)}`}>
           {displayStatus}
@@ -46,6 +64,18 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <div className="text-3xl font-black text-white">{displayOur.score.toFixed(1)}</div>
           <div className="text-sm font-semibold text-[#FF2D78]">{displayOur.grade}</div>
           <div className="text-xs text-[#6E6E80] mt-1">{displayOur.confidence}% conf</div>
+          {displayOur.thesis && (
+            <div className="text-xs text-[#9E9EA8] mt-2 leading-relaxed">{displayOur.thesis}</div>
+          )}
+          {displayOur.keyFactors && displayOur.keyFactors.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {displayOur.keyFactors.map((chain: string, i: number) => (
+                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-[#FF2D78]/10 text-[#FF2D78] rounded font-mono">
+                  {chain}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* AI Process - Cyan */}
@@ -53,17 +83,34 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <div className="text-xs font-bold text-[#00E5FF] uppercase tracking-wider mb-2">AI Process</div>
           <div className="text-3xl font-black text-white">{displayAI.score.toFixed(1)}</div>
           <div className="text-sm font-semibold text-[#00E5FF]">{displayAI.grade}</div>
-          <div className="text-xs text-[#6E6E80] mt-1">{displayAI.model}</div>
+          <div className="text-xs text-[#6E6E80] mt-1">{displayAI.model || 'Odds-Model'}</div>
         </div>
       </div>
 
       {/* Convergence */}
-      <div className="bg-gradient-to-r from-[#00E5FF]/5 to-[#FF2D78]/5 border border-[#1A1A28] rounded-lg p-3 text-center">
-        <div className="text-xs font-bold text-[#6E6E80] uppercase tracking-wider mb-1">Convergence</div>
-        <div className="text-2xl font-black bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] bg-clip-text text-transparent">
-          {consensusScore.toFixed(1)} {consensusGrade}
+      <div className="bg-gradient-to-r from-[#00E5FF]/5 to-[#FF2D78]/5 border border-[#1A1A28] rounded-lg p-3">
+        <div className="flex justify-between items-center">
+          <div>
+            <div className="text-xs font-bold text-[#6E6E80] uppercase tracking-wider mb-1">Convergence</div>
+            <div className="text-2xl font-black bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] bg-clip-text text-transparent">
+              {consensusScore.toFixed(1)} {consensusGrade}
+            </div>
+            <div className="text-xs text-[#6E6E80]">{'\u0394'} {delta.toFixed(2)} variance</div>
+          </div>
+
+          {/* Pick Badge */}
+          {pick && pick.side && (
+            <div className="text-right">
+              <div className={`text-sm font-bold ${getSizingColor(pick.sizing)}`}>
+                {pick.sizing}
+              </div>
+              <div className="text-xs text-[#E8E8EC] font-semibold">
+                {pick.side} {pick.type === 'spread' && pick.line !== 0 ? (pick.line > 0 ? `+${pick.line}` : pick.line) : pick.type.toUpperCase()}
+              </div>
+              <div className="text-xs text-[#6E6E80]">{pick.confidence}% conf</div>
+            </div>
+          )}
         </div>
-        <div className="text-xs text-[#6E6E80]">Δ {delta.toFixed(2)} variance</div>
       </div>
     </div>
   )
