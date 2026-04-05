@@ -112,7 +112,7 @@ export default function HomePage() {
             game={game}
             ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
             aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
-            convergence={game.convergence || {status: 'PENDING', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
+            convergence={game.convergence || {status: 'ALIGNED', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
           />
         ))}
       </div>
