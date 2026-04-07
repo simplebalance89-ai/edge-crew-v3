@@ -258,7 +258,7 @@ async def _fetch_rest_days(client: httpx.AsyncClient, sport: str, league: str,
 
 async def _fetch_injuries(client: httpx.AsyncClient, sport: str, league: str,
                            team_id: str) -> List[dict]:
-    """Fetch injuries from ESPN /teams/{id}/injuries endpoint. Cached."""
+    """Fetch injuries from ESPN core API + follow $refs. Cached."""
     cache_key = f"{sport}/{league}/{team_id}/injuries"
     cached = _injury_cache.get(cache_key)
     if cached:
@@ -268,41 +268,90 @@ async def _fetch_injuries(client: httpx.AsyncClient, sport: str, league: str,
 
     injuries: List[dict] = []
     try:
-        url = f"{ESPN_BASE}/{sport}/{league}/teams/{team_id}/injuries"
-        resp = await client.get(url)
-        if resp.status_code == 200:
-            data = resp.json()
-            # ESPN injuries response has varying structures:
-            # Structure A: { injuries: [ { athlete: {}, status: {} } ] }
-            for item in data.get("injuries", []):
-                athlete = item.get("athlete", {})
-                status_obj = item.get("status", item.get("type", {}))
-                if isinstance(status_obj, dict):
-                    status_text = status_obj.get("description",
-                                  status_obj.get("type", "Unknown"))
-                else:
-                    status_text = str(status_obj)
-                injuries.append({
-                    "player": athlete.get("displayName",
-                              athlete.get("fullName", "Unknown")),
-                    "status": status_text.upper() if status_text else "UNKNOWN",
-                    "position": athlete.get("position", {}).get("abbreviation", ""),
-                })
-            # Structure B: { team: { injuries: [ { injuries: [...] } ] } }
-            for group in data.get("team", {}).get("injuries", []):
-                for entry in group.get("injuries", []):
-                    athlete = entry.get("athlete", {})
-                    status_text = entry.get("status", "Unknown")
-                    if isinstance(status_text, dict):
-                        status_text = status_text.get("description", "Unknown")
-                    injuries.append({
-                        "player": athlete.get("displayName",
-                                  athlete.get("fullName", "Unknown")),
-                        "status": status_text.upper() if status_text else "UNKNOWN",
-                        "position": athlete.get("position", {}).get("abbreviation", ""),
-                    })
+        # Core API returns rich injury data with $refs (the site API returns {})
+        list_url = f"http://sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/teams/{team_id}/injuries?limit=30"
+        resp = await client.get(list_url)
+        if resp.status_code != 200:
+            _injury_cache[cache_key] = {"data": [], "_ts": datetime.now(timezone.utc)}
+            return []
+        list_data = resp.json()
+        items = list_data.get("items", [])
+        if not items:
+            _injury_cache[cache_key] = {"data": [], "_ts": datetime.now(timezone.utc)}
+            return []
+
+        # Fetch all injury details in parallel
+        detail_urls = [it.get("$ref") for it in items if it.get("$ref")]
+        detail_tasks = [client.get(u) for u in detail_urls]
+        detail_resps = await asyncio.gather(*detail_tasks, return_exceptions=True)
+
+        # For each injury detail, also fetch the athlete name in parallel
+        injury_records = []
+        athlete_url_to_idx: dict = {}
+        athlete_urls: list = []
+        for r in detail_resps:
+            if isinstance(r, Exception) or r.status_code != 200:
+                continue
+            try:
+                d = r.json()
+            except Exception:
+                continue
+            status_text = d.get("status", "Unknown") or "Unknown"
+            type_obj = d.get("type", {}) or {}
+            if not status_text or status_text == "Unknown":
+                status_text = type_obj.get("description", "Unknown")
+            short_comment = d.get("shortComment", "") or ""
+            details = d.get("details", {}) or {}
+            inj_type = details.get("type", "")
+            return_date = details.get("returnDate", "")
+            athlete_ref = (d.get("athlete") or {}).get("$ref", "")
+            idx = len(injury_records)
+            injury_records.append({
+                "player": "Unknown",  # filled in after athlete fetch
+                "status": status_text.upper().replace(" ", "_"),
+                "position": "",
+                "ppg": 0,
+                "injury_type": inj_type,
+                "return_date": return_date,
+                "comment": short_comment,
+            })
+            if athlete_ref:
+                athlete_url_to_idx.setdefault(athlete_ref, []).append(idx)
+                if athlete_ref not in athlete_urls:
+                    athlete_urls.append(athlete_ref)
+
+        # Fetch athletes in parallel
+        if athlete_urls:
+            athlete_tasks = [client.get(u) for u in athlete_urls]
+            athlete_resps = await asyncio.gather(*athlete_tasks, return_exceptions=True)
+            for url, ar in zip(athlete_urls, athlete_resps):
+                if isinstance(ar, Exception) or ar.status_code != 200:
+                    continue
+                try:
+                    a = ar.json()
+                except Exception:
+                    continue
+                name = a.get("displayName") or a.get("fullName") or "Unknown"
+                pos = ((a.get("position") or {}).get("abbreviation") or "")
+                for idx in athlete_url_to_idx.get(url, []):
+                    injury_records[idx]["player"] = name
+                    injury_records[idx]["position"] = pos
+
+        # Normalize status: "OUT" / "DOUBTFUL" / "QUESTIONABLE" / "DAY_TO_DAY"
+        for r in injury_records:
+            s = (r.get("status") or "").upper()
+            if s in ("OUT", "OUT_INDEFINITELY"):
+                r["status"] = "OUT"
+            elif "DOUBT" in s:
+                r["status"] = "DOUBTFUL"
+            elif "QUESTION" in s:
+                r["status"] = "QUESTIONABLE"
+            elif "DAY" in s:
+                r["status"] = "DAY_TO_DAY"
+
+        injuries = injury_records
     except Exception as e:
-        logger.debug(f"[ESPN] Injury fetch failed for team {team_id}: {e}")
+        logger.warning(f"[ESPN] Injury fetch failed for team {team_id}: {type(e).__name__}: {str(e)[:120]}")
 
     # Deduplicate by player name
     seen = set()
