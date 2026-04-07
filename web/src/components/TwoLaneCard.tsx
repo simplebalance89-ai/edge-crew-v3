@@ -91,6 +91,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
     ALIGNED: 'bg-[#38BDF8]/15 text-[#38BDF8] border-[#38BDF8]/40',
     CLOSE: 'bg-amber-500/15 text-amber-400 border-amber-500/40',
     SPLIT: 'bg-rose-500/15 text-rose-400 border-rose-500/40',
+    CONFLICT: 'bg-rose-500/25 text-rose-300 border-rose-500/60',
     PENDING: 'bg-white/5 text-white/40 border-white/15',
   }
 
