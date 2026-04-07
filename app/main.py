@@ -1059,8 +1059,8 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                     logger.info(f"[ODDS API] {key}: {len(events)} events")
                     for event in events:
                         game = _parse_event(event, sport_upper)
-                        if game["status"] == "completed":
-                            continue  # Filter out completed games
+                        if game["status"] in ("completed", "live"):
+                            continue  # Only show upcoming — no live or finished
                         all_games.append(game)
                 else:
                     logger.warning(f"[ODDS API] {key}: HTTP {resp.status_code}")
