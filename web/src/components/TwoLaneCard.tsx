@@ -106,9 +106,13 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             </span>
             {game.odds && (
               <>
-                {game.odds.spread !== 0 && <span className="text-xs text-[#6E6E80]">Spread: {game.odds.spread > 0 ? '+' : ''}{game.odds.spread}</span>}
+                {game.odds.spread !== 0 && (() => {
+                  const fav = game.odds.spread < 0 ? game.homeTeam : game.awayTeam
+                  const favLine = -Math.abs(game.odds.spread)
+                  return <span className="text-xs text-[#6E6E80]">Spread: {fav} {favLine}</span>
+                })()}
                 {game.odds.total > 0 && <span className="text-xs text-[#6E6E80]">O/U: {game.odds.total}</span>}
-                {game.odds.mlHome !== 0 && <span className="text-xs text-[#6E6E80]">ML: {game.odds.mlAway}/{game.odds.mlHome}</span>}
+                {game.odds.mlHome !== 0 && <span className="text-xs text-[#6E6E80]">ML: {game.awayTeam} {game.odds.mlAway > 0 ? '+' : ''}{game.odds.mlAway} / {game.homeTeam} {game.odds.mlHome > 0 ? '+' : ''}{game.odds.mlHome}</span>}
               </>
             )}
           </div>
