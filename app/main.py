@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -337,8 +338,30 @@ def _detect_arbitrage(event: dict) -> dict | None:
     }
 
 
+# Team name overrides — Odds API quirks (e.g. Athletics moved to Sacramento mid-2024)
+TEAM_NAME_OVERRIDES = {
+    "Athletics": "Sacramento Athletics",
+}
+
+
+def _normalize_team_name(name: str) -> str:
+    return TEAM_NAME_OVERRIDES.get(name, name)
+
+
 def _parse_event(event: dict, sport_label: str) -> dict:
     """Parse odds API event into our game format (without grading — added later)."""
+    # Normalize team names in-place (Athletics -> Sacramento Athletics, etc.)
+    if event.get("home_team") in TEAM_NAME_OVERRIDES:
+        event["home_team"] = TEAM_NAME_OVERRIDES[event["home_team"]]
+    if event.get("away_team") in TEAM_NAME_OVERRIDES:
+        event["away_team"] = TEAM_NAME_OVERRIDES[event["away_team"]]
+    # Normalize names embedded in bookmaker outcomes so h2h/spread matching still works
+    for bk in event.get("bookmakers", []):
+        for m in bk.get("markets", []):
+            for o in m.get("outcomes", []):
+                if o.get("name") in TEAM_NAME_OVERRIDES:
+                    o["name"] = TEAM_NAME_OVERRIDES[o["name"]]
+
     spread = total = ml_home = ml_away = None
     bookmaker_used = None
     bookmakers_data = {bk["key"]: bk for bk in event.get("bookmakers", [])}
@@ -416,17 +439,80 @@ AZURE_HOSTS = {
 # 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
 # token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
 REAL_AI_MODELS = [
-    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_tokens"},
-    {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens"},
-    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens"},
-    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens"},
-    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens"},
-    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens"},
-    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens"},
-    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens"},
-    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens"},
-    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens"},
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_tokens",            "max_tokens": 2000},
+    {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000},
+    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000},
+    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500},
+    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 3500},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 4000},
+    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 2000},
+    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 4000},
+    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000},
 ]
+
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think_tags(text: str) -> str:
+    if not text:
+        return text
+    text = _THINK_TAG_RE.sub("", text)
+    # If unclosed <think>, drop everything from it onward
+    text = _THINK_OPEN_RE.sub("", text)
+    return text.strip()
+
+
+def _extract_balanced_json(text: str, prefer_last: bool = True) -> Optional[dict]:
+    """Find a balanced {...} block in text and json.loads it. If prefer_last,
+    scans from the end backward for the LAST balanced block; else first."""
+    if not text:
+        return None
+    candidates = []
+    n = len(text)
+    # Walk for all balanced top-level brace blocks
+    i = 0
+    while i < n:
+        if text[i] == "{":
+            depth = 0
+            in_str = False
+            esc = False
+            for j in range(i, n):
+                c = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                else:
+                    if c == '"':
+                        in_str = True
+                    elif c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidates.append(text[i:j + 1])
+                            i = j
+                            break
+            else:
+                break
+        i += 1
+    if not candidates:
+        return None
+    order = reversed(candidates) if prefer_last else iter(candidates)
+    for cand in order:
+        try:
+            obj = json.loads(cand)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    return None
 
 
 def _format_injuries(inj_list: list) -> str:
@@ -477,7 +563,8 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
         f'{{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}}. '
-        f"Output the JSON now:"
+        f'EXAMPLE OUTPUT: {{"grade": 7.2, "pick": "Home", "reasoning": "strong recent form and pitching edge"}} '
+        f"Now output ONLY the JSON object, starting with {{ :"
     )
 
 
@@ -492,8 +579,10 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     display = model_cfg["display"]
 
     system_msg = (
-        "You are a JSON-only API. You output exactly one JSON object and nothing else. "
-        "No reasoning traces, no thinking tags, no prose, no markdown, no code fences."
+        "RESPONSE FORMAT: ONE LINE OF JSON ONLY. "
+        "Example: {\"grade\": 6.5, \"pick\": \"Home\", \"reasoning\": \"better record\"}. "
+        "No thinking. No prose. No code fences. No tags. "
+        "Start your response with the opening brace { and end with }."
     )
     messages = [
         {"role": "system", "content": system_msg},
@@ -501,7 +590,7 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     ]
 
     # Reasoning models need much more headroom because reasoning tokens count toward the budget.
-    token_budget = 2500
+    token_budget = int(model_cfg.get("max_tokens") or 2000)
 
     # Build URL + body shape based on host format
     if host_cfg["format"] == "openai_v1":
@@ -538,31 +627,66 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
         return None
 
     try:
-        msg = resp.json().get("choices", [{}])[0].get("message", {})
-        content = msg.get("content") or msg.get("reasoning_content") or ""
+        rj = resp.json()
+        choice0 = (rj.get("choices") or [{}])[0]
+        msg = choice0.get("message", {}) or {}
+        content = (
+            msg.get("content")
+            or msg.get("reasoning_content")
+            or choice0.get("text")
+            or ""
+        )
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, dict):
+                    parts.append(p.get("text") or p.get("content") or "")
+                else:
+                    parts.append(str(p))
+            content = "".join(parts)
     except Exception as e:
         logger.warning(f"[REAL-AI PARSE] {display}: {e}")
         return None
 
     if not content:
-        logger.warning(f"[REAL-AI EMPTY] {display}: empty content from {deployment}")
+        try:
+            finish = choice0.get("finish_reason")
+        except Exception:
+            finish = "?"
+        logger.warning(f"[REAL-AI EMPTY] {display} dep={deployment} finish={finish}")
         return None
 
-    # Extract JSON from response (models may include prose around the JSON)
+    raw_content = content
+    cleaned = _strip_think_tags(content)
+    cleaned = re.sub(r"```(?:json)?", "", cleaned, flags=re.IGNORECASE).replace("```", "").strip()
+
+    # Extraction strategies in order: full parse → last balanced → first balanced
     data = None
+    strategy = ""
     try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        s, e = content.find("{"), content.rfind("}") + 1
-        if s >= 0 and e > s:
-            try:
-                data = json.loads(content[s:e])
-            except Exception:
-                pass
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            data = parsed
+            strategy = "full"
+    except Exception:
+        pass
+    if not data:
+        data = _extract_balanced_json(cleaned, prefer_last=True)
+        if data:
+            strategy = "last-balanced"
+    if not data:
+        data = _extract_balanced_json(cleaned, prefer_last=False)
+        if data:
+            strategy = "first-balanced"
 
     if not data:
-        logger.warning(f"[REAL-AI NOJSON] {display}: {content[:150]}")
+        logger.warning(
+            f"[REAL-AI NOJSON] {display} dep={deployment} tried=full,last,first "
+            f"raw[:200]={raw_content[:200]!r}"
+        )
         return None
+    else:
+        logger.info(f"[REAL-AI OK] {display} strategy={strategy}")
 
     try:
         grade = float(data.get("grade", 0))
