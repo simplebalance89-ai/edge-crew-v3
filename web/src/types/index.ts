@@ -9,7 +9,8 @@ export interface Game {
   ourGrade?: Grade;
   aiGrade?: Grade & { model?: string };
   convergence?: {
-    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT";
+    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT" | "CONFLICT";
+    conflict?: { engineSide: string; aiSide: string; homeVotes: number; awayVotes: number };
     consensusScore: number;
     consensusGrade: string;
     delta: number;
@@ -89,7 +90,8 @@ export interface ConvergenceResult {
   ourProcess: Grade;
   aiProcess: Grade & { model: string };
   convergence: {
-    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT";
+    status: "LOCK" | "ALIGNED" | "CLOSE" | "SPLIT" | "CONFLICT";
+    conflict?: { engineSide: string; aiSide: string; homeVotes: number; awayVotes: number };
     consensusScore: number;
     consensusGrade: string;
     delta: number;
@@ -218,4 +220,5 @@ export const CONVERGENCE_COLORS: Record<string, { bg: string; border: string; te
   ALIGNED: { bg: "rgba(56, 189, 248, 0.15)", border: "#38BDF8", text: "#38BDF8" },
   CLOSE: { bg: "rgba(245, 158, 11, 0.15)", border: "#F59E0B", text: "#F59E0B" },
   SPLIT: { bg: "rgba(239, 68, 68, 0.15)", border: "#EF4444", text: "#EF4444" },
+  CONFLICT: { bg: "rgba(239, 68, 68, 0.2)", border: "#EF4444", text: "#EF4444" },
 };

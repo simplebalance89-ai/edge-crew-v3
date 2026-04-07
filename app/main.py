@@ -200,6 +200,57 @@ def _convergence(our: dict, ai: dict, ai_models: list = None) -> dict:
     }
 
 
+def _apply_conflict_downgrade(game: dict, pick: dict, ai_models: list, conv: dict, pr: dict | None) -> bool:
+    """If engine pick side disagrees with AI majority pick side, downgrade.
+    Caps consensus at 4.5, sets status=CONFLICT, adds KILL flag. Returns True if conflict.
+    """
+    if not (ai_models and pick and pick.get("side") and conv):
+        return False
+    home_name = game.get("homeTeam", "") or game.get("home_team", "")
+    away_name = game.get("awayTeam", "") or game.get("away_team", "")
+    home_votes = 0
+    away_votes = 0
+    for m in ai_models:
+        p = str(m.get("pick", "")).strip().lower()
+        if not p:
+            continue
+        if p == "home" or (home_name and p == home_name.lower()):
+            home_votes += 1
+        elif p == "away" or (away_name and p == away_name.lower()):
+            away_votes += 1
+    if home_votes == 0 and away_votes == 0:
+        return False
+    if home_votes > away_votes:
+        ai_side = home_name
+    elif away_votes > home_votes:
+        ai_side = away_name
+    else:
+        return False  # tie — don't flag
+    engine_side = pick["side"]
+    if not engine_side or ai_side == engine_side:
+        return False
+    capped = min(conv.get("consensusScore", 0), 4.5)
+    conv["consensusScore"] = capped
+    conv["consensusGrade"] = "D+"
+    conv["status"] = "CONFLICT"
+    conv["conflict"] = {
+        "engineSide": engine_side,
+        "aiSide": ai_side,
+        "homeVotes": home_votes,
+        "awayVotes": away_votes,
+    }
+    if pr is not None:
+        flags = pr.setdefault("flags", [])
+        if not any(f.get("rule") == "side_conflict" for f in flags):
+            flags.insert(0, {
+                "rule": "side_conflict",
+                "action": "KILL",
+                "severity": "high",
+                "note": f"CONFLICT — Engine picks {engine_side}, AI picks {ai_side}",
+            })
+    return True
+
+
 def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> dict:
     """Determine pick recommendation from convergence."""
     consensus = conv["consensusScore"]
@@ -353,15 +404,29 @@ AZURE_AI_KEY = (
     or os.environ.get("AZURE_SWEDEN_KEY", "")
 )
 
+# Each entry: (primary_deployment, display_name, persona, [variant_names_to_try])
+# Variants are tried in order; first HTTP 200 wins. This makes us resilient to
+# Sweden Central deployment name casing / version-suffix differences.
 REAL_AI_MODELS = [
-    ("DeepSeek-R1-0528", "DeepSeek R1", "data-driven, stats-heavy"),
-    ("grok-4-1-fast-reasoning", "Grok 4.1", "contrarian, sniffs out trap lines"),
-    ("Kimi-K2-Thinking", "Kimi K2 Thinking", "tactical structural scout"),
-    ("gpt-5.4-nano", "GPT 5.4 Nano", "balanced consensus builder"),
-    ("claude-opus-4-6", "Claude Opus 4.6", "deep strategic, momentum-focused"),
-    ("Phi-4-reasoning", "Phi-4 Reasoning", "chain-of-thought reasoner on thin edges"),
-    ("qwen3-32b", "Qwen 3-32B", "pattern recognition, record differentials"),
+    ("DeepSeek-R1-0528", "DeepSeek R1", "data-driven, stats-heavy",
+        ["DeepSeek-R1-0528", "deepseek-r1-0528", "DeepSeek-R1", "deepseek-r1"]),
+    ("grok-4-1-fast-reasoning", "Grok 4.1", "contrarian, sniffs out trap lines",
+        ["grok-4-1-fast-reasoning"]),
+    ("Kimi-K2-Thinking", "Kimi K2 Thinking", "tactical structural scout",
+        ["Kimi-K2-Thinking", "kimi-k2-thinking", "Kimi-K2", "kimi-k2"]),
+    ("gpt-5.4-nano", "GPT 5.4 Nano", "balanced consensus builder",
+        ["gpt-5.4-nano", "gpt-5-nano", "gpt-5.4-mini", "gpt-4o-mini"]),
+    ("claude-opus-4-6", "Claude Opus 4.6", "deep strategic, momentum-focused",
+        ["claude-opus-4-6", "Claude-Opus-4-6", "claude-opus-4", "claude-3-opus"]),
+    ("Phi-4-reasoning", "Phi-4 Reasoning", "chain-of-thought reasoner on thin edges",
+        ["Phi-4-reasoning", "phi-4-reasoning", "Phi-4", "phi-4"]),
+    ("qwen3-32b", "Qwen 3-32B", "pattern recognition, record differentials",
+        ["qwen3-32b", "Qwen3-32B", "qwen-3-32b", "Qwen-3-32B"]),
 ]
+
+# Cache which (deployment_name, url_style) combo worked last for each display
+# name, so after the first successful call we stop probing variants.
+_REAL_AI_WORKING: dict = {}
 
 
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
@@ -944,6 +1009,9 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
 
     # Peter's Rules
     pr = peter_rules(enriched or game, pick_side)
+
+    # ─── CONFLICT DETECTION ───
+    _apply_conflict_downgrade(game, pick, ai_models, conv, pr)
 
     return {
         "ourGrade": our_grade,
@@ -1708,6 +1776,15 @@ async def analyze_games(request: AnalyzeRequest):
                         break
                 game["convergence"]["consensusScore"] = adjusted
                 game["convergence"]["consensusGrade"] = adj_grade
+
+        # Re-apply conflict detection AFTER recompute/gatekeeper so CONFLICT wins
+        _apply_conflict_downgrade(
+            game,
+            game.get("pick") or {},
+            game.get("aiModels") or [],
+            game.get("convergence") or {},
+            game.get("peterRules"),
+        )
 
         enriched.append(game)
 
