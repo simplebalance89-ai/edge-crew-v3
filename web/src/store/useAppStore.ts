@@ -17,6 +17,12 @@ interface AppState {
   addPick: (pick: Pick) => void;
   user: User | null;
   setUser: (user: User | null) => void;
+
+  // User-driven bet slip locks (game IDs the user wants on the slip)
+  slipLocks: string[];
+  setSlipLocks: (ids: string[]) => void;
+  toggleSlipLock: (gameId: string) => void;
+  clearSlipLocks: () => void;
   
   // Loading States
   isLoadingGames: boolean;
@@ -48,6 +54,15 @@ export const useAppStore = create<AppState>()(
         addPick: (pick) => set((state) => ({ picks: [pick, ...state.picks] })),
         user: null,
         setUser: (user) => set({ user }),
+
+        slipLocks: [],
+        setSlipLocks: (ids) => set({ slipLocks: ids }),
+        toggleSlipLock: (gameId) => set((state) => ({
+          slipLocks: state.slipLocks.includes(gameId)
+            ? state.slipLocks.filter((g) => g !== gameId)
+            : [...state.slipLocks, gameId],
+        })),
+        clearSlipLocks: () => set({ slipLocks: [] }),
         
         // Loading
         isLoadingGames: false,
@@ -66,6 +81,7 @@ export const useAppStore = create<AppState>()(
           selectedSport: state.selectedSport,
           picks: state.picks,
           user: state.user,
+          slipLocks: state.slipLocks,
         }),
       }
     ),
