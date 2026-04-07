@@ -1184,6 +1184,16 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                         game = _parse_event(event, sport_upper)
                         if game["status"] in ("completed", "live"):
                             continue  # Only show upcoming — no live or finished
+                        # Only tonight's games — filter out anything more than 18 hours away
+                        try:
+                            ct = game.get("scheduledAt", "")
+                            if ct:
+                                gt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                                hours_ahead = (gt - datetime.now(timezone.utc)).total_seconds() / 3600
+                                if hours_ahead > 18:
+                                    continue  # Tomorrow's game or later — skip
+                        except Exception:
+                            pass
                         all_games.append(game)
                 else:
                     logger.warning(f"[ODDS API] {key}: HTTP {resp.status_code}")
