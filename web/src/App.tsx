@@ -4,8 +4,20 @@ import HomePage from './pages/HomePage'
 import GameDetailPage from './pages/GameDetailPage'
 import PicksPage from './pages/PicksPage'
 import ProfilePage from './pages/ProfilePage'
+import { useAppStore } from './store/useAppStore'
 
 function App() {
+  const user = useAppStore((s) => s.user)
+
+  // Gate the entire app behind PIN login
+  if (!user) {
+    return (
+      <Layout>
+        <ProfilePage />
+      </Layout>
+    )
+  }
+
   return (
     <Layout>
       <Routes>

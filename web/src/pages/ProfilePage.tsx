@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { User as UserIcon, LogOut, Check, X, Minus } from 'lucide-react'
-import { login, getBankroll, getUserPicks, gradePick } from '@/services/api'
+import { login, getBankroll, getUserPicks, gradePick, adjustBankroll } from '@/services/api'
 import { useAppStore } from '@/store/useAppStore'
 import type { Bankroll, LockedPick } from '@/types'
 
@@ -29,6 +29,22 @@ export default function ProfilePage() {
     enabled: !!user?.username,
     refetchInterval: 10000,
   })
+
+  // Manual bankroll adjust
+  const adjustMutation = useMutation({
+    mutationFn: (delta: number) => adjustBankroll(user!.username, delta),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bankroll', user?.username] })
+    },
+  })
+
+  const handleAdjust = (sign: 1 | -1) => {
+    const raw = window.prompt(`Enter amount to ${sign > 0 ? 'add to' : 'subtract from'} bankroll:`, '0')
+    if (!raw) return
+    const amt = parseFloat(raw)
+    if (isNaN(amt) || amt <= 0) return
+    adjustMutation.mutate(sign * amt)
+  }
 
   // Grade pick mutation
   const gradePickMutation = useMutation({
@@ -157,7 +173,23 @@ export default function ProfilePage() {
       {/* Bankroll Card */}
       {br && (
         <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-6 mb-8">
-          <h2 className="text-sm font-bold text-[#6E6E80] uppercase tracking-wider mb-4">Bankroll</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold text-[#6E6E80] uppercase tracking-wider">Bankroll</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleAdjust(1)}
+                className="px-3 py-1 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-bold hover:bg-green-500/20"
+              >
+                + Add
+              </button>
+              <button
+                onClick={() => handleAdjust(-1)}
+                className="px-3 py-1 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-bold hover:bg-red-500/20"
+              >
+                - Sub
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
             <div className="text-center">
               <div className="text-xs text-[#6E6E80] uppercase tracking-wider mb-1">Starting</div>

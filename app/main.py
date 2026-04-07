@@ -968,6 +968,43 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
 
 class BetSlipRequest(BaseModel):
     username: str
+    game_ids: list[str] = []
+
+
+class LockToggleRequest(BaseModel):
+    username: str
+    game_id: str
+    action: str  # "add" | "remove"
+
+
+# User-driven locked game IDs (per username), persisted to disk
+_locked_game_ids: Dict[str, list] = _load_json("locked_picks.json", {})
+
+
+def _save_locked_game_ids():
+    _save_json("locked_picks.json", _locked_game_ids)
+
+
+@app.post("/api/locks")
+async def toggle_lock(req: LockToggleRequest):
+    uname = req.username.lower()
+    current = list(_locked_game_ids.get(uname, []))
+    if req.action == "add":
+        if req.game_id not in current:
+            current.append(req.game_id)
+    elif req.action == "remove":
+        current = [g for g in current if g != req.game_id]
+    else:
+        return {"error": "action must be 'add' or 'remove'"}
+    _locked_game_ids[uname] = current
+    _save_locked_game_ids()
+    return {"username": uname, "game_ids": current}
+
+
+@app.get("/api/locks/{username}")
+async def get_locks(username: str):
+    uname = username.lower()
+    return {"username": uname, "game_ids": _locked_game_ids.get(uname, [])}
 
 
 _betslip_counter = 0
@@ -975,21 +1012,34 @@ _betslip_counter = 0
 
 @app.post("/api/betslip")
 async def generate_betslip(request: BetSlipRequest):
-    """Generate a Hard Rock Sportsbook bet slip from the user's locked picks."""
+    """Generate a Hard Rock Sportsbook bet slip from user-selected (locked) game IDs."""
     global _betslip_counter
 
-    # Gather all LOCK picks across all cached sports
+    # Resolve which game IDs the user wants on the slip.
+    # Prefer game_ids in the request; fall back to persisted locks.
+    requested_ids = request.game_ids or _locked_game_ids.get(request.username.lower(), [])
+    requested_set = {str(g) for g in requested_ids}
+
+    if not requested_set:
+        return {
+            "slip_id": None,
+            "error": "No picks selected. Tap LOCK on the games you want before generating a slip.",
+        }
+
+    # Gather selected games across all cached sports
     locked_picks = []
+    seen_ids = set()
     for cache_key, cached in _cache.items():
         if not cached or not cached.get("data"):
             continue
         for game in cached["data"]:
-            conv = game.get("convergence", {})
-            if conv.get("status") != "LOCK":
+            gid = str(game.get("id", ""))
+            if gid not in requested_set or gid in seen_ids:
                 continue
             pick = game.get("pick", {})
             if not pick or not pick.get("side"):
                 continue
+            seen_ids.add(gid)
 
             home = game.get("homeTeam", "")
             away = game.get("awayTeam", "")
@@ -1007,8 +1057,10 @@ async def generate_betslip(request: BetSlipRequest):
                 pick_label = f"{side} {pick_type}"
 
             locked_picks.append({
+                "game_id": gid,
                 "game": game_label,
                 "pick": pick_label,
+                "line": f"{pick_label} | $100 | Hard Rock",
                 "type": pick_type,
                 "amount": "$100",
                 "book": "Hard Rock",
@@ -1017,7 +1069,7 @@ async def generate_betslip(request: BetSlipRequest):
     if not locked_picks:
         return {
             "slip_id": None,
-            "error": "No locked picks found. Analyze games first — only LOCK-status picks appear on the bet slip.",
+            "error": "Selected games aren't in the cache. Re-grade those sports, then try again.",
         }
 
     # Generate slip ID
@@ -1418,6 +1470,44 @@ async def get_bankroll(username: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user["bankroll"]
+
+
+# ─── Profile aliases (live-night convenience) ─────────────────────────────────
+
+class BankrollAdjustRequest(BaseModel):
+    delta: float
+
+
+@app.get("/api/profile")
+async def list_profiles():
+    return [{"username": u, "name": v["name"]} for u, v in USERS.items()]
+
+
+@app.post("/api/profile/login")
+async def profile_login(req: LoginRequest):
+    return await login(req)
+
+
+@app.get("/api/profile/{username}")
+async def get_profile(username: str):
+    username = username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"username": username, "name": user["name"], "bankroll": user["bankroll"]}
+
+
+@app.post("/api/profile/{username}/adjust")
+async def adjust_bankroll(username: str, req: BankrollAdjustRequest):
+    username = username.lower()
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    bankroll = user["bankroll"]
+    bankroll["current"] = round(bankroll["current"] + req.delta, 2)
+    bankroll["profit"] = round(bankroll["profit"] + req.delta, 2)
+    _save_users()
+    return bankroll
 
 
 @app.post("/api/user/{username}/pick")

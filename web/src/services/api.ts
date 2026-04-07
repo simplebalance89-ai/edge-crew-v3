@@ -59,12 +59,24 @@ export const lockPick = (username: string, data: {
 export const getUserPicks = (username: string) =>
   api.get<LockedPick[]>(`/api/user/${username}/picks`).then(r => r.data);
 
+export const adjustBankroll = (username: string, delta: number) =>
+  api.post<Bankroll>(`/api/profile/${username}/adjust`, { delta }).then(r => r.data);
+
 export const gradePick = (username: string, pickId: string, result: string) =>
   api.post(`/api/user/${username}/pick/${pickId}/result`, { result }).then(r => r.data);
 
 // Bet Slip
-export const generateBetSlip = (username: string) =>
-  api.post<BetSlip>('/api/betslip', { username }).then(r => r.data);
+export const generateBetSlip = (username: string, gameIds: string[] = []) =>
+  api.post<BetSlip>('/api/betslip', { username, game_ids: gameIds }).then(r => r.data);
+
+// User-driven slip locks (separate from the legacy /pick history endpoint)
+export const toggleSlipLock = (username: string, gameId: string, action: 'add' | 'remove') =>
+  api.post<{ username: string; game_ids: string[] }>('/api/locks', {
+    username, game_id: gameId, action,
+  }).then(r => r.data);
+
+export const getSlipLocks = (username: string) =>
+  api.get<{ username: string; game_ids: string[] }>(`/api/locks/${username}`).then(r => r.data);
 
 // Parlay
 export interface ParlayPick {
