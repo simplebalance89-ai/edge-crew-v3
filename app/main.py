@@ -429,22 +429,41 @@ REAL_AI_MODELS = [
 ]
 
 
+def _format_injuries(inj_list: list) -> str:
+    """Format injury list for AI prompt — only OUT/DOUBTFUL with star indicators."""
+    if not inj_list:
+        return "none reported"
+    out = []
+    for inj in inj_list[:6]:  # cap at 6
+        status = inj.get("status", "")
+        if status not in ("OUT", "DOUBTFUL"):
+            continue
+        name = inj.get("player", "?")
+        ppg = inj.get("ppg", 0)
+        star = " STAR" if (ppg or 0) >= 15 else ""
+        out.append(f"{name} ({status}, {ppg}ppg{star})")
+    return "; ".join(out) if out else "none OUT/DOUBTFUL"
+
+
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
     odds = game.get("odds", {}) or {}
     hp = game.get("home_profile", {}) or {}
     ap = game.get("away_profile", {}) or {}
+    inj = game.get("injuries", {}) or {}
     spread = odds.get("spread", 0)
     total = odds.get("total", 0)
     ml_h = odds.get("mlHome", 0)
     ml_a = odds.get("mlAway", 0)
-    inj_h = ", ".join(hp.get("injuries", [])[:3]) if hp.get("injuries") else "none"
-    inj_a = ", ".join(ap.get("injuries", [])[:3]) if ap.get("injuries") else "none"
+    inj_home_str = _format_injuries(inj.get("home", []))
+    inj_away_str = _format_injuries(inj.get("away", []))
     return (
-        f"GAME: {away} ({ap.get('record','?')}) @ {home} ({hp.get('record','?')}) | "
-        f"spread {spread:+.1f} total {total} ML {ml_a}/{ml_h} | "
-        f"INJ home: {inj_h} | away: {inj_a} | engine composite: {our_score:.1f}/10. "
+        f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
+        f"{home} ({hp.get('record','?')}, L5 {hp.get('L5','?')}) | "
+        f"spread (home) {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
+        f"INJURIES — {home}: {inj_home_str} | {away}: {inj_away_str} | "
+        f"engine composite: {our_score:.1f}/10. "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
         f'{{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}}. '
@@ -1074,6 +1093,11 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
         "ev": ev,
         "peterRules": pr,
         "kalshi_prob": None,
+        # Persist enrichment so /api/analyze can pass injuries + records to AI prompts
+        "home_profile": (enriched or {}).get("home_profile", {}),
+        "away_profile": (enriched or {}).get("away_profile", {}),
+        "injuries": (enriched or {}).get("injuries", {}),
+        "rest": (enriched or {}).get("rest", {}),
     }
 
 
