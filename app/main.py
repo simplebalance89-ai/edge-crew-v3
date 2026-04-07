@@ -395,38 +395,37 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 
 # ─── Real Azure AI Foundry calls (parallel single-shot) ──────────────────────
 
-AZURE_AI_ENDPOINT = os.environ.get(
-    "AZURE_AI_ENDPOINT",
-    "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/",
-)
-AZURE_AI_KEY = (
-    os.environ.get("AZURE_AI_KEY", "")
-    or os.environ.get("AZURE_SWEDEN_KEY", "")
-)
+# Multi-host Azure registry — Sweden Central + gce-personal-resource
+AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDEN_KEY", "")
+AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
 
-# Each entry: (primary_deployment, display_name, persona, [variant_names_to_try])
-# Variants are tried in order; first HTTP 200 wins. This makes us resilient to
-# Sweden Central deployment name casing / version-suffix differences.
+# Endpoint = host hosting the deployment.
+#   "sweden" = peter-mna31gr3 Sweden Central, OpenAI-compatible /openai/v1/chat/completions
+#   "gce"    = gce-personal-resource, classic Azure OpenAI route per-deployment
+AZURE_HOSTS = {
+    "sweden": {
+        "url": "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/chat/completions",
+        "key": AZURE_AI_KEY,
+        "format": "openai_v1",     # model in JSON body
+    },
+    "gce": {
+        "url_template": "https://gce-personal-resource.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-08-01-preview",
+        "key": AZURE_GCE_KEY,
+        "format": "aoai_classic",  # deployment in URL
+    },
+}
+
+# 7 confirmed-working models across both endpoints (probed live 2026-04-07).
+# token_param: "max_tokens" for legacy, "max_completion_tokens" for gpt-5+ family
 REAL_AI_MODELS = [
-    ("DeepSeek-R1-0528", "DeepSeek R1", "data-driven, stats-heavy",
-        ["DeepSeek-R1-0528", "deepseek-r1-0528", "DeepSeek-R1", "deepseek-r1"]),
-    ("grok-4-1-fast-reasoning", "Grok 4.1", "contrarian, sniffs out trap lines",
-        ["grok-4-1-fast-reasoning"]),
-    ("Kimi-K2-Thinking", "Kimi K2 Thinking", "tactical structural scout",
-        ["Kimi-K2-Thinking", "kimi-k2-thinking", "Kimi-K2", "kimi-k2"]),
-    ("gpt-5.4-nano", "GPT 5.4 Nano", "balanced consensus builder",
-        ["gpt-5.4-nano", "gpt-5-nano", "gpt-5.4-mini", "gpt-4o-mini"]),
-    ("claude-opus-4-6", "Claude Opus 4.6", "deep strategic, momentum-focused",
-        ["claude-opus-4-6", "Claude-Opus-4-6", "claude-opus-4", "claude-3-opus"]),
-    ("Phi-4-reasoning", "Phi-4 Reasoning", "chain-of-thought reasoner on thin edges",
-        ["Phi-4-reasoning", "phi-4-reasoning", "Phi-4", "phi-4"]),
-    ("qwen3-32b", "Qwen 3-32B", "pattern recognition, record differentials",
-        ["qwen3-32b", "Qwen3-32B", "qwen-3-32b", "Qwen-3-32B"]),
+    {"display": "Grok 4.1",         "deployment": "grok-4-1-fast-reasoning",            "host": "sweden", "persona": "contrarian, sniffs out trap lines",     "token_param": "max_tokens"},
+    {"display": "DeepSeek R1",      "deployment": "DeepSeek-R1-0528",                    "host": "gce",    "persona": "data-driven, stats-heavy reasoner",      "token_param": "max_tokens"},
+    {"display": "Kimi K2 Thinking", "deployment": "Kimi-K2-Thinking",                    "host": "gce",    "persona": "tactical structural scout",              "token_param": "max_tokens"},
+    {"display": "Phi-4 Reasoning",  "deployment": "Phi-4-reasoning",                     "host": "gce",    "persona": "chain-of-thought on thin edges",         "token_param": "max_tokens"},
+    {"display": "GPT-5 Mini",       "deployment": "gpt-5-mini",                          "host": "gce",    "persona": "balanced consensus builder",             "token_param": "max_completion_tokens"},
+    {"display": "Llama-4 Maverick", "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "sweden","persona": "open-source heavyweight, broad pattern", "token_param": "max_tokens"},
+    {"display": "DeepSeek V3",      "deployment": "DeepSeek-V3-0324",                    "host": "sweden", "persona": "fast non-reasoning analyst",             "token_param": "max_tokens"},
 ]
-
-# Cache which (deployment_name, url_style) combo worked last for each display
-# name, so after the first successful call we stop probing variants.
-_REAL_AI_WORKING: dict = {}
 
 
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
@@ -452,135 +451,104 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     )
 
 
-def _azure_urls_for(deployment: str) -> list:
-    """Return candidate URLs to try for a given deployment name.
+async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
+    """Call one Azure model based on its config dict (display/deployment/host/token_param).
+    Returns parsed {grade, pick, reasoning} dict or None on any failure."""
+    host_cfg = AZURE_HOSTS.get(model_cfg["host"])
+    if not host_cfg or not host_cfg.get("key"):
+        return None
 
-    Endpoint from env looks like:
-      https://<resource>.services.ai.azure.com/openai/v1/
-    We derive both:
-      (a) OpenAI-compatible:  <base>/chat/completions              (model in body)
-      (b) Classic AOAI route: <host>/openai/deployments/<d>/chat/completions?api-version=...
-    """
-    base = AZURE_AI_ENDPOINT.rstrip("/")
-    urls = [("openai_v1", f"{base}/chat/completions")]
-    # Host root = strip trailing /openai/v1 if present
-    host = base
-    for suffix in ("/openai/v1", "/openai"):
-        if host.endswith(suffix):
-            host = host[: -len(suffix)]
-            break
-    classic = (
-        f"{host}/openai/deployments/{deployment}/chat/completions"
-        f"?api-version=2024-08-01-preview"
-    )
-    urls.append(("aoai_classic", classic))
-    return urls
+    deployment = model_cfg["deployment"]
+    display = model_cfg["display"]
 
+    # Build URL + body shape based on host format
+    if host_cfg["format"] == "openai_v1":
+        url = host_cfg["url"]
+        body = {
+            "model": deployment,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.4,
+            model_cfg.get("token_param", "max_tokens"): 250,
+        }
+    else:  # aoai_classic
+        url = host_cfg["url_template"].format(deployment=deployment)
+        body = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.4,
+            model_cfg.get("token_param", "max_tokens"): 250,
+        }
 
-async def _post_azure_once(client: httpx.AsyncClient, url: str, deployment: str, prompt: str) -> tuple:
-    """Single POST attempt. Returns (status_code, parsed_dict_or_None, raw_text_snippet)."""
+    headers = {
+        "api-key": host_cfg["key"],
+        "Authorization": f"Bearer {host_cfg['key']}",
+        "Content-Type": "application/json",
+    }
+
     try:
-        resp = await client.post(
-            url,
-            headers={
-                "api-key": AZURE_AI_KEY,
-                "Authorization": f"Bearer {AZURE_AI_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": deployment,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4,
-                "max_tokens": 200,
-                "response_format": {"type": "json_object"},
-            },
-        )
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
     except Exception as e:
-        return (-1, None, f"EXC {type(e).__name__}: {str(e)[:160]}")
+        logger.warning(f"[REAL-AI EXC] {display}: {type(e).__name__}: {str(e)[:160]}")
+        return None
+
     if resp.status_code != 200:
-        return (resp.status_code, None, resp.text[:200])
+        logger.warning(f"[REAL-AI FAIL] {display} dep={deployment} status={resp.status_code} body={resp.text[:200]}")
+        return None
+
     try:
-        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        msg = resp.json().get("choices", [{}])[0].get("message", {})
+        content = msg.get("content") or msg.get("reasoning_content") or ""
     except Exception as e:
-        return (resp.status_code, None, f"json-parse: {e}")
+        logger.warning(f"[REAL-AI PARSE] {display}: {e}")
+        return None
+
     if not content:
-        return (resp.status_code, None, "empty-content")
+        logger.warning(f"[REAL-AI EMPTY] {display}: empty content from {deployment}")
+        return None
+
+    # Extract JSON from response (models may include prose around the JSON)
+    data = None
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
         s, e = content.find("{"), content.rfind("}") + 1
-        if s < 0 or e <= s:
-            return (resp.status_code, None, "no-json-in-content")
-        try:
-            data = json.loads(content[s:e])
-        except Exception:
-            return (resp.status_code, None, "json-extract-fail")
+        if s >= 0 and e > s:
+            try:
+                data = json.loads(content[s:e])
+            except Exception:
+                pass
+
+    if not data:
+        logger.warning(f"[REAL-AI NOJSON] {display}: {content[:150]}")
+        return None
+
     try:
         grade = float(data.get("grade", 0))
     except Exception:
         grade = 0.0
-    return (resp.status_code, {
+
+    return {
         "grade": max(0.0, min(10.0, grade)),
         "pick": str(data.get("pick", "")).strip() or "Home",
         "reasoning": str(data.get("reasoning", "")).strip()[:300],
-    }, "ok")
-
-
-async def _call_azure_model(display: str, variants: list, prompt: str) -> Optional[dict]:
-    """Try each deployment name variant against each URL style until one returns 200.
-
-    Logs every attempt with model name + URL style + status + error snippet.
-    Caches the first working (deployment, url_style) per display name to skip probing
-    on later games in the same batch.
-    """
-    if not AZURE_AI_KEY:
-        return None
-
-    # Fast path: previously-working combo
-    cached = _REAL_AI_WORKING.get(display)
-    ordered_attempts: list = []
-    if cached:
-        ordered_attempts.append(cached)  # (deployment, url_style, url)
-    for deployment in variants:
-        for style, url in _azure_urls_for(deployment):
-            combo = (deployment, style, url)
-            if combo not in ordered_attempts:
-                ordered_attempts.append(combo)
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for (deployment, style, url) in ordered_attempts:
-            status, parsed, snippet = await _post_azure_once(client, url, deployment, prompt)
-            if status == 200 and parsed:
-                if _REAL_AI_WORKING.get(display) != (deployment, style, url):
-                    logger.warning(
-                        f"[REAL-AI OK] {display} deployment={deployment} style={style} -> 200"
-                    )
-                    _REAL_AI_WORKING[display] = (deployment, style, url)
-                return parsed
-            logger.warning(
-                f"[REAL-AI FAIL] {display} deployment={deployment} style={style} "
-                f"url={url} status={status} body={snippet}"
-            )
-            # If we got a 401/403, no point trying more variants — it's auth.
-            if status in (401, 403):
-                break
-    return None
+    }
 
 
 async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[list]:
     """Call all 7 Azure models in parallel for one game. Returns list of model
     dicts (may be partial — some entries may be missing if they failed)."""
-    if not AZURE_AI_KEY:
+    if not AZURE_AI_KEY and not AZURE_GCE_KEY:
         return None
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
     tasks = [
-        _call_azure_model(disp, variants, _build_realai_prompt(game, our_score, persona))
-        for (_mname, disp, persona, variants) in REAL_AI_MODELS
+        _call_azure_model(cfg, _build_realai_prompt(game, our_score, cfg["persona"]))
+        for cfg in REAL_AI_MODELS
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     out = []
-    for (_mname, disp, _persona, _variants), res in zip(REAL_AI_MODELS, results):
+    for cfg, res in zip(REAL_AI_MODELS, results):
+        disp = cfg["display"]
         if isinstance(res, Exception):
             logger.warning(f"[REAL-AI EXC] {disp}: {res}")
             continue
@@ -1773,7 +1741,7 @@ async def analyze_games(request: AnalyzeRequest):
     # Per-model fallback: for each display name we expect, if real AI returned
     # it keep it; otherwise backfill from the deterministic math personality
     # with the same display name so the UI always shows a full slate.
-    expected_displays = [disp for (_m, disp, _p, _v) in REAL_AI_MODELS]
+    expected_displays = [cfg["display"] for cfg in REAL_AI_MODELS]
 
     real_ok_total = 0
     real_fail_total = 0
