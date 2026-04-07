@@ -162,6 +162,29 @@ export interface BetSlip {
   potential_payout?: string;
   notes?: string;
   error?: string;
+  parlays?: Array<{
+    legs: Array<{
+      game_id?: string;
+      game: string;
+      pick: string;
+      sport: string;
+      score: number;
+    }>;
+    stake: number;
+    sport_mix: string[];
+    leg_count: number;
+    diverse: boolean;
+  }>;
+}
+
+export interface GutPickEntry {
+  username: string;
+  game_id: string;
+  sport: string;
+  pick_side: string;
+  engine_pick_side: string;
+  date: string;
+  timestamp: string;
 }
 
 export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing";

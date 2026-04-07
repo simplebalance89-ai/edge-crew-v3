@@ -57,19 +57,31 @@ export default function PicksPage() {
 
   const handleCopySlip = () => {
     if (!betSlip || !betSlip.picks) return
-    const lines = [
+    const lines: string[] = [
       `BETONLINE.AG — BET SLIP`,
       `Slip ID: ${betSlip.slip_id}`,
       `Generated: ${betSlip.generated}`,
       `User: ${betSlip.user}`,
       `${'─'.repeat(40)}`,
-      ...betSlip.picks.map((p) => p.line || `${p.pick} | ${p.amount} | ${p.book}`),
+    ]
+    if (betSlip.parlays && betSlip.parlays.length > 0) {
+      lines.push(`PARLAYS (Peter's Rules — max 2, $100 total)`)
+      betSlip.parlays.forEach((pl, i) => {
+        const mix = pl.sport_mix.join('/') || 'mixed'
+        lines.push(`PARLAY ${i + 1} (${pl.leg_count} legs, $${pl.stake}) [${mix}]:`)
+        pl.legs.forEach(l => lines.push(`  • ${l.pick}  — ${l.game}`))
+      })
+      lines.push(`${'─'.repeat(40)}`)
+      lines.push(`SINGLES`)
+    }
+    lines.push(...betSlip.picks.map((p) => p.line || `${p.pick} | ${p.amount} | ${p.book}`))
+    lines.push(
       `${'─'.repeat(40)}`,
       `Total Risk: ${betSlip.total_risk}`,
       `Potential Payout: ${betSlip.potential_payout}`,
       ``,
       betSlip.notes || '',
-    ]
+    )
     navigator.clipboard.writeText(lines.join('\n'))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -233,6 +245,38 @@ export default function PicksPage() {
             </div>
 
             <div className="px-6 py-4 space-y-3 max-h-80 overflow-y-auto">
+              {betSlip.parlays && betSlip.parlays.length > 0 && (
+                <div className="mb-3 space-y-2">
+                  <div className="text-[10px] font-black tracking-[1.5px] text-purple-300 uppercase">
+                    Peter's Rules — Parlays
+                  </div>
+                  {betSlip.parlays.map((pl, i) => (
+                    <div key={i} className="bg-purple-500/[0.08] border border-purple-500/40 rounded-xl p-3">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="text-[11px] font-black text-purple-300 tracking-wider">
+                          PARLAY {i + 1} — {pl.leg_count} LEGS
+                        </div>
+                        <div className="text-[11px] font-black text-[#D4A017]">${pl.stake}</div>
+                      </div>
+                      <div className="text-[9px] text-white/40 mb-2">
+                        {pl.sport_mix.join(' • ') || 'mixed'}
+                        {!pl.diverse && <span className="ml-2 text-amber-400">(single sport)</span>}
+                      </div>
+                      <div className="space-y-1">
+                        {pl.legs.map((l, j) => (
+                          <div key={j} className="font-mono text-[11px] text-white/90 flex justify-between">
+                            <span>{l.pick}</span>
+                            <span className="text-white/40 text-[10px]">{l.sport}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="text-[10px] font-black tracking-[1.5px] text-white/50 uppercase mt-3">
+                    Singles
+                  </div>
+                </div>
+              )}
               {betSlip.picks.map((p, i) => (
                 <div key={i} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
                   <div className="text-xs text-white/40 mb-1">{p.game}</div>

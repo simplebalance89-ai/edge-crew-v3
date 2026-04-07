@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Game, ConvergenceResult, Pick, User, Bankroll, LockedPick, BetSlip } from '@/types';
+import type { Game, ConvergenceResult, Pick, User, Bankroll, LockedPick, BetSlip, GutPickEntry } from '@/types';
 
 const API_BASE = '';
 
@@ -77,6 +77,18 @@ export const toggleSlipLock = (username: string, gameId: string, action: 'add' |
 
 export const getSlipLocks = (username: string) =>
   api.get<{ username: string; game_ids: string[] }>(`/api/locks/${username}`).then(r => r.data);
+
+// Peter's Rules — Gut picks
+export const submitGutPick = (data: {
+  username: string;
+  game_id: string;
+  sport: string;
+  pick_side: string;
+  engine_pick_side?: string;
+}) => api.post<{ ok: boolean; gut_pick: GutPickEntry }>('/api/gut-pick', data).then(r => r.data);
+
+export const getGutPicks = (username: string) =>
+  api.get<{ username: string; gut_picks: GutPickEntry[] }>(`/api/gut-picks/${username}`).then(r => r.data);
 
 // Parlay
 export interface ParlayPick {

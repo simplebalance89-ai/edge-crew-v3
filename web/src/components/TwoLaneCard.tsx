@@ -1,7 +1,7 @@
 import { useState, type MouseEvent } from 'react'
 import { Lock, Check } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import { lockPick, toggleSlipLock as apiToggleSlipLock } from '@/services/api'
+import { lockPick, toggleSlipLock as apiToggleSlipLock, submitGutPick } from '@/services/api'
 import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
@@ -22,7 +22,41 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
   const { user, slipLocks, toggleSlipLock } = useAppStore()
   const [locking, setLocking] = useState(false)
   const [locked, setLocked] = useState(false)
+  const [gutActive, setGutActive] = useState(false)
+  const [gutToast, setGutToast] = useState<string | null>(null)
   const isSlipLocked = slipLocks.includes(game.id)
+
+  const handleGutPick = async (e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!user?.username || !game.pick?.side) return
+    const enginePick = game.pick.side
+    const opposite = enginePick === game.homeTeam ? game.awayTeam : game.homeTeam
+    const confirmed = window.confirm(
+      `GUT PICK: Override engine's pick on ${enginePick}?\n\nYour gut pick will be: ${opposite}\n\n(1 gut pick per sport per day)`
+    )
+    if (!confirmed) return
+    try {
+      await submitGutPick({
+        username: user.username,
+        game_id: game.id,
+        sport: (game.sport || '').toUpperCase(),
+        pick_side: opposite,
+        engine_pick_side: enginePick,
+      })
+      setGutActive(true)
+      setGutToast(`GUT PICK logged: ${opposite}`)
+      setTimeout(() => setGutToast(null), 3000)
+    } catch (err: any) {
+      const status = err?.response?.status
+      if (status === 400) {
+        setGutToast(`Already used your gut pick for ${(game.sport || '').toUpperCase()} today`)
+      } else {
+        setGutToast('Failed to log gut pick')
+      }
+      setTimeout(() => setGutToast(null), 3000)
+    }
+  }
 
   const handleToggleSlipLock = (e: MouseEvent) => {
     e.preventDefault()
@@ -293,7 +327,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
 
         {/* Pick + Lock Button */}
         {pick && pick.side && user && (
-          <div className="mt-3 flex items-center justify-center">
+          <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
             <button
               onClick={handleToggleSlipLock}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black tracking-wider transition-all border ${
@@ -305,7 +339,26 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               <Lock size={11} />
               {isSlipLocked ? 'LOCKED FOR SLIP' : 'LOCK FOR SLIP'}
             </button>
+            <button
+              onClick={handleGutPick}
+              title="Override engine's pick (1 per sport per day)"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black tracking-wider transition-all border ${
+                gutActive
+                  ? 'bg-purple-500 text-white border-purple-500'
+                  : 'bg-white/5 text-white/60 border-white/15 hover:bg-purple-500/15 hover:text-purple-300 hover:border-purple-500/40'
+              }`}
+            >
+              {gutActive ? 'GUT ✓' : 'GUT PICK'}
+            </button>
+            {gutActive && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-purple-500/20 border border-purple-500/50 text-purple-300">
+                GUT
+              </span>
+            )}
           </div>
+        )}
+        {gutToast && (
+          <div className="mt-2 text-center text-[10px] font-bold text-purple-300">{gutToast}</div>
         )}
         {pick && pick.side && (
           <div className="mt-3 flex items-center justify-center gap-2">
