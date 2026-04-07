@@ -898,19 +898,10 @@ def peter_rules(game: dict, pick_side: str) -> dict:
         "NHL": 0.8, "MLB": 0, "NFL": 0, "SOCCER": 0.3,
     }.get(sport, 15)
 
-    # Rule 1: Big fav ATS trap — spread beyond threshold against winning team
+    # Rule 1: REMOVED — Peter no longer cares about spread size as a kill trigger
     opp_record = opp_profile.get("record", "0-0")
     opp_w, opp_l = _parse_record(opp_record)
     opp_pct = opp_w / max(opp_w + opp_l, 1)
-
-    if abs_spread > big_fav_spread and opp_pct > 0.45:
-        flags.append({
-            "rule": "Big Fav ATS Trap",
-            "action": "KILL",
-            "severity": "CRITICAL",
-            "note": f"Spread {abs_spread} against {opp_record} team ({opp_pct:.0%}) — public trap",
-        })
-        adjustment -= 3.0
 
     # Rule 2: Fresh injury boost — star OUT < 3 days, books may not have adjusted
     for inj in opp_injuries:
@@ -938,15 +929,7 @@ def peter_rules(game: dict, pick_side: str) -> dict:
             })
             adjustment -= 0.5
 
-    # Rule 4: Massive NCAAB spread
-    if sport == "NCAAB" and abs_spread > 20:
-        flags.append({
-            "rule": "NCAAB Massive Spread",
-            "action": "DOWNGRADE",
-            "severity": "WARNING",
-            "note": f"NCAAB spread {abs_spread} — massive spreads ATS unreliable",
-        })
-        adjustment -= 1.0
+    # Rule 4: REMOVED — Peter no longer cares about spread size
 
     has_kill = any(f["action"] == "KILL" for f in flags)
 
