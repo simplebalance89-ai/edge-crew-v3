@@ -452,67 +452,139 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     )
 
 
-async def _call_azure_model(model_name: str, prompt: str) -> Optional[dict]:
-    """Call one Azure AI Foundry model. Returns {grade, pick, reasoning} or None."""
+def _azure_urls_for(deployment: str) -> list:
+    """Return candidate URLs to try for a given deployment name.
+
+    Endpoint from env looks like:
+      https://<resource>.services.ai.azure.com/openai/v1/
+    We derive both:
+      (a) OpenAI-compatible:  <base>/chat/completions              (model in body)
+      (b) Classic AOAI route: <host>/openai/deployments/<d>/chat/completions?api-version=...
+    """
+    base = AZURE_AI_ENDPOINT.rstrip("/")
+    urls = [("openai_v1", f"{base}/chat/completions")]
+    # Host root = strip trailing /openai/v1 if present
+    host = base
+    for suffix in ("/openai/v1", "/openai"):
+        if host.endswith(suffix):
+            host = host[: -len(suffix)]
+            break
+    classic = (
+        f"{host}/openai/deployments/{deployment}/chat/completions"
+        f"?api-version=2024-08-01-preview"
+    )
+    urls.append(("aoai_classic", classic))
+    return urls
+
+
+async def _post_azure_once(client: httpx.AsyncClient, url: str, deployment: str, prompt: str) -> tuple:
+    """Single POST attempt. Returns (status_code, parsed_dict_or_None, raw_text_snippet)."""
+    try:
+        resp = await client.post(
+            url,
+            headers={
+                "api-key": AZURE_AI_KEY,
+                "Authorization": f"Bearer {AZURE_AI_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": deployment,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+        )
+    except Exception as e:
+        return (-1, None, f"EXC {type(e).__name__}: {str(e)[:160]}")
+    if resp.status_code != 200:
+        return (resp.status_code, None, resp.text[:200])
+    try:
+        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        return (resp.status_code, None, f"json-parse: {e}")
+    if not content:
+        return (resp.status_code, None, "empty-content")
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        s, e = content.find("{"), content.rfind("}") + 1
+        if s < 0 or e <= s:
+            return (resp.status_code, None, "no-json-in-content")
+        try:
+            data = json.loads(content[s:e])
+        except Exception:
+            return (resp.status_code, None, "json-extract-fail")
+    try:
+        grade = float(data.get("grade", 0))
+    except Exception:
+        grade = 0.0
+    return (resp.status_code, {
+        "grade": max(0.0, min(10.0, grade)),
+        "pick": str(data.get("pick", "")).strip() or "Home",
+        "reasoning": str(data.get("reasoning", "")).strip()[:300],
+    }, "ok")
+
+
+async def _call_azure_model(display: str, variants: list, prompt: str) -> Optional[dict]:
+    """Try each deployment name variant against each URL style until one returns 200.
+
+    Logs every attempt with model name + URL style + status + error snippet.
+    Caches the first working (deployment, url_style) per display name to skip probing
+    on later games in the same batch.
+    """
     if not AZURE_AI_KEY:
         return None
-    url = f"{AZURE_AI_ENDPOINT.rstrip('/')}/chat/completions"
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "api-key": AZURE_AI_KEY,
-                    "Authorization": f"Bearer {AZURE_AI_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.4,
-                    "max_tokens": 200,
-                    "response_format": {"type": "json_object"},
-                },
+
+    # Fast path: previously-working combo
+    cached = _REAL_AI_WORKING.get(display)
+    ordered_attempts: list = []
+    if cached:
+        ordered_attempts.append(cached)  # (deployment, url_style, url)
+    for deployment in variants:
+        for style, url in _azure_urls_for(deployment):
+            combo = (deployment, style, url)
+            if combo not in ordered_attempts:
+                ordered_attempts.append(combo)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for (deployment, style, url) in ordered_attempts:
+            status, parsed, snippet = await _post_azure_once(client, url, deployment, prompt)
+            if status == 200 and parsed:
+                if _REAL_AI_WORKING.get(display) != (deployment, style, url):
+                    logger.warning(
+                        f"[REAL-AI OK] {display} deployment={deployment} style={style} -> 200"
+                    )
+                    _REAL_AI_WORKING[display] = (deployment, style, url)
+                return parsed
+            logger.warning(
+                f"[REAL-AI FAIL] {display} deployment={deployment} style={style} "
+                f"url={url} status={status} body={snippet}"
             )
-        if resp.status_code != 200:
-            logger.warning(f"[REAL-AI] {model_name}: HTTP {resp.status_code} {resp.text[:160]}")
-            return None
-        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        if not content:
-            return None
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            s, e = content.find("{"), content.rfind("}") + 1
-            if s < 0 or e <= s:
-                return None
-            data = json.loads(content[s:e])
-        grade = float(data.get("grade", 0))
-        return {
-            "grade": max(0.0, min(10.0, grade)),
-            "pick": str(data.get("pick", "")).strip() or "Home",
-            "reasoning": str(data.get("reasoning", "")).strip()[:300],
-        }
-    except Exception as e:
-        logger.warning(f"[REAL-AI] {model_name}: {e}")
-        return None
+            # If we got a 401/403, no point trying more variants — it's auth.
+            if status in (401, 403):
+                break
+    return None
 
 
 async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[list]:
-    """Call all 7 Azure models in parallel for one game. Returns list shaped
-    like _generate_ai_models output, or None if API key missing / all failed."""
+    """Call all 7 Azure models in parallel for one game. Returns list of model
+    dicts (may be partial — some entries may be missing if they failed)."""
     if not AZURE_AI_KEY:
         return None
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
     tasks = [
-        _call_azure_model(mname, _build_realai_prompt(game, our_score, persona))
-        for (mname, _disp, persona) in REAL_AI_MODELS
+        _call_azure_model(disp, variants, _build_realai_prompt(game, our_score, persona))
+        for (_mname, disp, persona, variants) in REAL_AI_MODELS
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     out = []
-    for (_mname, disp, _persona), res in zip(REAL_AI_MODELS, results):
-        if isinstance(res, Exception) or not res:
+    for (_mname, disp, _persona, _variants), res in zip(REAL_AI_MODELS, results):
+        if isinstance(res, Exception):
+            logger.warning(f"[REAL-AI EXC] {disp}: {res}")
+            continue
+        if not res:
             continue
         score = round(res["grade"], 1)
         team = home if str(res.get("pick", "")).lower().startswith("h") else away
@@ -524,10 +596,9 @@ async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[lis
             "thesis": res.get("reasoning", ""),
             "pick": team,
             "key_factors": [],
+            "source": "real",
         })
-    if not out:
-        return None
-    return out
+    return out if out else None
 
 
 def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
@@ -1698,34 +1769,48 @@ async def analyze_games(request: AnalyzeRequest):
     ]
     real_ai_results = await asyncio.gather(*real_ai_tasks, return_exceptions=True)
 
-    # Fallback: legacy crowdsource (only used if real AI returned nothing for any game)
-    need_fallback = any(
-        isinstance(r, Exception) or not r for r in real_ai_results
-    )
-    legacy_grades: dict = {}
-    if need_fallback and not AZURE_AI_KEY:
-        # Skip slow legacy call entirely if no key — _generate_ai_models is the fallback
-        legacy_grades = {}
-    elif need_fallback:
-        try:
-            legacy_grades = await crowdsource_grade(games, sport_lower)
-        except Exception as e:
-            logger.warning(f"[ANALYZE] legacy crowdsource failed: {e}")
-            legacy_grades = {}
+    # Enrich each game with per-model grades + gatekeeper.
+    # Per-model fallback: for each display name we expect, if real AI returned
+    # it keep it; otherwise backfill from the deterministic math personality
+    # with the same display name so the UI always shows a full slate.
+    expected_displays = [disp for (_m, disp, _p, _v) in REAL_AI_MODELS]
 
-    # Enrich each game with per-model grades + gatekeeper
+    real_ok_total = 0
+    real_fail_total = 0
     enriched = []
     for game, real_res in zip(games, real_ai_results):
         game_id = game.get("id", "")
+        our_score = (game.get("ourGrade") or {}).get("score", 5.0)
 
-        if not isinstance(real_res, Exception) and real_res:
-            ai_grades_list = real_res
-        else:
-            ai_grades_list = legacy_grades.get(game_id, [])
-            if not ai_grades_list:
-                # Final fallback: deterministic math personalities
-                our_score = (game.get("ourGrade") or {}).get("score", 5.0)
-                ai_grades_list = _generate_ai_models(game, game.get("odds", {}) or {}, our_score)
+        real_list = real_res if (not isinstance(real_res, Exception) and real_res) else []
+        real_by_display = {m.get("model"): m for m in real_list}
+
+        # Build math fallback keyed by model display name
+        math_list = _generate_ai_models(game, game.get("odds", {}) or {}, our_score)
+        math_by_display = {m.get("model"): m for m in math_list}
+
+        ai_grades_list = []
+        for disp in expected_displays:
+            if disp in real_by_display:
+                m = real_by_display[disp]
+                m["source"] = "real"
+                ai_grades_list.append(m)
+                real_ok_total += 1
+            elif disp in math_by_display:
+                m = dict(math_by_display[disp])
+                m["source"] = "math_fallback"
+                ai_grades_list.append(m)
+                real_fail_total += 1
+            else:
+                real_fail_total += 1
+
+        # Also append any extra math personalities not in the expected list
+        # (Gemini, Perplexity, etc.) so the UI keeps showing the full 9-model card.
+        for m in math_list:
+            if m.get("model") not in expected_displays:
+                m = dict(m)
+                m.setdefault("source", "math_fallback")
+                ai_grades_list.append(m)
 
         # Attach per-model grades
         game["aiModels"] = ai_grades_list
@@ -1787,6 +1872,11 @@ async def analyze_games(request: AnalyzeRequest):
         )
 
         enriched.append(game)
+
+    logger.info(
+        f"[ANALYZE] {sport_lower}: real-AI hits={real_ok_total} misses={real_fail_total} "
+        f"across {len(games)} games, working_combos={_REAL_AI_WORKING}"
+    )
 
     # Update cache with enriched data — use same key so /api/games returns it
     _cache[cache_key] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
