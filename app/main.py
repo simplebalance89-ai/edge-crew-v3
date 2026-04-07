@@ -482,12 +482,15 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
 
     models = []
     abs_spread = abs(spread)
+    # Favorites are always minus, dogs always plus — independent of home/away
+    fav_line = -abs_spread
+    dog_line = abs_spread
 
     def _pick_for(score: float) -> str:
         """Each model picks fav if score >= 5.5, else dog."""
         if score >= 5.5:
-            return f"{fav} {'-' if spread <= 0 else '+'}{abs_spread}"
-        return f"{dog} {'+'if spread <= 0 else '-'}{abs_spread}"
+            return f"{fav} {fav_line:+.1f}"
+        return f"{dog} {dog_line:+.1f}"
 
     # DeepSeek — data-driven, stats-heavy
     ds_score = round(our_score * 0.85 + (fav_margin / 10) * 1.5, 1)
@@ -509,11 +512,11 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     grok_score = max(3.0, min(9.5, grok_score))
     grok_grade = _score_to_grade_local(grok_score)
     if abs(spread) > 10:
-        grok_thesis = f"Big spread alert — {fav} at {spread:+.1f} smells like a public trap. {dog} ({dog_rec}) margin is {dog_margin:+.1f}, not as bad as the line suggests."
+        grok_thesis = f"Big spread alert — {fav} at {fav_line:+.1f} smells like a public trap. {dog} ({dog_rec}) margin is {dog_margin:+.1f}, not as bad as the line suggests."
     elif abs(spread) < 3:
-        grok_thesis = f"Tight line ({spread:+.1f}) means sharps see this as a coin flip. {fav} ({fav_rec}) slight edge but no blowout coming."
+        grok_thesis = f"Tight line ({fav_line:+.1f}) means sharps see this as a coin flip. {fav} ({fav_rec}) slight edge but no blowout coming."
     else:
-        grok_thesis = f"Line at {spread:+.1f} is fair. {fav} ({fav_rec}) should cover but not by much. No strong contrarian signal."
+        grok_thesis = f"Line at {fav_line:+.1f} is fair. {fav} ({fav_rec}) should cover but not by much. No strong contrarian signal."
     models.append({"model": "Grok 4.1", "grade": grok_grade, "score": grok_score,
                     "confidence": min(85, int(50 + grok_score * 4)),
                     "thesis": grok_thesis, "pick": _pick_for(grok_score), "key_factors": []})
@@ -576,7 +579,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     elif fav_margin > 0:
         claude_thesis = f"{fav} ({fav_rec}) holding slim +{fav_margin:.1f} margin. Trajectory positive but regression risk exists if {dog} ({dog_rec}) tightens up. Lean cautiously."
     else:
-        claude_thesis = f"Regression risk: {fav} favored at {spread:+.1f} but margin is only {fav_margin:+.1f}. {dog} ({dog_rec}) narrative is stronger than the line implies — contrarian value."
+        claude_thesis = f"Regression risk: {fav} favored at {fav_line:+.1f} but margin is only {fav_margin:+.1f}. {dog} ({dog_rec}) narrative is stronger than the line implies — contrarian value."
     models.append({"model": "Claude Opus 4.6", "grade": claude_grade, "score": claude_score,
                     "confidence": min(92, int(54 + claude_score * 4)),
                     "thesis": claude_thesis, "pick": _pick_for(claude_score), "key_factors": []})
@@ -590,7 +593,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
         phi_thesis = f"Process disagreement detected ({process_delta:.1f}pt gap). Reasoning through: {fav} ({fav_rec}) fundamentals score {our_score:.1f} but model consensus at {sum(m['score'] for m in models)/len(models):.1f}. Splitting the difference — edge exists but confidence is capped."
     elif fav_margin > 3:
         phi_score = round(our_score * 0.8 + fav_margin * 0.15 + 0.5, 1)
-        phi_thesis = f"Chain-of-thought: {fav} ({fav_rec}) margin +{fav_margin:.1f} is reproducible across sample. {dog} ({dog_rec}) hasn't shown ability to close that gap. Line {spread:+.1f} is fair to slightly short."
+        phi_thesis = f"Chain-of-thought: {fav} ({fav_rec}) margin +{fav_margin:.1f} is reproducible across sample. {dog} ({dog_rec}) hasn't shown ability to close that gap. Line {fav_line:+.1f} is fair to slightly short."
     else:
         phi_score = round(our_score * 0.9 + 0.3, 1)
         phi_thesis = f"Thin edge — {fav} ({fav_rec}) is the right side but margin {fav_margin:+.1f} doesn't inspire conviction. Reasoning says bet small or pass unless other signals confirm."
@@ -618,7 +621,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     if record_gap > 0.15:
         qwen_thesis = f"Pattern clear: {fav} ({fav_rec}, {fav_pct:.0%}) dominant over {dog} ({dog_rec}, {dog_pct:.0%}). {record_gap:.0%} win rate gap is significant — market hasn't fully priced the class difference."
     elif record_gap > 0.05:
-        qwen_thesis = f"{fav} ({fav_rec}) edges {dog} ({dog_rec}) but gap is narrow ({record_gap:.0%}). Line {spread:+.1f} looks accurate — value is thin, need secondary signals to confirm."
+        qwen_thesis = f"{fav} ({fav_rec}) edges {dog} ({dog_rec}) but gap is narrow ({record_gap:.0%}). Line {fav_line:+.1f} looks accurate — value is thin, need secondary signals to confirm."
     else:
         qwen_thesis = f"Near-even matchup: {fav} ({fav_rec}) vs {dog} ({dog_rec}) separated by only {record_gap:.0%}. This is a coin flip the market got right — pass or go small."
     models.append({"model": "Qwen 3-32B", "grade": qwen_grade, "score": qwen_score,
@@ -634,7 +637,7 @@ def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     gemini_score = max(3.0, min(9.5, gemini_score))
     gemini_grade = _score_to_grade_local(gemini_score)
     if fav_margin > 3 and record_gap > 0.10:
-        gemini_thesis = f"Multi-factor validation: {fav} ({fav_rec}) checks all boxes — margin +{fav_margin:.1f}, record gap {record_gap:.0%}, home factor aligned. Cross-referencing confirms strong edge at {spread:+.1f}."
+        gemini_thesis = f"Multi-factor validation: {fav} ({fav_rec}) checks all boxes — margin +{fav_margin:.1f}, record gap {record_gap:.0%}, home factor aligned. Cross-referencing confirms strong edge at {fav_line:+.1f}."
     elif fav_margin > 0 and record_gap > 0:
         gemini_thesis = f"Cross-referencing {fav} ({fav_rec}) across margin (+{fav_margin:.1f}), record ({record_gap:.0%} gap), and market data — signals are directionally aligned but not overwhelming. Moderate multi-dimensional edge."
     else:
