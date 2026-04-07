@@ -395,36 +395,37 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 
 # ─── Real Azure AI Foundry calls (parallel single-shot) ──────────────────────
 
-# Multi-host Azure registry — Sweden Central + gce-personal-resource
+# Single-endpoint Azure registry — gce-personal-resource hosts all 10 models.
+# Sweden Central key kept as fallback but gce is the primary path.
 AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDEN_KEY", "")
 AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
 
-# Endpoint = host hosting the deployment.
-#   "sweden" = peter-mna31gr3 Sweden Central, OpenAI-compatible /openai/v1/chat/completions
-#   "gce"    = gce-personal-resource, classic Azure OpenAI route per-deployment
 AZURE_HOSTS = {
+    "gce": {
+        "url_template": "https://gce-personal-resource.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
+        "key": AZURE_GCE_KEY,
+        "format": "aoai_classic",
+    },
     "sweden": {
         "url": "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/chat/completions",
         "key": AZURE_AI_KEY,
-        "format": "openai_v1",     # model in JSON body
-    },
-    "gce": {
-        "url_template": "https://gce-personal-resource.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-08-01-preview",
-        "key": AZURE_GCE_KEY,
-        "format": "aoai_classic",  # deployment in URL
+        "format": "openai_v1",
     },
 }
 
-# 7 confirmed-working models across both endpoints (probed live 2026-04-07).
-# token_param: "max_tokens" for legacy, "max_completion_tokens" for gpt-5+ family
+# 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
+# token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
 REAL_AI_MODELS = [
-    {"display": "Grok 4.1",         "deployment": "grok-4-1-fast-reasoning",            "host": "sweden", "persona": "contrarian, sniffs out trap lines",     "token_param": "max_tokens"},
-    {"display": "DeepSeek R1",      "deployment": "DeepSeek-R1-0528",                    "host": "gce",    "persona": "data-driven, stats-heavy reasoner",      "token_param": "max_tokens"},
-    {"display": "Kimi K2 Thinking", "deployment": "Kimi-K2-Thinking",                    "host": "gce",    "persona": "tactical structural scout",              "token_param": "max_tokens"},
-    {"display": "Phi-4 Reasoning",  "deployment": "Phi-4-reasoning",                     "host": "gce",    "persona": "chain-of-thought on thin edges",         "token_param": "max_tokens"},
-    {"display": "GPT-5 Mini",       "deployment": "gpt-5-mini",                          "host": "gce",    "persona": "balanced consensus builder",             "token_param": "max_completion_tokens"},
-    {"display": "Llama-4 Maverick", "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "sweden","persona": "open-source heavyweight, broad pattern", "token_param": "max_tokens"},
-    {"display": "DeepSeek V3",      "deployment": "DeepSeek-V3-0324",                    "host": "sweden", "persona": "fast non-reasoning analyst",             "token_param": "max_tokens"},
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_tokens"},
+    {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens"},
+    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens"},
+    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens"},
+    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens"},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens"},
+    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens"},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens"},
+    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens"},
+    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens"},
 ]
 
 
