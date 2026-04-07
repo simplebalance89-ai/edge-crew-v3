@@ -1,7 +1,7 @@
 import { useState, type MouseEvent } from 'react'
 import { Lock, Check } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import { lockPick, toggleSlipLock as apiToggleSlipLock, submitGutPick } from '@/services/api'
+import { lockPick, submitGutPick } from '@/services/api'
 import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
@@ -19,12 +19,11 @@ const gradeColor = (g: string) => {
 }
 
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
-  const { user, slipLocks, toggleSlipLock } = useAppStore()
+  const { user } = useAppStore()
   const [locking, setLocking] = useState(false)
   const [locked, setLocked] = useState(false)
   const [gutActive, setGutActive] = useState(false)
   const [gutToast, setGutToast] = useState<string | null>(null)
-  const isSlipLocked = slipLocks.includes(game.id)
 
   const handleGutPick = async (e: MouseEvent) => {
     e.preventDefault()
@@ -56,17 +55,6 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
       }
       setTimeout(() => setGutToast(null), 3000)
     }
-  }
-
-  const handleToggleSlipLock = (e: MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!user?.username) return
-    const action = isSlipLocked ? 'remove' : 'add'
-    toggleSlipLock(game.id)
-    apiToggleSlipLock(user.username, game.id, action).catch((err) => {
-      console.error('Slip lock sync failed:', err)
-    })
   }
 
   const handleLockPick = async (amount: number) => {
@@ -107,7 +95,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
   }
 
   return (
-    <div className={`bg-[#0E0E14] border rounded-xl p-4 transition-all ${isSlipLocked ? 'border-[#D4A017] ring-2 ring-[#D4A017]/40 shadow-[0_0_24px_rgba(212,160,23,0.25)]' : 'border-[#1A1A28] hover:border-[#1A1A28]/80'}`}>
+    <div className="bg-[#0E0E14] border rounded-xl p-4 transition-all border-[#1A1A28] hover:border-[#1A1A28]/80">
       {/* ─── HEADER ─── */}
       <div className="flex justify-between items-start mb-3">
         <div>
@@ -328,17 +316,6 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         {/* Pick + Lock Button */}
         {pick && pick.side && user && (
           <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
-            <button
-              onClick={handleToggleSlipLock}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black tracking-wider transition-all border ${
-                isSlipLocked
-                  ? 'bg-[#D4A017] text-black border-[#D4A017] hover:bg-[#F5C842]'
-                  : 'bg-white/5 text-white/60 border-white/15 hover:bg-[#D4A017]/15 hover:text-[#D4A017] hover:border-[#D4A017]/40'
-              }`}
-            >
-              <Lock size={11} />
-              {isSlipLocked ? 'LOCKED FOR SLIP' : 'LOCK FOR SLIP'}
-            </button>
             <button
               onClick={handleGutPick}
               title="Override engine's pick (1 per sport per day)"

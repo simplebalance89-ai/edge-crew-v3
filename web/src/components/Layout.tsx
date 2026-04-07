@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Trophy, Calendar, User, LogOut } from 'lucide-react'
+import { Trophy, Calendar, User, LogOut, Layers } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 
 interface LayoutProps {
@@ -13,6 +13,7 @@ export default function Layout({ children }: LayoutProps) {
   
   const navItems = [
     { path: '/', label: 'Games', icon: Calendar },
+    { path: '/parlay', label: 'Build Slip', icon: Layers },
     { path: '/picks', label: 'Picks', icon: Trophy },
     { path: '/profile', label: 'Profile', icon: User },
   ]
