@@ -13,6 +13,7 @@ export default function PicksPage() {
   const [copied, setCopied] = useState(false)
 
   const username = user?.username || ''
+  const { slipLocks, clearSlipLocks } = useAppStore()
 
   const { data: picks = [] } = useQuery<LockedPick[]>({
     queryKey: ['userPicks', username],
@@ -42,7 +43,7 @@ export default function PicksPage() {
     setSlipLoading(true)
     setSlipError(null)
     try {
-      const slip = await generateBetSlip(username || 'Peter')
+      const slip = await generateBetSlip(username || 'Peter', slipLocks)
       if (slip.error) {
         setSlipError(slip.error)
       } else {
@@ -62,9 +63,7 @@ export default function PicksPage() {
       `Generated: ${betSlip.generated}`,
       `User: ${betSlip.user}`,
       `${'─'.repeat(40)}`,
-      ...betSlip.picks.map((p, i) =>
-        `${i + 1}. ${p.game}\n   ${p.pick} (${p.type}) — ${p.amount} @ ${p.book}`
-      ),
+      ...betSlip.picks.map((p) => p.line || `${p.pick} | ${p.amount} | ${p.book}`),
       `${'─'.repeat(40)}`,
       `Total Risk: ${betSlip.total_risk}`,
       `Potential Payout: ${betSlip.potential_payout}`,
@@ -90,9 +89,21 @@ export default function PicksPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-black">My Picks</h1>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-white/50">
+            {slipLocks.length} pick{slipLocks.length === 1 ? '' : 's'} locked for slip
+          </span>
+          {slipLocks.length > 0 && (
+            <button
+              onClick={() => clearSlipLocks()}
+              className="text-xs px-3 py-2 rounded-lg border border-white/15 text-white/60 hover:bg-white/5"
+            >
+              Clear
+            </button>
+          )}
         <button
           onClick={handleGenerateSlip}
-          disabled={slipLoading}
+          disabled={slipLoading || slipLocks.length === 0}
           className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#D4A017] to-[#F5C842] text-black font-bold rounded-lg hover:opacity-90 disabled:opacity-50 transition-all"
         >
           {slipLoading ? (
@@ -107,6 +118,7 @@ export default function PicksPage() {
             </>
           )}
         </button>
+        </div>
       </div>
 
       {slipError && (
@@ -224,15 +236,8 @@ export default function PicksPage() {
               {betSlip.picks.map((p, i) => (
                 <div key={i} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
                   <div className="text-xs text-white/40 mb-1">{p.game}</div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-white font-bold text-sm">{p.pick}</span>
-                      <span className="ml-2 text-[10px] px-2 py-0.5 bg-[#D4A017]/15 text-[#D4A017] rounded-full font-bold">{p.type}</span>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-white font-bold text-sm">{p.amount}</div>
-                      <div className="text-[10px] text-white/40">{p.book}</div>
-                    </div>
+                  <div className="font-mono text-sm text-[#D4A017] font-bold">
+                    {p.line || `${p.pick} | ${p.amount} | ${p.book}`}
                   </div>
                 </div>
               ))}

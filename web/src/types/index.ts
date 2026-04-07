@@ -150,8 +150,10 @@ export interface BetSlip {
   generated?: string;
   user?: string;
   picks?: Array<{
+    game_id?: string;
     game: string;
     pick: string;
+    line?: string;
     type: string;
     amount: string;
     book: string;

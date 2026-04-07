@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { Lock, Check } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import { lockPick } from '@/services/api'
+import { lockPick, toggleSlipLock as apiToggleSlipLock } from '@/services/api'
 import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
@@ -19,9 +19,21 @@ const gradeColor = (g: string) => {
 }
 
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
-  const { user } = useAppStore()
+  const { user, slipLocks, toggleSlipLock } = useAppStore()
   const [locking, setLocking] = useState(false)
   const [locked, setLocked] = useState(false)
+  const isSlipLocked = slipLocks.includes(game.id)
+
+  const handleToggleSlipLock = (e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!user?.username) return
+    const action = isSlipLocked ? 'remove' : 'add'
+    toggleSlipLock(game.id)
+    apiToggleSlipLock(user.username, game.id, action).catch((err) => {
+      console.error('Slip lock sync failed:', err)
+    })
+  }
 
   const handleLockPick = async (amount: number) => {
     if (!user?.username || !game.pick?.side) return
@@ -61,7 +73,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
   }
 
   return (
-    <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-4 hover:border-[#1A1A28]/80 transition-all">
+    <div className={`bg-[#0E0E14] border rounded-xl p-4 transition-all ${isSlipLocked ? 'border-[#D4A017] ring-2 ring-[#D4A017]/40 shadow-[0_0_24px_rgba(212,160,23,0.25)]' : 'border-[#1A1A28] hover:border-[#1A1A28]/80'}`}>
       {/* ─── HEADER ─── */}
       <div className="flex justify-between items-start mb-3">
         <div>
@@ -280,6 +292,21 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         <div className="text-xs text-white/40">{consensusScore.toFixed(1)} | {'\u0394'} {delta.toFixed(2)}</div>
 
         {/* Pick + Lock Button */}
+        {pick && pick.side && user && (
+          <div className="mt-3 flex items-center justify-center">
+            <button
+              onClick={handleToggleSlipLock}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black tracking-wider transition-all border ${
+                isSlipLocked
+                  ? 'bg-[#D4A017] text-black border-[#D4A017] hover:bg-[#F5C842]'
+                  : 'bg-white/5 text-white/60 border-white/15 hover:bg-[#D4A017]/15 hover:text-[#D4A017] hover:border-[#D4A017]/40'
+              }`}
+            >
+              <Lock size={11} />
+              {isSlipLocked ? 'LOCKED FOR SLIP' : 'LOCK FOR SLIP'}
+            </button>
+          </div>
+        )}
         {pick && pick.side && (
           <div className="mt-3 flex items-center justify-center gap-2">
             <div className="inline-block bg-[#D4A017]/15 border border-[#D4A017]/30 text-[#D4A017] text-sm font-extrabold py-2 px-4 rounded-lg">
