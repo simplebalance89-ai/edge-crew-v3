@@ -264,6 +264,70 @@ def score_starting_pitcher(game: dict, side: str) -> tuple:
     return _clamp(5 + margin / 3), f"SP proxy from margin: {margin:+.1f}"
 
 
+# Hardcoded elite/good NHL goalies — fallback when SV% data not available.
+# Names lowercased for matching; check by last name.
+ELITE_NHL_GOALIES = {
+    "hellebuyck", "sorokin", "vasilevskiy", "shesterkin", "bobrovsky",
+    "saros", "markstrom", "oettinger", "hill", "kuemper", "swayman",
+    "ullmark", "skinner", "demko", "hart", "gibson", "talbot", "stolarz",
+}
+GOOD_NHL_GOALIES = {
+    "andersen", "husso", "husarek", "mrazek", "binnington", "georgiev",
+    "jarry", "blackwood", "vanecek", "lyon", "merzlikins", "kahkonen",
+    "wedgewood", "samsonov", "knight", "varlamov", "luukkonen",
+}
+
+
+def _goalie_tier(name: str) -> str | None:
+    if not name:
+        return None
+    last = name.strip().lower().split()[-1]
+    if last in ELITE_NHL_GOALIES:
+        return "ELITE"
+    if last in GOOD_NHL_GOALIES:
+        return "GOOD"
+    return None
+
+
+def score_starting_goalie(game: dict, side: str) -> tuple:
+    """NHL goalie scorer — biggest single factor in NHL outcomes.
+    Uses SV% differential when available, falls back to elite hardcoded list."""
+    profile = game.get(f"{side}_profile", {}) or {}
+    opp_profile = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}) or {}
+    g = profile.get("starting_goalie") or {}
+    opp_g = opp_profile.get("starting_goalie") or {}
+
+    # If both sides have SV% data, score on differential (higher SV% = better)
+    sv = g.get("sv_pct") or g.get("SV%") or g.get("svp")
+    opp_sv = opp_g.get("sv_pct") or opp_g.get("SV%") or opp_g.get("svp")
+    if sv and opp_sv:
+        try:
+            # Normalize to fraction if given as e.g. 91.5
+            s = float(sv); os_ = float(opp_sv)
+            if s > 1: s /= 100
+            if os_ > 1: os_ /= 100
+            diff = s - os_  # positive = our goalie better
+            # Each .010 SV% diff ~ 1.5 grade points
+            return _clamp(5 + diff * 150), f"SV% {s:.3f} vs {os_:.3f}"
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback: hardcoded elite list lookup
+    our_name = g.get("name") or profile.get("recent_starter") or profile.get("goalie")
+    opp_name = opp_g.get("name") or opp_profile.get("recent_starter") or opp_profile.get("goalie")
+    our_tier = _goalie_tier(our_name) if our_name else None
+    opp_tier = _goalie_tier(opp_name) if opp_name else None
+
+    if our_tier or opp_tier:
+        tier_val = {"ELITE": 8.5, "GOOD": 6.5, None: 5.0}
+        ours = tier_val[our_tier]
+        theirs = tier_val[opp_tier]
+        score = 5 + (ours - theirs)
+        return _clamp(score), f"Goalie: {our_name or '?'}({our_tier or 'avg'}) vs {opp_name or '?'}({opp_tier or 'avg'})"
+
+    return 5, "No goalie data"
+
+
 def score_fixture_congestion(game: dict, side: str) -> tuple:
     p = game.get(f"{side}_profile", {})
     opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {})
@@ -433,7 +497,7 @@ SPORT_VARIABLES = {
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "NHL": {
-        "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
+        "goalie": 9, "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
         "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
@@ -552,6 +616,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_motivation(game, pick_side)
         elif var_name == "starting_pitcher":
             score, note = score_starting_pitcher(game, pick_side)
+        elif var_name == "goalie":
+            score, note = score_starting_goalie(game, pick_side)
+            if note == "No goalie data":
+                available = False
         elif var_name == "congestion":
             score, note = score_fixture_congestion(game, pick_side)
         else:
@@ -635,6 +703,7 @@ PROFILE_WEIGHTS = {
         "star_player": 1.1, "rest": 1.0, "ats": 0.9, "h2h": 0.8,
         "motivation": 0.8, "depth": 0.7, "line_movement": 0.6,
         "pace": 0.7, "road_trip": 0.6, "starting_pitcher": 1.3, "congestion": 1.2,
+        "goalie": 1.3,
     },
     "edge": {
         # Situational — calendar, rest, travel, motivation
@@ -643,6 +712,7 @@ PROFILE_WEIGHTS = {
         "off_ranking": 0.7, "def_ranking": 0.7, "star_player": 0.8,
         "ats": 0.8, "h2h": 0.7, "pace": 0.5,
         "starting_pitcher": 0.8, "congestion": 1.4,
+        "goalie": 1.0,
     },
     "renzo": {
         # Conservative — only bets strong edges, penalizes uncertainty
@@ -651,6 +721,7 @@ PROFILE_WEIGHTS = {
         "home_away": 0.8, "rest": 0.7, "star_player": 0.7,
         "motivation": 0.5, "depth": 0.5, "road_trip": 0.5,
         "pace": 0.4, "starting_pitcher": 1.2, "congestion": 0.8,
+        "goalie": 1.3,
     },
 }
 
