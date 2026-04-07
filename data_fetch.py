@@ -91,7 +91,13 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
     if cached:
         age = (datetime.now(timezone.utc) - cached["_fetched"]).total_seconds()
         if age < TEAM_CACHE_TTL:
-            return cached
+            # Return a shallow copy and clear starting_pitcher — that field is
+            # game-specific and must be attached per-game by the caller
+            # (see enrich_game_for_grading). Caching it here causes the wrong
+            # pitcher to leak across different games of the same team.
+            result = dict(cached)
+            result["starting_pitcher"] = {}
+            return result
 
     if sport == "SOCCER" and odds_key:
         espn_sport, espn_league = SOCCER_LEAGUE_MAP.get(odds_key, ("soccer", "usa.1"))
@@ -140,7 +146,15 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
         logger.warning(f"[ESPN] Fetch failed for {team_name}: {e}")
 
     profile["_fetched"] = datetime.now(timezone.utc)
-    _team_cache[cache_key] = profile
+    # Strip starting_pitcher before caching — it is event-specific and must
+    # be attached per-game by enrich_game_for_grading. Keep a local copy on
+    # the returned profile so the first call (which populated the cache from
+    # today's scoreboard) still has a sensible value.
+    sp_local = profile.get("starting_pitcher") or {}
+    cache_entry = dict(profile)
+    cache_entry["starting_pitcher"] = {}
+    _team_cache[cache_key] = cache_entry
+    profile["starting_pitcher"] = sp_local
     return profile
 
 
@@ -862,6 +876,67 @@ def _default_profile(team_name: str) -> dict:
     }
 
 
+async def _fetch_mlb_starting_pitchers(home: str, away: str) -> dict:
+    """Fetch today's MLB scoreboard and return {'home': sp_dict, 'away': sp_dict}
+    for the SPECIFIC event matching home vs away. This is fetched per-game
+    (not cached on the team profile) so the same team in different games gets
+    the correct pitcher for each game.
+    """
+    out = {"home": {}, "away": {}}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            espn_sport, espn_league = SPORT_ESPN_MAP.get("MLB", ("baseball", "mlb"))
+            scoreboard = await _fetch_scoreboard(client, espn_sport, espn_league)
+            for event in scoreboard.get("events", []):
+                for comp in event.get("competitions", []):
+                    competitors = comp.get("competitors", [])
+                    if len(competitors) < 2:
+                        continue
+                    # Identify home/away competitor by homeAway flag
+                    by_side = {}
+                    for c in competitors:
+                        side = c.get("homeAway", "")
+                        by_side[side] = c
+                    home_c = by_side.get("home")
+                    away_c = by_side.get("away")
+                    if not home_c or not away_c:
+                        continue
+                    home_names = [
+                        home_c.get("team", {}).get("displayName", ""),
+                        home_c.get("team", {}).get("shortDisplayName", ""),
+                        home_c.get("team", {}).get("name", ""),
+                        home_c.get("team", {}).get("abbreviation", ""),
+                    ]
+                    away_names = [
+                        away_c.get("team", {}).get("displayName", ""),
+                        away_c.get("team", {}).get("shortDisplayName", ""),
+                        away_c.get("team", {}).get("name", ""),
+                        away_c.get("team", {}).get("abbreviation", ""),
+                    ]
+                    if not (_name_match(home, home_names) and _name_match(away, away_names)):
+                        continue
+                    # Found the matching event — extract probables
+                    for side_key, comp_obj in (("home", home_c), ("away", away_c)):
+                        for prob in comp_obj.get("probables", []):
+                            athlete = prob.get("athlete", {})
+                            if not athlete:
+                                continue
+                            sp_info = {"name": athlete.get("displayName",
+                                       athlete.get("fullName", "Unknown"))}
+                            stats = athlete.get("stats", [])
+                            if isinstance(stats, list) and len(stats) >= 3:
+                                try:
+                                    sp_info["era"] = float(stats[2])
+                                except (ValueError, TypeError, IndexError):
+                                    pass
+                            out[side_key] = sp_info
+                            break
+                    return out
+    except Exception as e:
+        logger.warning(f"[ESPN] MLB pitcher fetch failed for {away}@{home}: {e}")
+    return out
+
+
 async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "") -> dict:
     home = game_data.get("homeTeam", "")
     away = game_data.get("awayTeam", "")
@@ -869,6 +944,17 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
         fetch_team_profile(home, sport, odds_key, opponent_name=away),
         fetch_team_profile(away, sport, odds_key, opponent_name=home),
     )
+
+    # ── MLB: starting pitcher must be fetched per-game (not from team cache)
+    # because the same team can appear in only one game per day but the
+    # team-level profile cache can leak a stale value across calls. Always
+    # overwrite with the game-specific probables from today's scoreboard.
+    if sport == "MLB":
+        sp_map = await _fetch_mlb_starting_pitchers(home, away)
+        if sp_map.get("home"):
+            home_profile["starting_pitcher"] = sp_map["home"]
+        if sp_map.get("away"):
+            away_profile["starting_pitcher"] = sp_map["away"]
     odds = game_data.get("odds", {})
 
     # Pull injuries from profiles for the grade engine
