@@ -448,6 +448,7 @@ def _format_injuries(inj_list: list) -> str:
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
+    sport = (game.get("sport") or "").upper()
     odds = game.get("odds", {}) or {}
     hp = game.get("home_profile", {}) or {}
     ap = game.get("away_profile", {}) or {}
@@ -458,10 +459,19 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     ml_a = odds.get("mlAway", 0)
     inj_home_str = _format_injuries(inj.get("home", []))
     inj_away_str = _format_injuries(inj.get("away", []))
+
+    # MLB-specific: include probable starting pitchers (huge variable, models have training knowledge)
+    pitcher_block = ""
+    if sport == "MLB":
+        h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
+        a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+        pitcher_block = f"PROBABLE PITCHERS — {away}: {a_sp} | {home}: {h_sp} | "
+
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
         f"{home} ({hp.get('record','?')}, L5 {hp.get('L5','?')}) | "
         f"spread (home) {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
+        f"{pitcher_block}"
         f"INJURIES — {home}: {inj_home_str} | {away}: {inj_away_str} | "
         f"engine composite: {our_score:.1f}/10. "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
