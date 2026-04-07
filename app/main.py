@@ -1819,13 +1819,8 @@ async def analyze_games(request: AnalyzeRequest):
                 })
                 real_fail_total += 1
 
-        # Also append any extra math personalities not in the expected list
-        # (Gemini, Perplexity, etc.) so the UI keeps showing the full 9-model card.
-        for m in math_list:
-            if m.get("model") not in expected_displays:
-                m = dict(m)
-                m.setdefault("source", "math_fallback")
-                ai_grades_list.append(m)
+        # Do NOT append extra math personalities (Gemini, Perplexity, etc.) — those
+        # were leftover from the old fake-AI era. Only show the 10 real model slots.
 
         # Attach per-model grades
         game["aiModels"] = ai_grades_list
