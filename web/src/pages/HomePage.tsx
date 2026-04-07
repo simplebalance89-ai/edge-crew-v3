@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
@@ -76,6 +76,16 @@ export default function HomePage() {
     queryKey: ['games', selectedSport, apiMode, apiLeague],
     queryFn: () => getGames(selectedSport, apiMode, apiLeague),
   })
+
+  // Sort games by engine grade score desc; ungraded to the bottom
+  const sortedGames = useMemo(() => {
+    if (!Array.isArray(games)) return games
+    const scoreOf = (g: any): number => {
+      const s = g?.ourGrade?.score ?? g?.grade?.score ?? g?.score
+      return typeof s === 'number' && s > 0 ? s : -Infinity
+    }
+    return [...games].sort((a, b) => scoreOf(b) - scoreOf(a))
+  }, [games])
 
   // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
   const handleAnalyzeAll = async () => {
@@ -271,7 +281,7 @@ export default function HomePage() {
 
       {/* Games List with Two-Lane Cards */}
       <div className="space-y-4">
-        {games?.map((game) => (
+        {sortedGames?.map((game) => (
           <Link key={game.id} to={`/game/${game.id}`} className="block">
             <TwoLaneCard
               game={game}
