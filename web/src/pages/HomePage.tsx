@@ -177,7 +177,7 @@ export default function HomePage() {
       {/* Analysis status */}
       {analyzing && (
         <div className="mb-4 p-3 bg-[#00E5FF]/5 border border-[#00E5FF]/20 rounded-lg text-sm text-[#00E5FF]">
-          Running 9 AI models (DeepSeek, Grok, Kimi, GPT, Claude, Phi-4, Qwen, Gemini, Perplexity) on {games?.length || 0} games... This may take 15-30 seconds.
+          Running 10 real Azure AI models (Grok 4.1, Grok 3, DeepSeek R1, DeepSeek V3.2 Spec, Kimi K2 Thinking, Phi-4 Reasoning, GPT-4.1, GPT-5 Mini, o4-mini, Llama-4 Maverick) on {games?.length || 0} games... This may take 30-60 seconds.
         </div>
       )}
       {analyzeError && (
