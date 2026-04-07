@@ -2,9 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
-import { getGames, analyzeGames, getParlay, lockPick } from '@/services/api'
-import { useAppStore } from '@/store/useAppStore'
-import { Lock, Check } from 'lucide-react'
+import { getGames, analyzeGames } from '@/services/api'
 import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
@@ -33,40 +31,7 @@ export default function HomePage() {
   const [soccerLeague, setSoccerLeague] = useState<SoccerLeague>('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
-  const [parlayLocking, setParlayLocking] = useState(false)
-  const [parlayLocked, setParlayLocked] = useState(false)
   const queryClient = useQueryClient()
-  const { user } = useAppStore()
-
-  // Fetch parlay
-  const { data: parlay } = useQuery({
-    queryKey: ['parlay'],
-    queryFn: getParlay,
-    refetchInterval: 60000,
-  })
-
-  const handleLockParlay = async () => {
-    if (!user?.username || !parlay?.picks?.length) return
-    setParlayLocking(true)
-    try {
-      for (const p of parlay.picks) {
-        await lockPick(user.username, {
-          game_id: `parlay-${p.sport}-${Date.now()}`,
-          sport: p.sport.toLowerCase(),
-          team: p.pick.split(' ')[0],
-          type: 'ml',
-          line: 0,
-          amount: Math.round(parlay.risk / parlay.picks.length),
-          odds: p.odds,
-        })
-      }
-      setParlayLocked(true)
-      setTimeout(() => setParlayLocked(false), 4000)
-    } catch (e) {
-      console.error('Parlay lock failed:', e)
-    }
-    setParlayLocking(false)
-  }
 
   const apiMode = selectedSport === 'mlb' ? mlbMode : undefined
   const apiLeague = selectedSport === 'soccer' ? soccerLeague || undefined : undefined
