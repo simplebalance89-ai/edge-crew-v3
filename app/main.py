@@ -1187,6 +1187,8 @@ async def generate_betslip(request: BetSlipRequest):
                 "type": pick_type,
                 "amount": "$100",
                 "book": "BetOnline.ag",
+                "_sport": (game.get("sport") or "").upper(),
+                "_score": float(game.get("score") or 0),
             })
 
     if not locked_picks:
@@ -1207,14 +1209,160 @@ async def generate_betslip(request: BetSlipRequest):
     # Estimate potential payout: assume -110 standard juice → ~$191 return per $100
     potential_payout = round(total_risk * 1.91, 0)
 
+    # ─── Peter's Rules: build up to 2 parlays (3-4 legs, $100 total stake) ───
+    parlays = _build_parlays(locked_picks)
+
+    # Strip internal fields before returning
+    clean_picks = [{k: v for k, v in p.items() if not k.startswith("_")} for p in locked_picks]
+
     return {
         "slip_id": slip_id,
         "generated": et_time,
         "user": request.username,
-        "picks": locked_picks,
+        "picks": clean_picks,
+        "parlays": parlays,
         "total_risk": f"${total_risk:,}",
         "potential_payout": f"${potential_payout:,.0f}",
         "notes": f"{num_picks} pick{'s' if num_picks != 1 else ''} @ $100 each. Enter as singles on BetOnline.ag.",
+    }
+
+
+def _build_parlays(locked_picks: list) -> list:
+    """Peter's Rules parlay builder: max 2 parlays, each 3-4 legs, $100 total stake.
+    Prefer sport diversity; pull from highest-graded locked picks."""
+    if not locked_picks or len(locked_picks) < 3:
+        return []
+
+    # Sort by engine score descending
+    sorted_picks = sorted(locked_picks, key=lambda p: p.get("_score", 0), reverse=True)
+
+    def _format_leg(p: dict) -> dict:
+        return {
+            "game_id": p.get("game_id"),
+            "game": p.get("game"),
+            "pick": p.get("pick"),
+            "sport": p.get("_sport", ""),
+            "score": p.get("_score", 0),
+        }
+
+    def _build_one(pool: list, target_legs: int) -> list:
+        """Greedy: take highest-graded first, then alternate sports where possible."""
+        if len(pool) < target_legs:
+            return []
+        legs = [pool[0]]
+        used_sports = {pool[0].get("_sport", "")}
+        remaining = pool[1:]
+        # First, try to fill with different sports
+        for p in list(remaining):
+            if len(legs) >= target_legs:
+                break
+            sp = p.get("_sport", "")
+            if sp not in used_sports:
+                legs.append(p)
+                used_sports.add(sp)
+                remaining.remove(p)
+        # Then fill any remaining slots with next-highest-graded
+        for p in list(remaining):
+            if len(legs) >= target_legs:
+                break
+            legs.append(p)
+            remaining.remove(p)
+        return legs
+
+    parlays = []
+    pool = list(sorted_picks)
+
+    # Parlay 1: prefer 4 legs if possible, else 3
+    target1 = 4 if len(pool) >= 4 else 3
+    p1 = _build_one(pool, target1)
+    if not p1:
+        return []
+    for leg in p1:
+        pool.remove(leg)
+
+    # Parlay 2: only if we still have ≥3 picks left
+    p2 = []
+    if len(pool) >= 3:
+        target2 = 4 if len(pool) >= 4 else 3
+        p2 = _build_one(pool, target2)
+
+    # Stake split: $100 total
+    if p2:
+        stake1 = 50
+        stake2 = 50
+    else:
+        stake1 = 100
+
+    def _finalize(legs: list, stake: int) -> dict:
+        sport_mix = sorted({l.get("_sport", "") for l in legs if l.get("_sport")})
+        return {
+            "legs": [_format_leg(l) for l in legs],
+            "stake": stake,
+            "sport_mix": sport_mix,
+            "leg_count": len(legs),
+            "diverse": len(sport_mix) >= 2,
+        }
+
+    parlays.append(_finalize(p1, stake1))
+    if p2:
+        parlays.append(_finalize(p2, stake2))
+    return parlays
+
+
+# ─── Peter's Rules: Gut Picks ──────────────────────────────────────────────────
+
+_gut_picks: list = _load_json("gut_picks.json", [])
+
+
+def _save_gut_picks():
+    _save_json("gut_picks.json", _gut_picks)
+
+
+class GutPickRequest(BaseModel):
+    username: str
+    game_id: str
+    sport: str
+    pick_side: str
+    engine_pick_side: str = ""
+
+
+@app.post("/api/gut-pick")
+async def log_gut_pick(req: GutPickRequest):
+    """Log a gut pick override. Enforces 1 per sport per day per user."""
+    uname = req.username.lower()
+    sport = req.sport.upper()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    for gp in _gut_picks:
+        if (gp.get("username") == uname
+            and gp.get("sport", "").upper() == sport
+            and gp.get("date") == today):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Already used your gut pick for {sport} today",
+            )
+
+    entry = {
+        "username": uname,
+        "game_id": req.game_id,
+        "sport": sport,
+        "pick_side": req.pick_side,
+        "engine_pick_side": req.engine_pick_side,
+        "date": today,
+        "timestamp": datetime.now().isoformat(),
+    }
+    _gut_picks.append(entry)
+    _save_gut_picks()
+    return {"ok": True, "gut_pick": entry}
+
+
+@app.get("/api/gut-picks/{username}")
+async def get_gut_picks(username: str):
+    """Return all gut picks for a user (for weekly review)."""
+    uname = username.lower()
+    return {
+        "username": uname,
+        "gut_picks": [gp for gp in _gut_picks if gp.get("username") == uname],
     }
 
 
