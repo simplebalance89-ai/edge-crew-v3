@@ -219,7 +219,7 @@ def score_ats_trend(profile: dict) -> tuple:
     margin = profile.get("avg_margin_L10", 0)
     if margin >= 10: return 9, f"Margin L10: {margin:+.1f}"
     elif margin >= 5: return 7, f"Margin L10: {margin:+.1f}"
-    elif margin >= 0: return 5.5, f"Margin L10: {margin:+.1f}"
+    elif margin >= 0: return 5, f"Margin L10: {margin:+.1f}"
     elif margin >= -5: return 4, f"Margin L10: {margin:+.1f}"
     return 2, f"Margin L10: {margin:+.1f}"
 
@@ -241,7 +241,7 @@ def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
         return 5, "No pace data"
     diff = abs(our - their)
     if sport == "NBA":
-        if our >= 235 and their >= 235: return 6.5, "FAST matchup"
+        if our >= 235 and their >= 235: return 5.5, "FAST matchup"
         elif our <= 210 and their <= 210: return 5, "Grind game"
         elif diff >= 20: return 3.5, f"PACE MISMATCH: {diff:.0f}"
     return 5, f"Pace diff: {diff:.0f}"
@@ -305,15 +305,11 @@ def _apply_spread_amplifier(composite: float, variables: dict) -> float:
     bot3 = scores[-3:]
     top3_avg = sum(s for s, _ in top3) / len(top3)
     bot3_avg = sum(s for s, _ in bot3) / len(bot3)
-    if top3_avg >= 8.0:
-        composite = composite * 0.7 + top3_avg * 0.3
-    elif bot3_avg <= 3.0:
-        composite = composite * 0.7 + bot3_avg * 0.3
-    elif top3_avg >= 7.0 and bot3_avg >= 5.0:
-        composite = composite * 0.85 + top3_avg * 0.15
+    if top3_avg >= 8.5:
+        composite = composite * 0.8 + top3_avg * 0.2
+    elif bot3_avg <= 2.5:
+        composite = composite * 0.8 + bot3_avg * 0.2
     all_scores = [s for s, _ in scores]
-    if max(all_scores) >= 9.5 and composite < 7.0:
-        composite = max(composite, 7.0)
     if min(all_scores) <= 1.5 and composite > 4.0:
         composite = min(composite, 4.0)
     return round(composite, 2)
@@ -357,7 +353,7 @@ CHAINS = {
     "BLUE_BLOOD_TRAP":   {"bonus": -0.5, "sports": ["NCAAB"]},
 }
 
-CHAIN_CAP = 3.0
+CHAIN_CAP = 2.0
 
 
 def check_chain(name: str, v: dict) -> bool:
@@ -447,9 +443,9 @@ SPORT_VARIABLES = {
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "SOCCER": {
-        "congestion": 10, "form": 9, "star_player": 8, "off_ranking": 8,
-        "def_ranking": 8, "home_away": 8, "rest": 7, "h2h": 7,
-        "motivation": 7, "ats": 6, "line_movement": 5, "depth": 4,
+        "congestion": 6, "form": 8, "star_player": 8, "off_ranking": 9,
+        "def_ranking": 9, "home_away": 7, "rest": 4, "h2h": 6,
+        "motivation": 6, "ats": 6, "line_movement": 6, "depth": 4,
     },
     "NCAAB": {
         "off_ranking": 9, "def_ranking": 9, "star_player": 9, "line_movement": 9,

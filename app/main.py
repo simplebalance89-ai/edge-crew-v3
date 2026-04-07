@@ -317,7 +317,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         try:
             gt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
             hours_ago = (datetime.now(timezone.utc) - gt).total_seconds() / 3600
-            if hours_ago > 4:
+            if hours_ago > 3.5:
                 status = "completed"
             elif hours_ago > 0:
                 status = "live"
