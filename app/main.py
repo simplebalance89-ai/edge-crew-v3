@@ -442,13 +442,13 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     inj_h = ", ".join(hp.get("injuries", [])[:3]) if hp.get("injuries") else "none"
     inj_a = ", ".join(ap.get("injuries", [])[:3]) if ap.get("injuries") else "none"
     return (
-        f"You are a sharp sports bettor. Personality: {personality}.\n"
-        f"GAME: {away} ({ap.get('record','?')}) @ {home} ({hp.get('record','?')})\n"
-        f"LINE: spread {spread:+.1f} | total {total} | ML {ml_a}/{ml_h}\n"
-        f"INJ home: {inj_h} | away: {inj_a}\n"
-        f"OUR composite score: {our_score:.1f}/10\n"
-        "Return ONLY JSON: {\"grade\": <0-10 float>, \"pick\": \"Home\" or \"Away\", "
-        "\"reasoning\": \"one sentence\"}"
+        f"GAME: {away} ({ap.get('record','?')}) @ {home} ({hp.get('record','?')}) | "
+        f"spread {spread:+.1f} total {total} ML {ml_a}/{ml_h} | "
+        f"INJ home: {inj_h} | away: {inj_a} | engine composite: {our_score:.1f}/10. "
+        f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
+        f"no thinking, no prose, no code fences. Schema: "
+        f'{{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}}. '
+        f"Output the JSON now:"
     )
 
 
@@ -462,21 +462,33 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     deployment = model_cfg["deployment"]
     display = model_cfg["display"]
 
+    system_msg = (
+        "You are a JSON-only API. You output exactly one JSON object and nothing else. "
+        "No reasoning traces, no thinking tags, no prose, no markdown, no code fences."
+    )
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": prompt},
+    ]
+
+    # Reasoning models need much more headroom because reasoning tokens count toward the budget.
+    token_budget = 2500
+
     # Build URL + body shape based on host format
     if host_cfg["format"] == "openai_v1":
         url = host_cfg["url"]
         body = {
             "model": deployment,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,
-            model_cfg.get("token_param", "max_tokens"): 250,
+            "messages": messages,
+            "temperature": 0.3,
+            model_cfg.get("token_param", "max_tokens"): token_budget,
         }
     else:  # aoai_classic
         url = host_cfg["url_template"].format(deployment=deployment)
         body = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,
-            model_cfg.get("token_param", "max_tokens"): 250,
+            "messages": messages,
+            "temperature": 0.3,
+            model_cfg.get("token_param", "max_tokens"): token_budget,
         }
 
     headers = {
@@ -486,7 +498,7 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, headers=headers, json=body)
     except Exception as e:
         logger.warning(f"[REAL-AI EXC] {display}: {type(e).__name__}: {str(e)[:160]}")
@@ -1759,6 +1771,12 @@ async def analyze_games(request: AnalyzeRequest):
         math_by_display = {m.get("model"): m for m in math_list}
 
         ai_grades_list = []
+        home_team = game.get("homeTeam", "Home")
+        away_team = game.get("awayTeam", "Away")
+        odds_local = game.get("odds", {}) or {}
+        spread_local = odds_local.get("spread", 0)
+        # Default pick = home if home is favored (spread < 0), else away
+        default_pick = home_team if spread_local <= 0 else away_team
         for disp in expected_displays:
             if disp in real_by_display:
                 m = real_by_display[disp]
@@ -1771,6 +1789,24 @@ async def analyze_games(request: AnalyzeRequest):
                 ai_grades_list.append(m)
                 real_fail_total += 1
             else:
+                # No real and no math fallback for this display name — synthesize a stub
+                # so the UI panel doesn't show empty slots.
+                stub_score = round(max(3.0, min(9.0, our_score)), 1)
+                stub_grade = "F"
+                for threshold, g in GRADE_MAP:
+                    if stub_score >= threshold:
+                        stub_grade = g
+                        break
+                ai_grades_list.append({
+                    "model": disp,
+                    "grade": stub_grade,
+                    "score": stub_score,
+                    "confidence": 50,
+                    "thesis": f"Engine score mirrored ({stub_score:.1f}/10) — model unavailable.",
+                    "pick": default_pick,
+                    "key_factors": [],
+                    "source": "stub",
+                })
                 real_fail_total += 1
 
         # Also append any extra math personalities not in the expected list
@@ -1844,7 +1880,7 @@ async def analyze_games(request: AnalyzeRequest):
 
     logger.info(
         f"[ANALYZE] {sport_lower}: real-AI hits={real_ok_total} misses={real_fail_total} "
-        f"across {len(games)} games, working_combos={_REAL_AI_WORKING}"
+        f"across {len(games)} games"
     )
 
     # Update cache with enriched data — use same key so /api/games returns it
