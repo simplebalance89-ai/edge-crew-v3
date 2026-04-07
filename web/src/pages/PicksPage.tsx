@@ -58,7 +58,7 @@ export default function PicksPage() {
   const handleCopySlip = () => {
     if (!betSlip || !betSlip.picks) return
     const lines = [
-      `HARD ROCK SPORTSBOOK — BET SLIP`,
+      `BETONLINE.AG — BET SLIP`,
       `Slip ID: ${betSlip.slip_id}`,
       `Generated: ${betSlip.generated}`,
       `User: ${betSlip.user}`,
@@ -219,7 +219,7 @@ export default function PicksPage() {
           <div className="bg-[#0E0E14] border border-[#D4A017]/40 rounded-2xl w-full max-w-lg mx-4 overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="bg-gradient-to-r from-[#D4A017] to-[#F5C842] px-6 py-4 flex items-center justify-between">
               <div>
-                <div className="text-black font-black text-lg tracking-wide">HARD ROCK SPORTSBOOK</div>
+                <div className="text-black font-black text-lg tracking-wide">BETONLINE.AG</div>
                 <div className="text-black/60 text-xs font-bold">Edge Crew Bet Slip</div>
               </div>
               <button onClick={() => setBetSlip(null)} className="text-black/60 hover:text-black">
