@@ -342,6 +342,129 @@ def _parse_event(event: dict, sport_label: str) -> dict:
     }
 
 
+# ─── Real Azure AI Foundry calls (parallel single-shot) ──────────────────────
+
+AZURE_AI_ENDPOINT = os.environ.get(
+    "AZURE_AI_ENDPOINT",
+    "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/",
+)
+AZURE_AI_KEY = (
+    os.environ.get("AZURE_AI_KEY", "")
+    or os.environ.get("AZURE_SWEDEN_KEY", "")
+)
+
+REAL_AI_MODELS = [
+    ("DeepSeek-R1-0528", "DeepSeek R1", "data-driven, stats-heavy"),
+    ("grok-4-1-fast-reasoning", "Grok 4.1", "contrarian, sniffs out trap lines"),
+    ("Kimi-K2-Thinking", "Kimi K2 Thinking", "tactical structural scout"),
+    ("gpt-5.4-nano", "GPT 5.4 Nano", "balanced consensus builder"),
+    ("claude-opus-4-6", "Claude Opus 4.6", "deep strategic, momentum-focused"),
+    ("Phi-4-reasoning", "Phi-4 Reasoning", "chain-of-thought reasoner on thin edges"),
+    ("qwen3-32b", "Qwen 3-32B", "pattern recognition, record differentials"),
+]
+
+
+def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
+    home = game.get("homeTeam", "Home")
+    away = game.get("awayTeam", "Away")
+    odds = game.get("odds", {}) or {}
+    hp = game.get("home_profile", {}) or {}
+    ap = game.get("away_profile", {}) or {}
+    spread = odds.get("spread", 0)
+    total = odds.get("total", 0)
+    ml_h = odds.get("mlHome", 0)
+    ml_a = odds.get("mlAway", 0)
+    inj_h = ", ".join(hp.get("injuries", [])[:3]) if hp.get("injuries") else "none"
+    inj_a = ", ".join(ap.get("injuries", [])[:3]) if ap.get("injuries") else "none"
+    return (
+        f"You are a sharp sports bettor. Personality: {personality}.\n"
+        f"GAME: {away} ({ap.get('record','?')}) @ {home} ({hp.get('record','?')})\n"
+        f"LINE: spread {spread:+.1f} | total {total} | ML {ml_a}/{ml_h}\n"
+        f"INJ home: {inj_h} | away: {inj_a}\n"
+        f"OUR composite score: {our_score:.1f}/10\n"
+        "Return ONLY JSON: {\"grade\": <0-10 float>, \"pick\": \"Home\" or \"Away\", "
+        "\"reasoning\": \"one sentence\"}"
+    )
+
+
+async def _call_azure_model(model_name: str, prompt: str) -> Optional[dict]:
+    """Call one Azure AI Foundry model. Returns {grade, pick, reasoning} or None."""
+    if not AZURE_AI_KEY:
+        return None
+    url = f"{AZURE_AI_ENDPOINT.rstrip('/')}/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "api-key": AZURE_AI_KEY,
+                    "Authorization": f"Bearer {AZURE_AI_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.4,
+                    "max_tokens": 200,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning(f"[REAL-AI] {model_name}: HTTP {resp.status_code} {resp.text[:160]}")
+            return None
+        content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not content:
+            return None
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            s, e = content.find("{"), content.rfind("}") + 1
+            if s < 0 or e <= s:
+                return None
+            data = json.loads(content[s:e])
+        grade = float(data.get("grade", 0))
+        return {
+            "grade": max(0.0, min(10.0, grade)),
+            "pick": str(data.get("pick", "")).strip() or "Home",
+            "reasoning": str(data.get("reasoning", "")).strip()[:300],
+        }
+    except Exception as e:
+        logger.warning(f"[REAL-AI] {model_name}: {e}")
+        return None
+
+
+async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[list]:
+    """Call all 7 Azure models in parallel for one game. Returns list shaped
+    like _generate_ai_models output, or None if API key missing / all failed."""
+    if not AZURE_AI_KEY:
+        return None
+    home = game.get("homeTeam", "Home")
+    away = game.get("awayTeam", "Away")
+    tasks = [
+        _call_azure_model(mname, _build_realai_prompt(game, our_score, persona))
+        for (mname, _disp, persona) in REAL_AI_MODELS
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    out = []
+    for (_mname, disp, _persona), res in zip(REAL_AI_MODELS, results):
+        if isinstance(res, Exception) or not res:
+            continue
+        score = round(res["grade"], 1)
+        team = home if str(res.get("pick", "")).lower().startswith("h") else away
+        out.append({
+            "model": disp,
+            "grade": _score_to_grade_local(score),
+            "score": score,
+            "confidence": min(92, int(50 + score * 4)),
+            "thesis": res.get("reasoning", ""),
+            "pick": team,
+            "key_factors": [],
+        })
+    if not out:
+        return None
+    return out
+
+
 def _generate_ai_models(enriched: dict, odds: dict, our_score: float) -> list:
     """Generate 9 AI personality grades with reasoning — pure math, no API needed."""
     home = enriched.get("home", enriched.get("home_team", "Home"))
@@ -1352,14 +1475,43 @@ async def analyze_games(request: AnalyzeRequest):
         return {"error": "No games found", "sport": sport_lower}
 
     # Call AI crowdsource for all games
-    logger.info(f"[ANALYZE] Deep analysis for {sport_lower}: {len(games)} games")
-    model_grades = await crowdsource_grade(games, sport_lower)
+    logger.info(f"[ANALYZE] Deep analysis for {sport_lower}: {len(games)} games (real Azure AI={'on' if AZURE_AI_KEY else 'OFF — fallback'})")
+
+    # Try REAL Azure AI Foundry calls in parallel per game (7 models each)
+    real_ai_tasks = [
+        _real_ai_models_for_game(g, (g.get("ourGrade") or {}).get("score", 5.0))
+        for g in games
+    ]
+    real_ai_results = await asyncio.gather(*real_ai_tasks, return_exceptions=True)
+
+    # Fallback: legacy crowdsource (only used if real AI returned nothing for any game)
+    need_fallback = any(
+        isinstance(r, Exception) or not r for r in real_ai_results
+    )
+    legacy_grades: dict = {}
+    if need_fallback and not AZURE_AI_KEY:
+        # Skip slow legacy call entirely if no key — _generate_ai_models is the fallback
+        legacy_grades = {}
+    elif need_fallback:
+        try:
+            legacy_grades = await crowdsource_grade(games, sport_lower)
+        except Exception as e:
+            logger.warning(f"[ANALYZE] legacy crowdsource failed: {e}")
+            legacy_grades = {}
 
     # Enrich each game with per-model grades + gatekeeper
     enriched = []
-    for game in games:
+    for game, real_res in zip(games, real_ai_results):
         game_id = game.get("id", "")
-        ai_grades_list = model_grades.get(game_id, [])
+
+        if not isinstance(real_res, Exception) and real_res:
+            ai_grades_list = real_res
+        else:
+            ai_grades_list = legacy_grades.get(game_id, [])
+            if not ai_grades_list:
+                # Final fallback: deterministic math personalities
+                our_score = (game.get("ourGrade") or {}).get("score", 5.0)
+                ai_grades_list = _generate_ai_models(game, game.get("odds", {}) or {}, our_score)
 
         # Attach per-model grades
         game["aiModels"] = ai_grades_list

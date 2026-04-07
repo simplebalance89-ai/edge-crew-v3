@@ -10,6 +10,10 @@ services:
         value: 3.11.0
       - key: AZURE_SWEDEN_KEY
         sync: false
+      - key: AZURE_AI_KEY
+        sync: false
+      - key: AZURE_AI_ENDPOINT
+        value: https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/
       - key: AZURE_NC_KEY
         sync: false
       - key: AZURE_GCE_KEY
