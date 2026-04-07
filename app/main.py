@@ -114,7 +114,7 @@ CACHE_TTL = 300
 # ─── User Profiles ────────────────────────────────────────────────────────────
 
 _DEFAULT_USERS = {
-    "peter": {"name": "Peter", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
+    "peter": {"name": "Peter", "pin": "0000", "bankroll": {"starting": 490, "current": 490, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
     "chinny": {"name": "Chinny", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
     "jimmy": {"name": "Jimmy", "pin": "0000", "bankroll": {"starting": 1000, "current": 1000, "wagered": 0, "profit": 0, "wins": 0, "losses": 0, "pushes": 0}},
 }
@@ -1135,7 +1135,7 @@ _betslip_counter = 0
 
 @app.post("/api/betslip")
 async def generate_betslip(request: BetSlipRequest):
-    """Generate a Hard Rock Sportsbook bet slip from user-selected (locked) game IDs."""
+    """Generate a BetOnline.ag bet slip from user-selected (locked) game IDs."""
     global _betslip_counter
 
     # Resolve which game IDs the user wants on the slip.
@@ -1183,10 +1183,10 @@ async def generate_betslip(request: BetSlipRequest):
                 "game_id": gid,
                 "game": game_label,
                 "pick": pick_label,
-                "line": f"{pick_label} | $100 | Hard Rock",
+                "line": f"{pick_label} | $100 | BetOnline.ag",
                 "type": pick_type,
                 "amount": "$100",
-                "book": "Hard Rock",
+                "book": "BetOnline.ag",
             })
 
     if not locked_picks:
@@ -1214,7 +1214,7 @@ async def generate_betslip(request: BetSlipRequest):
         "picks": locked_picks,
         "total_risk": f"${total_risk:,}",
         "potential_payout": f"${potential_payout:,.0f}",
-        "notes": f"{num_picks} pick{'s' if num_picks != 1 else ''} @ $100 each. Enter as singles on Hard Rock Sportsbook.",
+        "notes": f"{num_picks} pick{'s' if num_picks != 1 else ''} @ $100 each. Enter as singles on BetOnline.ag.",
     }
 
 
