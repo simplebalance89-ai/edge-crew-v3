@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Trophy, Calendar, User } from 'lucide-react'
+import { Trophy, Calendar, User, LogOut } from 'lucide-react'
+import { useAppStore } from '@/store/useAppStore'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -7,6 +8,8 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
+  const user = useAppStore((s) => s.user)
+  const setUser = useAppStore((s) => s.setUser)
   
   const navItems = [
     { path: '/', label: 'Games', icon: Calendar },
@@ -29,6 +32,22 @@ export default function Layout({ children }: LayoutProps) {
             </Link>
             
             <nav className="flex items-center gap-1">
+              {user && (
+                <div className="hidden sm:flex items-center gap-2 mr-3 px-3 py-1.5 rounded-lg bg-[#0E0E14] border border-[#1A1A28]">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#00E5FF] to-[#FF2D78] flex items-center justify-center text-xs font-black text-black">
+                    {user.name[0]}
+                  </div>
+                  <span className="text-sm font-bold text-[#E8E8EC]">{user.name}</span>
+                  <span className="text-xs text-[#6E6E80]">${(user.bankroll?.current ?? 0).toFixed(0)}</span>
+                  <button
+                    onClick={() => setUser(null)}
+                    className="ml-1 text-[#6E6E80] hover:text-red-400"
+                    title="Logout"
+                  >
+                    <LogOut size={14} />
+                  </button>
+                </div>
+              )}
               {navItems.map(({ path, label, icon: Icon }) => {
                 const isActive = location.pathname === path
                 return (
