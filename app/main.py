@@ -1111,75 +1111,105 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     }
 
 
+# Pitcher tier lookup — primary driver of NRFI. Last names matched case-insensitive.
+KNOWN_ACE_PITCHERS = {
+    # Aces: +3 NRFI lean
+    "skubal": "ace", "yamamoto": "ace", "cole": "ace", "sale": "ace", "wheeler": "ace",
+    "burnes": "ace", "degrom": "ace", "snell": "ace", "kirby": "ace", "cease": "ace",
+    "strider": "ace", "glasnow": "ace", "webb": "ace", "eovaldi": "ace", "crochet": "ace",
+    "nola": "ace", "verlander": "ace", "fried": "ace", "skenes": "ace", "imanaga": "ace",
+    "brown": "ace", "lugo": "ace", "ragans": "ace", "greene": "ace", "bibee": "ace",
+    "senga": "ace", "castillo": "ace",
+    # Good: +1.5 NRFI lean
+    "gausman": "good", "gallen": "good", "lopez": "good", "pivetta": "good", "civale": "good",
+    "kikuchi": "good", "manaea": "good", "detmers": "good", "houck": "good", "bradley": "good",
+    "freeland": "good", "heaney": "good", "berrios": "good", "bassitt": "good", "rodon": "good",
+    "quintana": "good", "wacha": "good", "suarez": "good", "means": "good", "lyles": "good",
+    "smith": "good", "severino": "good", "lynn": "good",
+    # Bad: -2 NRFI lean (rookie/struggling)
+    "schlittler": "bad",
+}
+
+_TIER_VALUES = {"ace": 3.0, "good": 1.5, "unknown": 0.0, "bad": -2.0}
+
+
+def _pitcher_tier(name: str) -> str:
+    if not name or name == "TBD":
+        return "unknown"
+    last = name.strip().split()[-1].lower().rstrip(".,")
+    return KNOWN_ACE_PITCHERS.get(last, "unknown")
+
+
 def _evaluate_nrfi(game: dict) -> dict:
-    """Evaluate NRFI (No Run First Inning) probability for an MLB game."""
+    """Evaluate NRFI (No Run First Inning) probability — pitcher quality is primary driver."""
     odds = game.get("odds", {})
     spread = abs(odds.get("spread", 0))
     total = odds.get("total", 0)
     home = game.get("homeTeam", "")
-    away = game.get("awayTeam", "")
 
-    # Estimate RPG from total (total is combined runs, so per-team = total / 2)
-    home_rpg = total / 2 if total > 0 else 4.5
-    away_rpg = total / 2 if total > 0 else 4.5
+    hp = game.get("home_profile", {}) or {}
+    ap = game.get("away_profile", {}) or {}
+    h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
+    a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
 
-    # Adjust based on spread — bigger favorite implies run differential
-    if spread > 0:
-        home_rpg += spread * 0.15
-        away_rpg -= spread * 0.15
+    h_tier = _pitcher_tier(h_sp)
+    a_tier = _pitcher_tier(a_sp)
+    pitcher_score = _TIER_VALUES[h_tier] + _TIER_VALUES[a_tier]
 
-    # Park factor — hitter-friendly parks boost run expectation
-    hitter_park = home in HITTER_FRIENDLY_PARKS
-
-    # Pitcher quality proxy — tight spread + low total = good pitching
-    pitcher_quality = "good" if total < 8.5 and spread < 2.5 else ("average" if total < 9.5 else "poor")
-
-    # NRFI logic
     reasons = []
-    nrfi_score = 0
-
-    if home_rpg < 4.5 and away_rpg < 4.5:
-        nrfi_score += 2
-        reasons.append(f"Low-scoring matchup ({total:.1f} O/U)")
-    elif home_rpg > 5.5 or away_rpg > 5.5:
-        nrfi_score -= 2
-        reasons.append(f"High-scoring game expected ({total:.1f} O/U)")
-
-    if spread < 2:
-        nrfi_score += 1
-        reasons.append(f"Tight spread ({spread:.1f}) — evenly matched pitching")
-    elif spread > 3:
-        nrfi_score -= 1
-        reasons.append(f"Wide spread ({spread:.1f}) — mismatch risk")
-
-    if hitter_park:
-        nrfi_score -= 2
-        reasons.append(f"{home} plays in a hitter-friendly park")
+    # Pitcher reasoning — primary driver
+    if h_tier != "unknown" or a_tier != "unknown":
+        h_label = f"{h_sp.split()[-1]} ({h_tier})" if h_tier != "unknown" else f"{h_sp.split()[-1] if h_sp != 'TBD' else 'TBD'} (unknown)"
+        a_label = f"{a_sp.split()[-1]} ({a_tier})" if a_tier != "unknown" else f"{a_sp.split()[-1] if a_sp != 'TBD' else 'TBD'} (unknown)"
+        if pitcher_score >= 4.5:
+            reasons.append(f"{a_label} vs {h_label} — elite pitching duel")
+        elif pitcher_score >= 2.5:
+            reasons.append(f"{a_label} vs {h_label} — strong NRFI lean")
+        elif pitcher_score <= -2:
+            reasons.append(f"{a_label} vs {h_label} — YRFI risk")
+        else:
+            reasons.append(f"{a_label} vs {h_label}")
     else:
-        nrfi_score += 1
-        reasons.append("Neutral/pitcher-friendly park")
+        reasons.append("Two unknown arms — NRFI uncertain")
 
-    if pitcher_quality == "good":
-        nrfi_score += 2
-        reasons.append("Strong pitching indicators (low total + tight line)")
-    elif pitcher_quality == "poor":
-        nrfi_score -= 1
-        reasons.append("Weak pitching indicators")
+    # Secondary signals (halved weights vs old logic)
+    nrfi_score = pitcher_score  # primary driver
 
-    if total < 8.0:
-        nrfi_score += 1
-        reasons.append(f"Sub-8 total ({total:.1f}) — pitcher's duel")
+    if total > 0:
+        if total < 8.0:
+            nrfi_score += 1.0
+            reasons.append(f"Sub-8 total ({total:.1f}) — pitcher's duel")
+        elif total < 8.5:
+            nrfi_score += 0.5
+        elif total > 9.5:
+            nrfi_score -= 1.0
+            reasons.append(f"High total ({total:.1f}) — offense expected")
 
-    # Determine verdict
-    if nrfi_score >= 3:
+    if home in HITTER_FRIENDLY_PARKS:
+        nrfi_score -= 1.0
+        reasons.append(f"{home} hitter-friendly park")
+    else:
+        nrfi_score += 0.5
+
+    if spread < 1.5:
+        nrfi_score += 0.5
+    elif spread > 3:
+        nrfi_score -= 0.5
+
+    # Verdict thresholds (pitcher_score alone of 3.0+ = clear NRFI lean)
+    if nrfi_score >= 3.5:
         verdict = "NRFI"
-        confidence = min(85, 60 + nrfi_score * 5)
-    elif nrfi_score <= -1:
+        confidence = int(min(88, 62 + nrfi_score * 4))
+    elif nrfi_score <= -1.5:
         verdict = "YRFI"
-        confidence = min(85, 60 + abs(nrfi_score) * 5)
+        confidence = int(min(85, 60 + abs(nrfi_score) * 5))
     else:
         verdict = "SKIP"
         confidence = 45
+
+    # Without pitcher data, cap confidence
+    if h_tier == "unknown" and a_tier == "unknown" and verdict != "SKIP":
+        confidence = min(confidence, 55)
 
     reason = ". ".join(reasons[:3])
     return {"verdict": verdict, "confidence": confidence, "reason": reason}
