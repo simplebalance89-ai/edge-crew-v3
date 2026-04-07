@@ -545,6 +545,44 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     ml_a = odds.get("mlAway", 0)
     inj_home_str = _format_injuries(inj.get("home", []))
     inj_away_str = _format_injuries(inj.get("away", []))
+    rest = game.get("rest", {}) or {}
+    shifts = game.get("shifts", {}) or {}
+
+    # Sport-specific spread label + scoring unit
+    if sport == "NHL":
+        spread_label = "puck line (home)"
+        scoring_unit = "GPG"
+    elif sport == "MLB":
+        spread_label = "run line (home)"
+        scoring_unit = "RPG"
+    else:
+        spread_label = "spread (home)"
+        scoring_unit = "PPG"
+
+    # Streak / splits / scoring / rest / line movement — compact context block
+    h_streak = hp.get("streak") or "-"
+    a_streak = ap.get("streak") or "-"
+    h_split = hp.get("home_record") or "?"
+    a_split = ap.get("away_record") or "?"
+    form_block = (
+        f"FORM — {away}: streak {a_streak}, away {a_split} | "
+        f"{home}: streak {h_streak}, home {h_split} | "
+    )
+    if hp.get("ppg_L5") or ap.get("ppg_L5"):
+        form_block += (
+            f"SCORING L5 — {away} {ap.get('ppg_L5',0)} {scoring_unit}/{ap.get('opp_ppg_L5',0)} allowed, "
+            f"{home} {hp.get('ppg_L5',0)} {scoring_unit}/{hp.get('opp_ppg_L5',0)} allowed | "
+        )
+    h_rest = rest.get("home_rest_days")
+    a_rest = rest.get("away_rest_days")
+    if h_rest is not None or a_rest is not None:
+        h_r = f"{h_rest}d{' B2B' if rest.get('home_b2b') else ''}" if h_rest is not None else "?"
+        a_r = f"{a_rest}d{' B2B' if rest.get('away_b2b') else ''}" if a_rest is not None else "?"
+        form_block += f"REST — {away}: {a_r}, {home}: {h_r} | "
+    sd = shifts.get("spread_delta") or 0
+    if sd:
+        direction = home if sd < 0 else away
+        form_block += f"LINE — spread moved {abs(sd):.1f} toward {direction} | "
 
     # MLB-specific: include probable starting pitchers (huge variable, models have training knowledge)
     pitcher_block = ""
@@ -556,7 +594,8 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
         f"{home} ({hp.get('record','?')}, L5 {hp.get('L5','?')}) | "
-        f"spread (home) {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
+        f"{spread_label} {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
+        f"{form_block}"
         f"{pitcher_block}"
         f"INJURIES — {home}: {inj_home_str} | {away}: {inj_away_str} | "
         f"engine composite: {our_score:.1f}/10. "
