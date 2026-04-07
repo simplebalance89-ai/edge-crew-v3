@@ -1209,7 +1209,7 @@ async def generate_betslip(request: BetSlipRequest):
     # Estimate potential payout: assume -110 standard juice → ~$191 return per $100
     potential_payout = round(total_risk * 1.91, 0)
 
-    # ─── Peter's Rules: build up to 2 parlays (3-4 legs, $100 total stake) ───
+    # ─── Peter's Rules: 3-leg parlays only, $100/day (4×$25, 2×$50, or 1×$100) ───
     parlays = _build_parlays(locked_picks)
 
     # Strip internal fields before returning
@@ -1228,10 +1228,23 @@ async def generate_betslip(request: BetSlipRequest):
 
 
 def _build_parlays(locked_picks: list) -> list:
-    """Peter's Rules parlay builder: max 2 parlays, each 3-4 legs, $100 total stake.
-    Prefer sport diversity; pull from highest-graded locked picks."""
-    if not locked_picks or len(locked_picks) < 3:
+    """Peter's Rules parlay builder: strictly 3-leg parlays, $100/day total bank.
+    Auto-picks configuration based on locked pick count:
+      - 12+ picks → 4 parlays × $25 (3 legs each)
+      - 6-11 picks → 2 parlays × $50 (3 legs each)
+      - 3-5 picks → 1 parlay × $100 (3 legs)
+      - <3 picks → no parlays
+    Prefer sport diversity within each parlay; pull highest engine grades first."""
+    n = len(locked_picks) if locked_picks else 0
+    if n < 3:
         return []
+
+    if n >= 12:
+        num_parlays, stake = 4, 25
+    elif n >= 6:
+        num_parlays, stake = 2, 50
+    else:
+        num_parlays, stake = 1, 100
 
     # Sort by engine score descending
     sorted_picks = sorted(locked_picks, key=lambda p: p.get("_score", 0), reverse=True)
@@ -1245,53 +1258,29 @@ def _build_parlays(locked_picks: list) -> list:
             "score": p.get("_score", 0),
         }
 
-    def _build_one(pool: list, target_legs: int) -> list:
-        """Greedy: take highest-graded first, then alternate sports where possible."""
-        if len(pool) < target_legs:
+    def _build_one(pool: list) -> list:
+        """Greedy 3-leg build: highest-graded seed, then prefer unused sports."""
+        if len(pool) < 3:
             return []
         legs = [pool[0]]
         used_sports = {pool[0].get("_sport", "")}
         remaining = pool[1:]
-        # First, try to fill with different sports
+        # Prefer different sports
         for p in list(remaining):
-            if len(legs) >= target_legs:
+            if len(legs) >= 3:
                 break
             sp = p.get("_sport", "")
             if sp not in used_sports:
                 legs.append(p)
                 used_sports.add(sp)
                 remaining.remove(p)
-        # Then fill any remaining slots with next-highest-graded
+        # Fill remaining slots with next-highest-graded
         for p in list(remaining):
-            if len(legs) >= target_legs:
+            if len(legs) >= 3:
                 break
             legs.append(p)
             remaining.remove(p)
         return legs
-
-    parlays = []
-    pool = list(sorted_picks)
-
-    # Parlay 1: prefer 4 legs if possible, else 3
-    target1 = 4 if len(pool) >= 4 else 3
-    p1 = _build_one(pool, target1)
-    if not p1:
-        return []
-    for leg in p1:
-        pool.remove(leg)
-
-    # Parlay 2: only if we still have ≥3 picks left
-    p2 = []
-    if len(pool) >= 3:
-        target2 = 4 if len(pool) >= 4 else 3
-        p2 = _build_one(pool, target2)
-
-    # Stake split: $100 total
-    if p2:
-        stake1 = 50
-        stake2 = 50
-    else:
-        stake1 = 100
 
     def _finalize(legs: list, stake: int) -> dict:
         sport_mix = sorted({l.get("_sport", "") for l in legs if l.get("_sport")})
@@ -1303,9 +1292,15 @@ def _build_parlays(locked_picks: list) -> list:
             "diverse": len(sport_mix) >= 2,
         }
 
-    parlays.append(_finalize(p1, stake1))
-    if p2:
-        parlays.append(_finalize(p2, stake2))
+    parlays = []
+    pool = list(sorted_picks)
+    for _ in range(num_parlays):
+        legs = _build_one(pool)
+        if not legs:
+            break
+        for leg in legs:
+            pool.remove(leg)
+        parlays.append(_finalize(legs, stake))
     return parlays
 
 
