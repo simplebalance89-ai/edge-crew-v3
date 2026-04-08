@@ -217,11 +217,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               <div className="grid grid-cols-3 gap-1.5 mb-2">
                 {game.aiModels.map((m, i) => {
                   const src = (m as any).source || 'real';
-                  const srcLabel = src === 'real' ? 'LIVE' : src === 'math_fallback' ? 'MATH' : 'STUB';
+                  const srcLabel = src === 'real' ? 'LIVE' : 'FAIL';
                   const srcColor = src === 'real'
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    : src === 'math_fallback'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                     : 'bg-rose-500/20 text-rose-300 border-rose-500/40';
                   return (
                     <div key={i} className="relative bg-white/[0.03] border border-white/[0.08] rounded-lg p-1.5 text-center">
