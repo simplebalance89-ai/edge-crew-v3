@@ -687,6 +687,50 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     if h2h and h2h != "0-0":
         form_block += f"H2H — {home} {h2h} vs {away} this season | "
 
+    # NBA-specific: quarter splits + bench scoring (the Phoenix-blows-leads
+    # variables). Surfaced AFTER form, BEFORE the injury block so the model
+    # sees lead-collapse and late-game closing context next to the scoring line.
+    nba_block = ""
+    if sport == "NBA":
+        h_q = hp.get("nba_quarters") or {}
+        a_q = ap.get("nba_quarters") or {}
+
+        def _q_label(q: dict) -> str:
+            blown = q.get("leads_blown_l10", 0) or 0
+            comebacks = q.get("comebacks_l10", 0) or 0
+            if blown >= 3 and comebacks == 0:
+                return "collapse-prone"
+            if blown == 0 and comebacks >= 2:
+                return "strong closer"
+            if blown >= 2 and blown > comebacks:
+                return "shaky closer"
+            if comebacks >= 2 and comebacks > blown:
+                return "good closer"
+            return "neutral"
+
+        if h_q or a_q:
+            nba_block += "QUARTER SPLITS L10 - "
+            if a_q:
+                nba_block += (
+                    f"{away}: Q1 {a_q.get('q1_avg_for','?')} / Q4 {a_q.get('q4_avg_for','?')}, "
+                    f"leads blown {a_q.get('leads_blown_l10',0)}, "
+                    f"comebacks {a_q.get('comebacks_l10',0)} ({_q_label(a_q)}) | "
+                )
+            if h_q:
+                nba_block += (
+                    f"{home}: Q1 {h_q.get('q1_avg_for','?')} / Q4 {h_q.get('q4_avg_for','?')}, "
+                    f"leads blown {h_q.get('leads_blown_l10',0)}, "
+                    f"comebacks {h_q.get('comebacks_l10',0)} ({_q_label(h_q)}) | "
+                )
+
+        h_bench = hp.get("bench_ppg_l5")
+        a_bench = ap.get("bench_ppg_l5")
+        if h_bench is not None or a_bench is not None:
+            nba_block += (
+                f"BENCH L5 - {away}: {a_bench if a_bench is not None else '?'} ppg | "
+                f"{home}: {h_bench if h_bench is not None else '?'} ppg | "
+            )
+
     # MLB-specific: include probable starting pitchers with tier label from
     # KNOWN_ACE_PITCHERS, plus real ERA/WHIP/K9 when MLB Stats API populated
     # them, plus weather + plate umpire from StatsAPI gameData.
@@ -893,6 +937,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{home} ({hp.get('record','?')}, L5 {hp.get('L5','?')}) | "
         f"{spread_label} {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
         f"{form_block}"
+        f"{nba_block}"
         f"{pitcher_block}"
         f"{goalie_block}"
         f"{soccer_block}"
