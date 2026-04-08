@@ -287,6 +287,92 @@ HITTER_FRIENDLY_PARKS_GE = {
     "New York Yankees", "Boston Red Sox", "Philadelphia Phillies",
 }
 
+# Park factors — FanGraphs 3-year park factor (100 = neutral, >100 = hitter
+# friendly, <100 = pitcher friendly). Keyed by team display name as it
+# appears in our ESPN/Odds data layer. Used by score_park_factor and the
+# COORS_OVER chain. Updated for 2026 season; refresh annually.
+PARK_FACTORS = {
+    "Colorado Rockies":      112,  # Coors Field — most extreme hitter park
+    "Cincinnati Reds":       105,  # Great American Ball Park
+    "Texas Rangers":         104,  # Globe Life Field
+    "Philadelphia Phillies": 104,  # Citizens Bank Park
+    "Fenway Park":           103,  # placeholder if mapped by stadium name
+    "Boston Red Sox":        103,  # Fenway Park
+    "New York Yankees":      103,  # Yankee Stadium
+    "Chicago Cubs":          102,  # Wrigley Field
+    "Atlanta Braves":        102,  # Truist Park
+    "Baltimore Orioles":     102,  # Camden Yards
+    "Arizona Diamondbacks":  101,  # Chase Field
+    "Toronto Blue Jays":     101,  # Rogers Centre
+    "Milwaukee Brewers":     101,  # American Family Field
+    "Pittsburgh Pirates":    100,  # PNC Park (neutral)
+    "Detroit Tigers":        100,  # Comerica Park
+    "Houston Astros":        100,  # Minute Maid Park
+    "Washington Nationals":   99,  # Nationals Park
+    "New York Mets":          99,  # Citi Field
+    "Minnesota Twins":        99,  # Target Field
+    "Cleveland Guardians":    99,  # Progressive Field
+    "St. Louis Cardinals":    98,  # Busch Stadium
+    "Chicago White Sox":      98,  # Guaranteed Rate Field
+    "Kansas City Royals":     98,  # Kauffman Stadium
+    "Los Angeles Angels":     97,  # Angel Stadium
+    "Los Angeles Dodgers":    97,  # Dodger Stadium
+    "Athletics":              96,  # Sutter Health Park (Sacramento)
+    "San Francisco Giants":   96,  # Oracle Park
+    "Seattle Mariners":       95,  # T-Mobile Park
+    "Miami Marlins":          94,  # LoanDepot Park
+    "San Diego Padres":       94,  # Petco Park
+    "Tampa Bay Rays":         92,  # Tropicana Field — most extreme pitcher park
+}
+
+
+def score_park_factor(game: dict, side: str) -> tuple:
+    """Score the home park's offensive bias for the picking side.
+
+    Park factor is a SIDE signal not just a totals signal — a hitter-friendly
+    park advantages a strong-hitting team picking the run line, and a
+    pitcher-friendly park advantages a strong-pitching team picking the win.
+    Returns (score, note). Score 5.0 = neutral.
+    """
+    home_team = game.get("homeTeam", "") or game.get("home_team", "")
+    pf = PARK_FACTORS.get(home_team)
+    if pf is None:
+        return 5.0, "park factor: unknown park"
+
+    profile = game.get(f"{side}_profile", {}) or {}
+    sp = profile.get("starting_pitcher", {}) or {}
+    sp_tier = _pitcher_tier_lookup(sp.get("name", ""))
+    ppg_l5 = profile.get("ppg_L5", 0) or 0
+
+    # Hitter-friendly park (>= 105) — strong boost for offense
+    if pf >= 105:
+        if ppg_l5 >= 5.0:
+            return 8.5, f"hitter-friendly park ({pf}) + L5 offense {ppg_l5}"
+        return 6.5, f"hitter-friendly park ({pf})"
+
+    # Mildly hitter friendly (102-104)
+    if pf >= 102:
+        if ppg_l5 >= 5.0:
+            return 6.5, f"mildly hitter-friendly park ({pf}) + L5 offense {ppg_l5}"
+        return 5.5, f"mildly hitter-friendly park ({pf})"
+
+    # Mildly pitcher friendly (96-98)
+    if 96 <= pf <= 98:
+        if side == "home" and sp_tier in ("ace", "good"):
+            return 6.5, f"mildly pitcher-friendly park ({pf}) + {sp_tier} home starter"
+        return 5.0, f"mildly pitcher-friendly park ({pf})"
+
+    # Strongly pitcher friendly (<= 95)
+    if pf <= 95:
+        if side == "home" and sp_tier == "ace":
+            return 8.0, f"pitcher-friendly park ({pf}) + ACE home starter"
+        if side == "home" and sp_tier == "good":
+            return 7.0, f"pitcher-friendly park ({pf}) + good home starter"
+        return 4.0, f"pitcher-friendly park ({pf}) — offense suppressed"
+
+    # 99-101 = neutral
+    return 5.0, f"neutral park ({pf})"
+
 
 # Sentinel prefix in the note so grade_game can mark this variable unavailable
 _SP_PROXY_NOTE_PREFIX = "SP unknown"
@@ -577,7 +663,7 @@ SPORT_VARIABLES = {
     },
     "MLB": {
         "starting_pitcher": 10, "star_player": 8, "off_ranking": 7, "def_ranking": 7,
-        "form": 7, "rest": 6, "h2h": 6, "ats": 6,
+        "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "SOCCER": {
@@ -698,6 +784,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "congestion":
             score, note = score_fixture_congestion(game, pick_side)
+        elif var_name == "park_factor":
+            score, note = score_park_factor(game, pick_side)
+            if "unknown park" in note:
+                available = False
         else:
             score, note = 5, f"{var_name}: no data"
             available = False
