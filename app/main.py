@@ -1288,17 +1288,15 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     # AI Process: odds-based model for consensus
     ai_grade = _odds_grade(game.get("odds", {}))
 
-    # AI Models: personality grades with reasoning
+    # AI Models: slate path NEVER fakes models. Real models only via /api/analyze.
+    # Combat sports keep their own (non-LLM) heuristic generator since there's no
+    # equivalent real-AI path for them yet.
     if is_combat:
         ai_models = _generate_ai_models_combat(game, game.get("odds", {}), our_grade["score"], sport_upper)
     else:
-        ai_models = _generate_ai_models(
-            enriched or game,
-            game.get("odds", {}),
-            our_grade["score"],
-        )
+        ai_models = []  # empty until user hits Analyze All
 
-    # Blend AI model scores into ai_grade
+    # Blend AI model scores into ai_grade (only when we actually have models)
     if ai_models:
         avg_ai = round(sum(m["score"] for m in ai_models) / len(ai_models), 1)
         ai_grade["score"] = avg_ai
