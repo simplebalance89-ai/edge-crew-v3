@@ -505,15 +505,15 @@ AZURE_HOSTS = {
 # 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
 # token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
 REAL_AI_MODELS = [
-    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 60},
     {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 120},
+    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 60},
     {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 60},
-    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
-    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 120},
+    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 60},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 60},
     {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
-    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000, "timeout": 240},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 60},
+    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000, "timeout": 60},
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 60},
 ]
@@ -917,7 +917,17 @@ async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[lis
         _call_azure_model(cfg, _build_realai_prompt(game, our_score, cfg["persona"]))
         for cfg in REAL_AI_MODELS
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Hard ceiling on the whole batch — even if one model hangs, the analyze
+    # endpoint never blocks longer than this. Anything not back is treated as
+    # an exception and surfaces as a FAIL card.
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=70.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[REAL-AI BATCH] hard 70s ceiling hit — returning whatever finished")
+        results = [TimeoutError("batch ceiling exceeded") for _ in REAL_AI_MODELS]
     out = []
     for cfg, res in zip(REAL_AI_MODELS, results):
         disp = cfg["display"]
