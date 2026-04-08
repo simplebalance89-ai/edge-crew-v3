@@ -170,8 +170,8 @@ _BATCH_HITTER_PARKS = {
     "Colorado Rockies", "Texas Rangers", "Boston Red Sox",
     "Cincinnati Reds", "Philadelphia Phillies", "Arizona Diamondbacks",
 }
-_BATCH_ELITE_GOALIES = {k.lower() for k in _ENG.keys()}
-_BATCH_GOOD_GOALIES = {k.lower() for k in _GNG.keys()}
+_BATCH_ELITE_GOALIES = {str(k).lower() for k in _ENG}
+_BATCH_GOOD_GOALIES = {str(k).lower() for k in _GNG}
 
 
 def _sp_stats_inline(sp: dict) -> str:
