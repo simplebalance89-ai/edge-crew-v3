@@ -327,36 +327,55 @@ def score_bench_diff(game: dict, side: str) -> tuple:
 
 # ─── Sport-Specific Variables ──────────────────────────────────────────────────
 
-# Hardcoded MLB pitcher tiers — primary driver of MLB grading.
-# Originally lived in app/main.py for NRFI use; copied here so the main
-# grade engine can use the same domain knowledge.
-KNOWN_ACE_PITCHERS = {
-    # Aces (+3 tier value)
-    "skubal": "ace", "yamamoto": "ace", "cole": "ace", "sale": "ace", "wheeler": "ace",
-    "burnes": "ace", "degrom": "ace", "snell": "ace", "kirby": "ace", "cease": "ace",
-    "strider": "ace", "glasnow": "ace", "webb": "ace", "eovaldi": "ace", "crochet": "ace",
-    "nola": "ace", "verlander": "ace", "fried": "ace", "skenes": "ace", "imanaga": "ace",
-    "brown": "ace", "lugo": "ace", "ragans": "ace", "greene": "ace", "bibee": "ace",
-    "senga": "ace", "castillo": "ace",
-    # Good (+1.5 tier value)
-    "gausman": "good", "gallen": "good", "lopez": "good", "pivetta": "good", "civale": "good",
-    "kikuchi": "good", "manaea": "good", "detmers": "good", "houck": "good", "bradley": "good",
-    "freeland": "good", "heaney": "good", "berrios": "good", "bassitt": "good", "rodon": "good",
-    "quintana": "good", "wacha": "good", "suarez": "good", "means": "good", "lyles": "good",
-    "smith": "good", "severino": "good", "lynn": "good",
-    # Bad (-2 tier value)
-    "schlittler": "bad",
-}
+# MLB pitcher tier — derived from REAL MLB Stats API ERA + IP, not a
+# hardcoded reputation list. There is no such thing as an "ace pitcher" by
+# name; there is a pitcher whose current-season ERA over a meaningful sample
+# says he is pitching like one. Skenes is "ace" because 2.39 ERA over 30+ IP,
+# not because someone wrote him down. Tonight's kill of KNOWN_ACE_PITCHERS.
+# Kept as an empty dict for any legacy import that still expects the symbol.
+KNOWN_ACE_PITCHERS: dict = {}
 
 PITCHER_TIER_VALUES = {"ace": 3.0, "good": 1.5, "unknown": 0.0, "bad": -2.0}
 
 
-def _pitcher_tier_lookup(name: str) -> str:
-    """Return ace/good/unknown/bad for a pitcher last name."""
-    if not name or name == "TBD":
+def _pitcher_tier_from_stats(sp: dict) -> str:
+    """Classify a starting pitcher from real MLB Stats API numbers.
+
+    Bands (current-season SP, industry-standard):
+        ERA <= 3.00 + IP >= 30  -> ace
+        ERA <= 3.80 + IP >= 20  -> good
+        ERA >= 5.00 + IP >= 20  -> bad
+        otherwise (or no sample) -> unknown
+    """
+    if not isinstance(sp, dict):
         return "unknown"
-    last = name.strip().split()[-1].lower().rstrip(".,")
-    return KNOWN_ACE_PITCHERS.get(last, "unknown")
+    era_raw = sp.get("era") if sp.get("era") is not None else sp.get("ERA")
+    ip_raw = sp.get("ip") if sp.get("ip") is not None else sp.get("IP")
+    if era_raw is None:
+        return "unknown"
+    try:
+        era = float(era_raw)
+        ip = float(ip_raw) if ip_raw is not None else 0.0
+    except (TypeError, ValueError):
+        return "unknown"
+    if ip < 20:
+        return "unknown"
+    if era <= 3.00 and ip >= 30:
+        return "ace"
+    if era <= 3.80:
+        return "good"
+    if era >= 5.00:
+        return "bad"
+    return "unknown"
+
+
+def _pitcher_tier_lookup(sp_or_name) -> str:
+    """Backwards-compatible shim. Accepts either an sp dict (preferred) or
+    a bare name string (legacy). Name-only callers always get "unknown" now
+    because there is no name-based lookup table anymore."""
+    if isinstance(sp_or_name, dict):
+        return _pitcher_tier_from_stats(sp_or_name)
+    return "unknown"
 
 
 # Hitter-friendly parks (boost offense for hitters, hurt pitchers)
@@ -419,7 +438,7 @@ def score_park_factor(game: dict, side: str) -> tuple:
 
     profile = game.get(f"{side}_profile", {}) or {}
     sp = profile.get("starting_pitcher", {}) or {}
-    sp_tier = _pitcher_tier_lookup(sp.get("name", ""))
+    sp_tier = _pitcher_tier_from_stats(sp)
     ppg_l5 = profile.get("ppg_L5", 0) or 0
 
     # Hitter-friendly park (>= 105) — strong boost for offense
@@ -469,7 +488,6 @@ UMPIRE_TENDENCIES = {
     "Tony Randazzo":      {"k_pct": 23.1, "bb_pct": 8.0},
     "Bill Welke":         {"k_pct": 23.1, "bb_pct": 8.4},
     "Jansen Visconti":    {"k_pct": 23.0, "bb_pct": 8.2},
-    "Lance Barksdale":    {"k_pct": 22.9, "bb_pct": 8.3},
     "Sean Barber":        {"k_pct": 22.9, "bb_pct": 8.5},
     "Phil Cuzzi":         {"k_pct": 22.8, "bb_pct": 8.7},
     # League-average umps (~22.5 K%)
@@ -535,7 +553,7 @@ def score_umpire(game: dict, side: str) -> tuple:
 
     profile = game.get(f"{side}_profile", {}) or {}
     sp = profile.get("starting_pitcher", {}) or {}
-    sp_tier = _pitcher_tier_lookup(sp.get("name", ""))
+    sp_tier = _pitcher_tier_from_stats(sp)
 
     # High-K ump (>22.8) + ace/good pitcher on the picking side = boost
     # Low-K ump (<22.2) + strong offense (ppg_L5 >= 5) = boost
@@ -637,8 +655,8 @@ def score_starting_pitcher(game: dict, side: str) -> tuple:
 
     our_name = sp.get("name", "")
     opp_name = opp_sp.get("name", "")
-    our_tier = _pitcher_tier_lookup(our_name)
-    opp_tier = _pitcher_tier_lookup(opp_name)
+    our_tier = _pitcher_tier_from_stats(sp)
+    opp_tier = _pitcher_tier_from_stats(opp_sp)
     our_val = PITCHER_TIER_VALUES[our_tier]
     opp_val = PITCHER_TIER_VALUES[opp_tier]
 
