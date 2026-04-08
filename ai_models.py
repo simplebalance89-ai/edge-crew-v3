@@ -414,9 +414,11 @@ async def kimi_gatekeeper(game: dict, our_grade: dict, ai_grades: list, converge
     Run Kimi as a post-convergence gatekeeper.
     Reviews the full pipeline output and returns CONFIRM/CHALLENGE/BOOST with reasoning.
     """
-    key = AI_SERVICES_KEY or GCE_KEY
+    # Kimi K2 Thinking lives at gce-personal-resource (aoai_classic format),
+    # matching how app/main.py _call_azure_model routes it in REAL_AI_MODELS.
+    key = GCE_KEY or AI_SERVICES_KEY
     if not key:
-        return {"action": "CONFIRM", "adjustment": 0, "reason": "Kimi unavailable — no API key"}
+        return {"action": "?", "adjustment": 0, "reason": "Kimi unavailable — no AZURE_GCE_KEY"}
 
     home = game.get("homeTeam", "?")
     away = game.get("awayTeam", "?")
@@ -451,27 +453,48 @@ Your action — be AGGRESSIVE, not a rubber stamp:
 Return ONLY valid JSON:
 {{"action": "CONFIRM|CHALLENGE|BOOST", "adjustment": 0, "reason": "1-2 sentences taking a clear side — WHY", "verdict_tag": "SHORT_TAG"}}"""
 
-    endpoint = AI_SERVICES_ENDPOINT if AI_SERVICES_KEY else GCE_ENDPOINT
+    # aoai_classic URL — same shape app/main.py uses for gce-hosted deployments.
+    url = (
+        "https://gce-personal-resource.openai.azure.com/openai/deployments/"
+        "Kimi-K2-Thinking/chat/completions?api-version=2024-12-01-preview"
+    )
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
-                f"{endpoint}chat/completions",
+                url,
                 headers={"api-key": key, "Content-Type": "application/json"},
                 json={
-                    "model": "Kimi-K2.5",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
-                    "max_tokens": 500,
+                    "max_tokens": 6000,
                     "response_format": {"type": "json_object"},
                 },
             )
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                result = json.loads(content)
-                logger.info(f"[GATEKEEPER] {away}@{home}: {result.get('action')} adj={result.get('adjustment')} — {result.get('reason', '')[:80]}")
-                return result
+            if resp.status_code != 200:
+                err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.warning(f"[GATEKEEPER] {err}")
+                return {"action": "?", "adjustment": 0, "reason": err}
+            data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            finish = data.get("choices", [{}])[0].get("finish_reason", "")
+            # Strip <think> reasoning block if present
+            if "</think>" in content.lower():
+                content = content[content.lower().rfind("</think>") + len("</think>"):].strip()
+            if not content:
+                return {"action": "?", "adjustment": 0,
+                        "reason": f"Empty content (finish_reason={finish})"}
+            try:
+                # Find JSON object in content
+                s = content.find("{")
+                e = content.rfind("}") + 1
+                result = json.loads(content[s:e] if s >= 0 and e > s else content)
+            except Exception as pe:
+                return {"action": "?", "adjustment": 0,
+                        "reason": f"Parse error: {pe} | raw={content[:120]}"}
+            logger.info(f"[GATEKEEPER] {away}@{home}: {result.get('action')} adj={result.get('adjustment')} — {str(result.get('reason',''))[:80]}")
+            return result
+    except httpx.TimeoutException:
+        return {"action": "?", "adjustment": 0, "reason": "Gatekeeper timeout (>120s)"}
     except Exception as e:
         logger.warning(f"[GATEKEEPER] Failed: {e}")
-
-    return {"action": "CONFIRM", "adjustment": 0, "reason": "Gatekeeper unavailable"}
+        return {"action": "?", "adjustment": 0, "reason": f"Gatekeeper error: {e}"}
