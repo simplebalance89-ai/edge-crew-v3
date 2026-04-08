@@ -335,31 +335,83 @@ export default function GameDetailPage() {
           </div>
         )}
 
+        {/* ── INJURY REPORT ── */}
+        {(() => {
+          const filterInj = (arr?: Array<{ player?: string; status?: string; comment?: string; freshness?: string }>) =>
+            (arr || []).filter(i => i && i.freshness !== 'SEASON')
+          const homeInj = filterInj(game.home_profile?.injuries)
+          const awayInj = filterInj(game.away_profile?.injuries)
+          if (homeInj.length === 0 && awayInj.length === 0) return null
+          const freshStyle = (f?: string) =>
+            f === 'FRESH' ? 'bg-rose-500/20 text-rose-300 border-rose-500/50' :
+            f === 'RECENT' ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' :
+            'bg-white/10 text-white/40 border-white/20'
+          const renderList = (arr: typeof homeInj) =>
+            arr.length === 0 ? (
+              <div className="text-xs text-white/30 italic">No fresh injuries</div>
+            ) : (
+              <div className="space-y-2">
+                {arr.map((inj, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border shrink-0 ${freshStyle(inj.freshness)}`}>
+                      {inj.freshness || '?'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-white/80">
+                        {inj.player || 'Unknown'}{inj.status ? ` (${inj.status})` : ''}
+                      </div>
+                      {inj.comment && (
+                        <div className="text-[10px] text-white/40 leading-snug">{inj.comment}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          return (
+            <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5">
+              <h2 className="text-sm font-black tracking-[2px] text-rose-400 mb-4">INJURY REPORT</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <div className="text-[10px] font-black tracking-wider text-white/50 mb-2">{game.homeTeam}</div>
+                  {renderList(homeInj)}
+                </div>
+                <div>
+                  <div className="text-[10px] font-black tracking-wider text-white/50 mb-2">{game.awayTeam}</div>
+                  {renderList(awayInj)}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* ── GATEKEEPER DETAIL ── */}
         {game.gatekeeper && game.gatekeeper.action && (
           <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5">
             <h2 className="text-sm font-black tracking-[2px] text-purple-400 mb-4">KIMI GATEKEEPER</h2>
             <div className={`p-4 rounded-lg border ${
+              game.gatekeeper.action === '?' ? 'bg-rose-500/15 border-rose-500/50' :
               game.gatekeeper.action === 'BOOST' ? 'bg-emerald-500/10 border-emerald-500/30' :
               game.gatekeeper.action === 'CHALLENGE' ? 'bg-rose-500/10 border-rose-500/30' :
               'bg-[#D4A017]/10 border-[#D4A017]/30'
             }`}>
               <div className="flex items-center gap-3 mb-2">
                 <span className={`text-lg font-black ${
+                  game.gatekeeper.action === '?' ? 'text-rose-300' :
                   game.gatekeeper.action === 'BOOST' ? 'text-emerald-400' :
                   game.gatekeeper.action === 'CHALLENGE' ? 'text-rose-400' :
                   'text-[#D4A017]'
                 }`}>
-                  {game.gatekeeper.action}
+                  {game.gatekeeper.action === '?' ? '⚠ ERROR' : game.gatekeeper.action}
                 </span>
-                {game.gatekeeper.adjustment !== 0 && (
+                {game.gatekeeper.action !== '?' && game.gatekeeper.adjustment !== 0 && (
                   <span className="text-sm font-bold text-white/50">
                     ({game.gatekeeper.adjustment > 0 ? '+' : ''}{game.gatekeeper.adjustment} adjustment)
                   </span>
                 )}
               </div>
               {game.gatekeeper.reason && (
-                <p className="text-xs text-white/50 leading-relaxed">{game.gatekeeper.reason}</p>
+                <p className={`text-xs leading-relaxed ${game.gatekeeper.action === '?' ? 'text-rose-300/80 italic' : 'text-white/50'}`}>{game.gatekeeper.reason}</p>
               )}
             </div>
           </div>

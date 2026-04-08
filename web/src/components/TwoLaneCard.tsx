@@ -100,7 +100,33 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
       {/* ─── HEADER ─── */}
       <div className="flex justify-between items-start mb-3">
         <div>
-          <h3 className="text-base font-bold text-[#E8E8EC]">{game.awayTeam} <span className="text-[#6E6E80] font-normal">@</span> {game.homeTeam}</h3>
+          <h3 className="text-base font-bold text-[#E8E8EC]">
+            {game.awayTeam} <span className="text-[#6E6E80] font-normal">@</span> {game.homeTeam}
+            {(() => {
+              const parseH2H = (s?: string) => {
+                if (!s || s === '0-0') return null
+                const m = s.match(/^(\d+)-(\d+)$/)
+                if (!m) return null
+                return { w: parseInt(m[1]), l: parseInt(m[2]) }
+              }
+              const h = parseH2H(game.home_profile?.h2h_season)
+              const a = parseH2H(game.away_profile?.h2h_season)
+              let leader: { team: string; rec: string } | null = null
+              if (h && (!a || h.w >= a.w)) {
+                const abbr = game.homeTeam?.split(' ').pop()?.toUpperCase() || ''
+                leader = { team: abbr, rec: game.home_profile!.h2h_season! }
+              } else if (a) {
+                const abbr = game.awayTeam?.split(' ').pop()?.toUpperCase() || ''
+                leader = { team: abbr, rec: game.away_profile!.h2h_season! }
+              }
+              if (!leader) return null
+              return (
+                <span className="ml-2 text-[10px] font-bold text-[#D4A017]/80">
+                  · Season series: {leader.team} {leader.rec}
+                </span>
+              )
+            })()}
+          </h3>
           <div className="flex items-center gap-3 mt-1">
             <span className="text-xs text-[#6E6E80]">
               {game.scheduledAt ? new Date(game.scheduledAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date(game.scheduledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
@@ -108,9 +134,16 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             {game.odds && (
               <>
                 {game.odds.spread !== 0 && (() => {
-                  const fav = game.odds.spread < 0 ? game.homeTeam : game.awayTeam
-                  const favLine = -Math.abs(game.odds.spread)
-                  return <span className="text-xs text-[#6E6E80]">Spread: {fav} {favLine}</span>
+                  const homeLine = -game.odds.spread
+                  const awayLine = game.odds.spread
+                  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`)
+                  const ph = game.odds.spreadPriceHome
+                  const pa = game.odds.spreadPriceAway
+                  return (
+                    <span className="text-xs text-[#6E6E80]">
+                      Spread: {game.homeTeam} {fmt(homeLine)}{ph != null ? ` (${fmt(ph)})` : ''} / {game.awayTeam} {fmt(awayLine)}{pa != null ? ` (${fmt(pa)})` : ''}
+                    </span>
+                  )
                 })()}
                 {game.odds.total > 0 && <span className="text-xs text-[#6E6E80]">O/U: {game.odds.total}</span>}
                 {game.odds.mlHome !== 0 && <span className="text-xs text-[#6E6E80]">ML: {game.awayTeam} {game.odds.mlAway > 0 ? '+' : ''}{game.odds.mlAway} / {game.homeTeam} {game.odds.mlHome > 0 ? '+' : ''}{game.odds.mlHome}</span>}
@@ -232,6 +265,9 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                       </div>
                       <div className="text-[9px] text-white/40">{m.score}</div>
                       {(m as any).pick && <div className="text-[7px] font-bold text-[#00D4AA] mt-0.5 truncate">{(m as any).pick}</div>}
+                      {src === 'fail' && m.thesis && (
+                        <div className="text-[8px] text-white/40 italic mt-0.5 truncate" title={m.thesis}>{m.thesis}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -304,6 +340,19 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         <span className={`inline-block px-3.5 py-1 rounded-full text-[11px] font-black tracking-wider border ${statusStyles[displayStatus] || statusStyles.PENDING}`}>
           {displayStatus}
         </span>
+
+        {/* CONFLICT vote breakdown */}
+        {displayStatus === 'CONFLICT' && convergence?.conflict && (
+          <div className="mt-2 mx-auto max-w-xs bg-rose-500/10 border border-rose-500/40 rounded-lg px-3 py-2 text-left font-mono text-[10px]">
+            <div className="text-rose-300">
+              <span className="text-rose-400/70">ENGINE:</span> {convergence.conflict.engineSide}
+            </div>
+            <div className="text-rose-300">
+              <span className="text-rose-400/70">AI:&nbsp;&nbsp;&nbsp;&nbsp;</span> {convergence.conflict.aiSide}
+              <span className="text-white/40"> ({convergence.conflict.homeVotes} vs {convergence.conflict.awayVotes})</span>
+            </div>
+          </div>
+        )}
 
         {/* Score comparison */}
         <div className="flex justify-center items-center gap-6 mt-3">
@@ -465,12 +514,14 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         {/* Kimi Gatekeeper */}
         {game.gatekeeper && game.gatekeeper.action && (
           <div className={`mt-3 p-2.5 rounded-lg border ${
+            game.gatekeeper.action === '?' ? 'bg-rose-500/15 border-rose-500/50' :
             game.gatekeeper.action === 'BOOST' ? 'bg-emerald-500/10 border-emerald-500/30' :
             game.gatekeeper.action === 'CHALLENGE' ? 'bg-rose-500/10 border-rose-500/30' :
             'bg-[#D4A017]/10 border-[#D4A017]/30'
           }`}>
             <div className="flex items-center justify-center gap-2 mb-1">
               <span className={`text-[10px] font-black tracking-wider ${
+                game.gatekeeper.action === '?' ? 'text-rose-300' :
                 game.gatekeeper.action === 'BOOST' ? 'text-emerald-400' :
                 game.gatekeeper.action === 'CHALLENGE' ? 'text-rose-400' :
                 'text-[#D4A017]'
@@ -478,16 +529,18 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                 KIMI GATEKEEPER
               </span>
               <span className={`text-xs font-black ${
+                game.gatekeeper.action === '?' ? 'text-rose-300' :
                 game.gatekeeper.action === 'BOOST' ? 'text-emerald-400' :
                 game.gatekeeper.action === 'CHALLENGE' ? 'text-rose-400' :
                 'text-[#D4A017]'
               }`}>
-                {game.gatekeeper.action === 'BOOST' ? '▲' : game.gatekeeper.action === 'CHALLENGE' ? '▼' : '✓'} {game.gatekeeper.action}
-                {game.gatekeeper.adjustment !== 0 && ` (${game.gatekeeper.adjustment > 0 ? '+' : ''}${game.gatekeeper.adjustment})`}
+                {game.gatekeeper.action === '?' ? '⚠ ERROR' :
+                 (game.gatekeeper.action === 'BOOST' ? '▲' : game.gatekeeper.action === 'CHALLENGE' ? '▼' : '✓') + ' ' + game.gatekeeper.action}
+                {game.gatekeeper.action !== '?' && game.gatekeeper.adjustment !== 0 && ` (${game.gatekeeper.adjustment > 0 ? '+' : ''}${game.gatekeeper.adjustment})`}
               </span>
             </div>
             {game.gatekeeper.reason && (
-              <div className="text-[9px] text-white/40 leading-snug">{game.gatekeeper.reason}</div>
+              <div className={`text-[9px] leading-snug ${game.gatekeeper.action === '?' ? 'text-rose-300/80 italic' : 'text-white/40'}`}>{game.gatekeeper.reason}</div>
             )}
           </div>
         )}
