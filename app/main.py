@@ -2228,28 +2228,105 @@ async def probe_models():
     )
     async def _probe(m):
         t0 = time.time()
+        info = {
+            "display": m["display"],
+            "deployment": m["deployment"],
+            "host": m["host"],
+            "token_param": m.get("token_param"),
+            "max_tokens": m.get("max_tokens"),
+            "timeout": m.get("timeout", 60),
+            "ok": False,
+            "ms": 0,
+            "status_code": None,
+            "error": None,
+            "result": None,
+            "result_preview": None,
+            "raw_preview": None,
+        }
+        host_cfg = AZURE_HOSTS.get(m["host"])
+        if not host_cfg or not host_cfg.get("key"):
+            info["error"] = "host_not_configured_or_missing_key"
+            info["ms"] = int((time.time() - t0) * 1000)
+            return info
+
+        deployment = m["deployment"]
+        is_reasoning = m.get("token_param") == "max_completion_tokens"
+        token_budget = int(m.get("max_tokens") or 2000)
+        system_msg = (
+            "RESPONSE FORMAT: ONE LINE OF JSON ONLY. "
+            "Example: {\"grade\": 6.5, \"pick\": \"Home\", \"reasoning\": \"better record\"}. "
+            "No thinking. No prose. No code fences. Start with { end with }."
+        )
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": probe_prompt},
+        ]
         try:
+            if host_cfg["format"] == "openai_v1":
+                url = host_cfg["url"]
+                body = {"model": deployment, "messages": messages,
+                        m.get("token_param", "max_tokens"): token_budget}
+                if not is_reasoning:
+                    body["temperature"] = 0.3
+                headers = {"api-key": host_cfg["key"],
+                           "Authorization": f"Bearer {host_cfg['key']}",
+                           "Content-Type": "application/json"}
+            elif host_cfg["format"] == "gemini":
+                url = host_cfg["url_template"].format(deployment=deployment) + f"?key={host_cfg['key']}"
+                body = {
+                    "systemInstruction": {"parts": [{"text": system_msg}]},
+                    "contents": [{"role": "user", "parts": [{"text": probe_prompt}]}],
+                    "generationConfig": {"temperature": 0.3, "maxOutputTokens": token_budget,
+                                         "responseMimeType": "application/json"},
+                }
+                headers = {"Content-Type": "application/json"}
+            else:
+                url = host_cfg["url_template"].format(deployment=deployment)
+                body = {"messages": messages,
+                        m.get("token_param", "max_tokens"): token_budget}
+                if not is_reasoning:
+                    body["temperature"] = 0.3
+                headers = {"api-key": host_cfg["key"],
+                           "Authorization": f"Bearer {host_cfg['key']}",
+                           "Content-Type": "application/json"}
+
+            req_timeout = float(m.get("timeout") or 60)
+            async with httpx.AsyncClient(timeout=req_timeout) as client:
+                resp = await client.post(url, headers=headers, json=body)
+            info["status_code"] = resp.status_code
+            if resp.status_code != 200:
+                info["error"] = f"HTTP {resp.status_code}: {resp.text[:400]}"
+                info["ms"] = int((time.time() - t0) * 1000)
+                return info
+
+            rj = resp.json()
+            if host_cfg["format"] == "gemini":
+                cand0 = (rj.get("candidates") or [{}])[0]
+                parts = ((cand0.get("content") or {}).get("parts") or [])
+                content = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            else:
+                choice0 = (rj.get("choices") or [{}])[0]
+                msg = choice0.get("message", {}) or {}
+                content = (msg.get("content") or msg.get("reasoning_content")
+                           or choice0.get("text") or "")
+                if isinstance(content, list):
+                    content = "".join(
+                        (p.get("text") or p.get("content") or "") if isinstance(p, dict) else str(p)
+                        for p in content
+                    )
+            info["raw_preview"] = (content or "")[:200]
+
+            # Parse for grade/pick
             result = await _call_azure_model(m, probe_prompt)
-            ok = result is not None
-            return {
-                "display": m["display"],
-                "deployment": m["deployment"],
-                "host": m["host"],
-                "token_param": m.get("token_param"),
-                "max_tokens": m.get("max_tokens"),
-                "ok": ok,
-                "ms": int((time.time() - t0) * 1000),
-                "result": result,
-            }
+            info["result"] = result
+            info["result_preview"] = (json.dumps(result)[:200] if result else None)
+            info["ok"] = result is not None
+            if not info["ok"] and not info["error"]:
+                info["error"] = "parsed_none_from_response"
         except Exception as e:
-            return {
-                "display": m["display"],
-                "deployment": m["deployment"],
-                "host": m["host"],
-                "ok": False,
-                "ms": int((time.time() - t0) * 1000),
-                "error": f"{type(e).__name__}: {str(e)[:200]}",
-            }
+            info["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        info["ms"] = int((time.time() - t0) * 1000)
+        return info
     results = await asyncio.gather(*[_probe(m) for m in REAL_AI_MODELS])
     ok_count = sum(1 for r in results if r.get("ok"))
     return {
