@@ -32,7 +32,23 @@ export interface Game {
     confidence: number;
     thesis: string;
     key_factors?: string[];
+    source?: string;
+    pick?: string;
   }>;
+  injuries?: {
+    home?: Array<{ player?: string; status?: string; comment?: string; freshness?: string }>;
+    away?: Array<{ player?: string; status?: string; comment?: string; freshness?: string }>;
+  };
+  home_profile?: {
+    injuries?: Array<{ player?: string; status?: string; comment?: string; freshness?: string }>;
+    h2h_season?: string;
+    [k: string]: any;
+  };
+  away_profile?: {
+    injuries?: Array<{ player?: string; status?: string; comment?: string; freshness?: string }>;
+    h2h_season?: string;
+    [k: string]: any;
+  };
   gatekeeper?: {
     action: string;
     adjustment: number;
@@ -71,6 +87,8 @@ export interface Odds {
   total: number;
   mlHome: number;
   mlAway: number;
+  spreadPriceHome?: number;
+  spreadPriceAway?: number;
 }
 
 export interface Grade {
