@@ -750,10 +750,21 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
                 parts.append(f"wind {wx['wind']}")
             pitcher_block += f"WEATHER: {', '.join(parts)} | "
 
-        # Plate umpire (from MLB StatsAPI officials)
+        # Plate umpire (from MLB StatsAPI officials) — surface K%/BB% tag when
+        # we have the umpire in our hardcoded UMPIRE_TENDENCIES dataset.
         ump = game.get("umpire") or {}
         if ump.get("name"):
-            pitcher_block += f"HP UMPIRE: {ump['name']} | "
+            try:
+                from grade_engine import UMPIRE_TENDENCIES as _UT
+                tend = _UT.get(ump["name"])
+            except Exception:
+                tend = None
+            if tend:
+                k = tend["k_pct"]
+                tag = "high-K" if k >= 23.0 else "low-K" if k <= 22.0 else "neutral"
+                pitcher_block += f"HP UMPIRE: {ump['name']} (K% {k}, {tag}) | "
+            else:
+                pitcher_block += f"HP UMPIRE: {ump['name']} | "
 
         # Bullpen ERA L7 + tired arm count (from MLB StatsAPI 7-day walk)
         h_bp = hp.get("bullpen") or {}
