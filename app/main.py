@@ -253,6 +253,25 @@ def _apply_conflict_downgrade(game: dict, pick: dict, ai_models: list, conv: dic
     return True
 
 
+def _apply_kill_override(pick: dict, conv: dict, pr: dict | None) -> None:
+    """If Peter's Rules has a KILL flag OR convergence is CONFLICT, force the
+    pick to PASS and mark it killed. Side is left intact for display only —
+    the frontend hides the bet button when killed=True or sizing=='PASS'."""
+    if not isinstance(pick, dict):
+        return
+    killed = False
+    if isinstance(pr, dict):
+        for f in (pr.get("flags") or []):
+            if isinstance(f, dict) and f.get("action") == "KILL":
+                killed = True
+                break
+    if isinstance(conv, dict) and conv.get("status") == "CONFLICT":
+        killed = True
+    if killed:
+        pick["sizing"] = "PASS"
+        pick["killed"] = True
+
+
 def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> dict:
     """Determine pick recommendation from convergence."""
     consensus = conv["consensusScore"]
@@ -541,19 +560,25 @@ def _extract_balanced_json(text: str, prefer_last: bool = True) -> Optional[dict
 
 
 def _format_injuries(inj_list: list) -> str:
-    """Format injury list for AI prompt — only OUT/DOUBTFUL with star indicators."""
+    """Format injury list for AI prompt — only OUT/DOUBTFUL, with freshness tags.
+    SEASON-long injuries are DROPPED entirely — already baked into the line."""
     if not inj_list:
-        return "none reported"
+        return "none currently affecting the line"
+    # Drop season-long ghosts before anything else
+    live = [i for i in inj_list if (i.get("freshness") or "FRESH") != "SEASON"]
+    if not live:
+        return "none currently affecting the line"
     out = []
-    for inj in inj_list[:6]:  # cap at 6
+    for inj in live[:6]:  # cap at 6
         status = inj.get("status", "")
         if status not in ("OUT", "DOUBTFUL"):
             continue
         name = inj.get("player", "?")
         ppg = inj.get("ppg", 0)
+        freshness = inj.get("freshness") or "FRESH"
         star = " STAR" if (ppg or 0) >= 15 else ""
-        out.append(f"{name} ({status}, {ppg}ppg{star})")
-    return "; ".join(out) if out else "none OUT/DOUBTFUL"
+        out.append(f"{name} ({status}, {freshness}, {ppg}ppg{star})")
+    return "; ".join(out) if out else "none currently affecting the line"
 
 
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
@@ -575,8 +600,11 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         inj_home_str = _format_injuries(inj.get("home", []))
         inj_away_str = _format_injuries(inj.get("away", []))
         injury_block = (
-            f"INJURIES (verified ESPN data — DO NOT invent or speculate about any "
-            f"player not listed here) — {home}: {inj_home_str} | {away}: {inj_away_str} | "
+            f"INJURIES (verified ESPN data; FRESH=new edge, RECENT=partial edge, "
+            f"ESTABLISHED=already in the line, SEASON=dropped) — DO NOT downgrade "
+            f"picks for ESTABLISHED entries since the market already priced them in. "
+            f"DO NOT invent or speculate about any player not listed here. "
+            f"{home}: {inj_home_str} | {away}: {inj_away_str} | "
         )
     else:
         injury_block = (
@@ -1324,6 +1352,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
 
     # ─── CONFLICT DETECTION ───
     _apply_conflict_downgrade(game, pick, ai_models, conv, pr)
+    _apply_kill_override(pick, conv, pr)
 
     return {
         "ourGrade": our_grade,
@@ -2152,6 +2181,11 @@ async def analyze_games(request: AnalyzeRequest):
             game,
             game.get("pick") or {},
             game.get("aiModels") or [],
+            game.get("convergence") or {},
+            game.get("peterRules"),
+        )
+        _apply_kill_override(
+            game.get("pick") or {},
             game.get("convergence") or {},
             game.get("peterRules"),
         )
