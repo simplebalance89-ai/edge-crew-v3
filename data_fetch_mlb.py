@@ -90,6 +90,55 @@ def _extract_pitcher_stats(player_id: int) -> dict:
     return out
 
 
+def _extract_real_runs_l10(team_id: int) -> dict:
+    """Walk last 10 completed games for a team and aggregate REAL runs scored
+    and runs allowed. Returns {"runs_for_l10", "runs_against_l10", "games"}.
+
+    This replaces the synthetic-from-win% _derive_ppg_from_record path that
+    has been laundering MLB win% as a fake ppg signal forever.
+    """
+    import statsapi
+    from datetime import timedelta
+    out: dict = {}
+    try:
+        end_date = datetime.now(timezone.utc).date()
+        # Look back 30 days to make sure we capture 10 completed games even
+        # with off days / rainouts
+        start_date = end_date - timedelta(days=30)
+        sched = statsapi.schedule(
+            team=team_id,
+            start_date=start_date.strftime("%Y-%m-%d"),
+            end_date=end_date.strftime("%Y-%m-%d"),
+        )
+        completed = [g for g in sched if g.get("status") in ("Final", "Game Over")]
+        # Sort newest first, take L10
+        completed.sort(key=lambda g: g.get("game_date", ""), reverse=True)
+        l10 = completed[:10]
+        if not l10:
+            return out
+
+        runs_for = 0
+        runs_against = 0
+        for g in l10:
+            home_id = g.get("home_id")
+            home_score = g.get("home_score", 0) or 0
+            away_score = g.get("away_score", 0) or 0
+            if home_id == team_id:
+                runs_for += home_score
+                runs_against += away_score
+            else:
+                runs_for += away_score
+                runs_against += home_score
+
+        n = len(l10)
+        out["runs_for_l10"] = round(runs_for / n, 2)
+        out["runs_against_l10"] = round(runs_against / n, 2)
+        out["games_l10"] = n
+    except Exception as e:
+        logger.debug(f"[StatsAPI] runs L10 walk failed for {team_id}: {e}")
+    return out
+
+
 def _extract_pitcher_handedness(player_id: int) -> str:
     """Return 'L' or 'R' for a pitcher, empty string on failure."""
     import statsapi
@@ -354,6 +403,20 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         except (ValueError, TypeError):
             pass
 
+    # Real runs scored / allowed L10 — replaces win-%-derived synthetic ppg
+    home_runs_l10: dict = {}
+    away_runs_l10: dict = {}
+    if home_team_id:
+        try:
+            home_runs_l10 = _extract_real_runs_l10(int(home_team_id))
+        except (ValueError, TypeError):
+            pass
+    if away_team_id:
+        try:
+            away_runs_l10 = _extract_real_runs_l10(int(away_team_id))
+        except (ValueError, TypeError):
+            pass
+
     return {
         "source": "mlb_statsapi",
         "game_pk": game_pk,
@@ -363,6 +426,8 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         "away_starting_pitcher": away_sp,
         "home_lineup_vs_hand": home_lineup_vs_hand,
         "away_lineup_vs_hand": away_lineup_vs_hand,
+        "home_runs_l10": home_runs_l10,
+        "away_runs_l10": away_runs_l10,
         "weather": weather,
         "umpire": umpire,
     }
