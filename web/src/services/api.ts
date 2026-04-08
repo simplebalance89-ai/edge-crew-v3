@@ -36,6 +36,11 @@ export const gradeGame = (data: GradeRequest) =>
 export const analyzeGames = (sport: string) =>
   api.post<Game[]>('/api/analyze', { sport }).then(r => r.data);
 
+// Single-game deep analysis — same backend, filtered to one game by id.
+// Returns a 1-element array of the enriched game.
+export const analyzeGame = (sport: string, game_id: string) =>
+  api.post<Game[]>('/api/analyze', { sport, game_id }).then(r => r.data);
+
 // Picks
 export const getPicks = () => 
   api.get<Pick[]>('/api/picks').then(r => r.data);
