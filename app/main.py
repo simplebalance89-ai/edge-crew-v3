@@ -432,6 +432,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 # Sweden Central key kept as fallback but gce is the primary path.
 AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDEN_KEY", "")
 AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 AZURE_HOSTS = {
     "gce": {
@@ -443,6 +444,11 @@ AZURE_HOSTS = {
         "url": "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/chat/completions",
         "key": AZURE_AI_KEY,
         "format": "openai_v1",
+    },
+    "gemini": {
+        "url_template": "https://generativelanguage.googleapis.com/v1beta/models/{deployment}:generateContent",
+        "key": GEMINI_API_KEY,
+        "format": "gemini",
     },
 }
 
@@ -459,6 +465,7 @@ REAL_AI_MODELS = [
     {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 2000},
     {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 4000},
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000},
+    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000},
 ]
 
 
@@ -650,6 +657,24 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
             "temperature": 0.3,
             model_cfg.get("token_param", "max_tokens"): token_budget,
         }
+        headers = {
+            "api-key": host_cfg["key"],
+            "Authorization": f"Bearer {host_cfg['key']}",
+            "Content-Type": "application/json",
+        }
+    elif host_cfg["format"] == "gemini":
+        # Google Gemini REST. Key passed as query param. Different body shape entirely.
+        url = host_cfg["url_template"].format(deployment=deployment) + f"?key={host_cfg['key']}"
+        body = {
+            "systemInstruction": {"parts": [{"text": system_msg}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": token_budget,
+                "responseMimeType": "application/json",
+            },
+        }
+        headers = {"Content-Type": "application/json"}
     else:  # aoai_classic
         url = host_cfg["url_template"].format(deployment=deployment)
         body = {
@@ -657,12 +682,11 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
             "temperature": 0.3,
             model_cfg.get("token_param", "max_tokens"): token_budget,
         }
-
-    headers = {
-        "api-key": host_cfg["key"],
-        "Authorization": f"Bearer {host_cfg['key']}",
-        "Content-Type": "application/json",
-    }
+        headers = {
+            "api-key": host_cfg["key"],
+            "Authorization": f"Bearer {host_cfg['key']}",
+            "Content-Type": "application/json",
+        }
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -677,22 +701,28 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
 
     try:
         rj = resp.json()
-        choice0 = (rj.get("choices") or [{}])[0]
-        msg = choice0.get("message", {}) or {}
-        content = (
-            msg.get("content")
-            or msg.get("reasoning_content")
-            or choice0.get("text")
-            or ""
-        )
-        if isinstance(content, list):
-            parts = []
-            for p in content:
-                if isinstance(p, dict):
-                    parts.append(p.get("text") or p.get("content") or "")
-                else:
-                    parts.append(str(p))
-            content = "".join(parts)
+        if host_cfg["format"] == "gemini":
+            cand0 = (rj.get("candidates") or [{}])[0]
+            parts = ((cand0.get("content") or {}).get("parts") or [])
+            content = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            choice0 = {"finish_reason": cand0.get("finishReason")}
+        else:
+            choice0 = (rj.get("choices") or [{}])[0]
+            msg = choice0.get("message", {}) or {}
+            content = (
+                msg.get("content")
+                or msg.get("reasoning_content")
+                or choice0.get("text")
+                or ""
+            )
+            if isinstance(content, list):
+                parts = []
+                for p in content:
+                    if isinstance(p, dict):
+                        parts.append(p.get("text") or p.get("content") or "")
+                    else:
+                        parts.append(str(p))
+                content = "".join(parts)
     except Exception as e:
         logger.warning(f"[REAL-AI PARSE] {display}: {e}")
         return None
