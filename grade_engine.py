@@ -562,6 +562,215 @@ def score_starting_goalie(game: dict, side: str) -> tuple:
     return _clamp(score), note
 
 
+# ─── Soccer Hardcoded Knowledge ───────────────────────────────────────────────
+# Top scorer / key creator per top-flight club. Keyed by lowercased team
+# displayName / shortDisplayName (both variants matched). Values are
+# lowercase last names of the primary goal-source. A single missing starter
+# here (Haaland, Mbappe, Kane, Salah) is worth ~0.5-0.8 goals in the model
+# and is the equivalent of an NBA star-player edge.
+ELITE_SOCCER_STRIKERS = {
+    # Premier League
+    "manchester city": ["haaland", "de bruyne", "foden"],
+    "man city": ["haaland", "de bruyne", "foden"],
+    "arsenal": ["saka", "odegaard", "havertz"],
+    "liverpool": ["salah", "nunez", "diaz"],
+    "tottenham": ["son", "solanke", "maddison"],
+    "tottenham hotspur": ["son", "solanke", "maddison"],
+    "chelsea": ["palmer", "jackson", "madueke"],
+    "manchester united": ["fernandes", "rashford", "hojlund"],
+    "man united": ["fernandes", "rashford", "hojlund"],
+    "newcastle": ["isak", "gordon", "bruno"],
+    "newcastle united": ["isak", "gordon", "bruno"],
+    "aston villa": ["watkins", "rogers", "mcginn"],
+    "west ham": ["bowen", "kudus", "paqueta"],
+    "west ham united": ["bowen", "kudus", "paqueta"],
+    "brighton": ["mitoma", "joao pedro", "welbeck"],
+    "brighton & hove albion": ["mitoma", "joao pedro", "welbeck"],
+    "brentford": ["mbeumo", "wissa"],
+    "crystal palace": ["eze", "mateta", "olise"],
+    "fulham": ["muniz", "iwobi", "pereira"],
+    "wolverhampton wanderers": ["cunha", "hwang", "sarabia"],
+    "wolves": ["cunha", "hwang", "sarabia"],
+    "nottingham forest": ["wood", "hudson-odoi", "gibbs-white"],
+    "everton": ["calvert-lewin", "ndiaye", "mcneil"],
+    "bournemouth": ["evanilson", "semenyo", "kluivert"],
+    "ipswich town": ["delap", "hirst"],
+    "leicester city": ["vardy", "mavididi"],
+    "southampton": ["armstrong", "dibling"],
+    # La Liga
+    "real madrid": ["mbappe", "vinicius", "bellingham", "rodrygo"],
+    "barcelona": ["lewandowski", "yamal", "raphinha", "pedri"],
+    "atletico madrid": ["griezmann", "alvarez", "morata"],
+    "atletico": ["griezmann", "alvarez", "morata"],
+    "athletic club": ["williams", "guruzeta"],
+    "athletic bilbao": ["williams", "guruzeta"],
+    "real sociedad": ["oyarzabal", "becker", "kubo"],
+    "real betis": ["isco", "bakambu", "ezzalzouli"],
+    "villarreal": ["moreno", "baena", "barry"],
+    "sevilla": ["romero", "rafa mir", "lukebakio"],
+    "valencia": ["hugo duro", "canos"],
+    "girona": ["stuani", "tsygankov", "portu"],
+    # Serie A
+    "inter milan": ["lautaro martinez", "thuram", "calhanoglu"],
+    "inter": ["lautaro martinez", "thuram", "calhanoglu"],
+    "ac milan": ["leao", "pulisic", "morata", "reijnders"],
+    "milan": ["leao", "pulisic", "morata", "reijnders"],
+    "juventus": ["vlahovic", "yildiz", "koopmeiners"],
+    "napoli": ["lukaku", "kvaratskhelia", "mctominay", "politano"],
+    "roma": ["dybala", "dovbyk", "pellegrini"],
+    "as roma": ["dybala", "dovbyk", "pellegrini"],
+    "lazio": ["zaccagni", "castellanos", "dia"],
+    "atalanta": ["retegui", "lookman", "de ketelaere"],
+    "fiorentina": ["kean", "beltran", "gudmundsson"],
+    "bologna": ["orsolini", "castro", "ndoye"],
+    "torino": ["zapata", "sanabria"],
+    # Bundesliga
+    "bayern munich": ["kane", "musiala", "sane", "olise"],
+    "fc bayern munchen": ["kane", "musiala", "sane", "olise"],
+    "bayer leverkusen": ["wirtz", "boniface", "schick", "frimpong"],
+    "borussia dortmund": ["adeyemi", "guirassy", "brandt", "gittens"],
+    "dortmund": ["adeyemi", "guirassy", "brandt", "gittens"],
+    "rb leipzig": ["openda", "sesko", "olmo"],
+    "eintracht frankfurt": ["marmoush", "ekitike", "uzun"],
+    "vfb stuttgart": ["woltemade", "undav", "demirovic"],
+    "stuttgart": ["woltemade", "undav", "demirovic"],
+    "borussia monchengladbach": ["kleindienst", "hack", "honorat"],
+    "werder bremen": ["ducksch", "njinmah"],
+    "wolfsburg": ["wind", "majer"],
+    # Ligue 1
+    "paris saint-germain": ["dembele", "barcola", "kolo muani", "doue"],
+    "psg": ["dembele", "barcola", "kolo muani", "doue"],
+    "marseille": ["greenwood", "maupay", "rabiot"],
+    "olympique marseille": ["greenwood", "maupay", "rabiot"],
+    "monaco": ["ben seghir", "embolo", "balogun"],
+    "lille": ["david", "zhegrova", "cabella"],
+    "lyon": ["lacazette", "mikautadze", "cherki"],
+    "olympique lyonnais": ["lacazette", "mikautadze", "cherki"],
+    "nice": ["guessand", "boga", "moffi"],
+    "strasbourg": ["emegha", "diarra"],
+    # MLS
+    "inter miami": ["messi", "suarez", "alba", "busquets"],
+    "inter miami cf": ["messi", "suarez", "alba", "busquets"],
+    "lafc": ["bouanga", "giroud"],
+    "los angeles fc": ["bouanga", "giroud"],
+    "la galaxy": ["pec", "paintsil", "joveljic"],
+    "cincinnati": ["denkey", "acosta"],
+    "fc cincinnati": ["denkey", "acosta"],
+    "columbus crew": ["rossi", "cucho hernandez"],
+    "seattle sounders": ["ruidiaz", "morris"],
+    "seattle sounders fc": ["ruidiaz", "morris"],
+    "philadelphia union": ["uhre", "carranza"],
+    "new york city fc": ["martinez", "magno"],
+    "atlanta united": ["silva", "almada"],
+    "atlanta united fc": ["silva", "almada"],
+    "portland timbers": ["moreno", "mora"],
+    "new york red bulls": ["choupo-moting", "morgan"],
+    "orlando city": ["torres", "pereyra"],
+    "orlando city sc": ["torres", "pereyra"],
+    "vancouver whitecaps": ["brian white", "gauld"],
+    "vancouver whitecaps fc": ["brian white", "gauld"],
+    # Liga MX
+    "club america": ["henry martin", "zendejas", "rodrigo aguirre"],
+    "america": ["henry martin", "zendejas", "rodrigo aguirre"],
+    "chivas": ["alvarado", "pulido"],
+    "guadalajara": ["alvarado", "pulido"],
+    "monterrey": ["berterame", "canales", "ocampos"],
+    "tigres": ["gignac", "brunetta"],
+    "tigres uanl": ["gignac", "brunetta"],
+    "cruz azul": ["rotondi", "sepulveda"],
+    "pumas": ["dinenno", "silva"],
+    "pumas unam": ["dinenno", "silva"],
+}
+
+# Elite / good top-flight goalkeepers. Last names (lowercase) unless a
+# multi-word surname is required.
+ELITE_SOCCER_KEEPERS = {
+    "alisson", "courtois", "ederson", "donnarumma", "oblak", "ter stegen",
+    "sommer", "onana", "maignan", "raya", "sanchez", "dibu martinez",
+    "emi martinez", "emiliano martinez", "pickford", "neuer", "szczesny",
+    "bounou", "lunin", "rulli", "provedel", "milinkovic-savic",
+    "di gregorio", "svilar", "mamardashvili", "remiro",
+}
+GOOD_SOCCER_KEEPERS = {
+    "kepa", "areola", "henderson", "turner", "flekken", "sels", "pope",
+    "steele", "fabianski", "vicario", "meslier", "forster", "jorgensen",
+    "sa", "verbruggen", "gunn", "ramsdale",
+}
+
+
+def _soccer_keeper_tier(name: str) -> str | None:
+    if not name:
+        return None
+    lc = name.strip().lower()
+    last = lc.split()[-1]
+    for key in ELITE_SOCCER_KEEPERS:
+        if key == last or lc.endswith(key):
+            return "ELITE"
+    for key in GOOD_SOCCER_KEEPERS:
+        if key == last or lc.endswith(key):
+            return "GOOD"
+    return None
+
+
+def _soccer_team_stars(team_name: str) -> list:
+    """Return list of lowercased star last names for a soccer club, or []."""
+    if not team_name:
+        return []
+    key = team_name.strip().lower()
+    stars = ELITE_SOCCER_STRIKERS.get(key)
+    if stars:
+        return stars
+    for suffix in (" fc", " cf", " sc", " afc"):
+        if key.endswith(suffix):
+            stars = ELITE_SOCCER_STRIKERS.get(key[: -len(suffix)])
+            if stars:
+                return stars
+    for dk, v in ELITE_SOCCER_STRIKERS.items():
+        if dk in key or key in dk:
+            return v
+    return []
+
+
+def _soccer_stars_out(game: dict, side: str) -> list:
+    """Return list of (player_name, status) tuples for known stars on `side`
+    that appear on the ESPN injury list with OUT / DOUBTFUL / SUSPENDED."""
+    team = game.get("homeTeam" if side == "home" else "awayTeam", "")
+    stars = _soccer_team_stars(team)
+    if not stars:
+        return []
+    injuries = game.get("injuries", {}).get(side, []) or []
+    hits = []
+    for inj in injuries:
+        if inj.get("status") not in ("OUT", "DOUBTFUL", "SUSPENDED"):
+            continue
+        pname = (inj.get("name") or inj.get("player") or "").strip().lower()
+        if not pname:
+            continue
+        for star in stars:
+            if star in pname:
+                hits.append((inj.get("name") or pname, inj.get("status")))
+                break
+    return hits
+
+
+def score_soccer_key_player(game: dict, side: str) -> tuple:
+    """Soccer-flavored star_player override. Rewards when opp has an elite
+    attacker OUT, penalizes when ours is OUT. Falls back to the generic
+    injury diff if no known stars are flagged."""
+    our_out = _soccer_stars_out(game, side)
+    opp_side = "away" if side == "home" else "home"
+    opp_out = _soccer_stars_out(game, opp_side)
+    if not our_out and not opp_out:
+        return score_star_player(game, side)
+    score = 5.0 + 2.0 * len(opp_out) - 2.0 * len(our_out)
+    parts = []
+    if opp_out:
+        parts.append("OPP out: " + ", ".join(n for n, _ in opp_out))
+    if our_out:
+        parts.append("US out: " + ", ".join(n for n, _ in our_out))
+    return _clamp(score), " | ".join(parts)
+
+
 def score_fixture_congestion(game: dict, side: str) -> tuple:
     p = game.get(f"{side}_profile", {}) or {}
     opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}) or {}
@@ -811,7 +1020,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
 
         if var_name == "star_player":
             if has_injuries:
-                score, note = score_star_player(game, pick_side)
+                if sport == "SOCCER":
+                    score, note = score_soccer_key_player(game, pick_side)
+                else:
+                    score, note = score_star_player(game, pick_side)
             else:
                 score, note = 5, "No injury data"
                 available = False
@@ -825,12 +1037,12 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_off_ranking(profile, opp, sport)
             # NHL: record-laundered ppg is not a real offense signal —
             # standings points diverge sharply from goal differential.
-            if sport == "NHL" and profile.get("ppg_synthetic"):
+            if sport in ("NHL", "SOCCER") and profile.get("ppg_synthetic"):
                 available = False
                 note = f"{note} (synthetic from record)"
         elif var_name == "def_ranking":
             score, note = score_def_ranking(profile, opp, sport)
-            if sport == "NHL" and profile.get("ppg_synthetic"):
+            if sport in ("NHL", "SOCCER") and profile.get("ppg_synthetic"):
                 available = False
                 note = f"{note} (synthetic from record)"
         elif var_name == "form":
