@@ -158,49 +158,37 @@ Return ONLY valid JSON:
 Be specific. Name players, cite records, reference the odds. Don't hedge — take a side."""
 
 
-# Hardcoded knowledge — mirrored from app/main.py and grade_engine so batch
-# prompts surface the same pitcher/park/goalie context the live per-game
-# prompt uses. Keep these in sync.
-_BATCH_ACE_PITCHERS = {
-    "skubal", "yamamoto", "cole", "sale", "wheeler", "burnes", "degrom",
-    "snell", "kirby", "cease", "strider", "glasnow", "webb", "eovaldi",
-    "crochet", "nola", "verlander", "fried", "skenes", "imanaga", "brown",
-    "lugo", "ragans", "greene", "bibee", "senga", "castillo",
-}
-_BATCH_GOOD_PITCHERS = {
-    "gausman", "gallen", "lopez", "pivetta", "civale", "kikuchi", "manaea",
-    "detmers", "houck", "bradley", "freeland", "heaney", "berrios", "bassitt",
-    "rodon", "quintana", "wacha", "suarez", "means", "lyles", "smith",
-    "severino", "lynn",
-}
-_BATCH_BAD_PITCHERS = {"schlittler"}
+# Hardcoded knowledge — NHL goalie tier dicts come from grade_engine. Pitcher
+# tier was killed: there is no name-based ace list anymore. Pitchers are
+# graded inline from real ERA/WHIP/K9 in the prompt block below.
+from grade_engine import (  # type: ignore
+    ELITE_NHL_GOALIES as _ENG,
+    GOOD_NHL_GOALIES as _GNG,
+)
+
 _BATCH_HITTER_PARKS = {
     "Colorado Rockies", "Texas Rangers", "Boston Red Sox",
     "Cincinnati Reds", "Philadelphia Phillies", "Arizona Diamondbacks",
 }
-_BATCH_ELITE_GOALIES = {
-    "hellebuyck", "sorokin", "vasilevskiy", "shesterkin", "bobrovsky",
-    "saros", "markstrom", "oettinger", "hill", "kuemper", "swayman",
-    "ullmark", "skinner", "demko", "hart", "gibson", "talbot", "stolarz",
-}
-_BATCH_GOOD_GOALIES = {
-    "andersen", "husso", "husarek", "mrazek", "binnington", "georgiev",
-    "jarry", "blackwood", "vanecek", "lyon", "merzlikins", "kahkonen",
-    "wedgewood", "samsonov", "knight", "varlamov", "luukkonen",
-}
+_BATCH_ELITE_GOALIES = {k.lower() for k in _ENG.keys()}
+_BATCH_GOOD_GOALIES = {k.lower() for k in _GNG.keys()}
 
 
-def _batch_pitcher_tier(name: str) -> str:
-    if not name or name == "TBD":
-        return "UNKNOWN"
-    last = name.strip().split()[-1].lower().rstrip(".,")
-    if last in _BATCH_ACE_PITCHERS:
-        return "ACE"
-    if last in _BATCH_GOOD_PITCHERS:
-        return "GOOD"
-    if last in _BATCH_BAD_PITCHERS:
-        return "BAD"
-    return "UNKNOWN"
+def _sp_stats_inline(sp: dict) -> str:
+    """Render a starting pitcher's real stats for the batch prompt. No tier
+    label — the LLM grades the pitcher from the actual ERA/WHIP/K9/IP."""
+    if not isinstance(sp, dict):
+        return ""
+    parts = []
+    if sp.get("era") is not None:
+        parts.append(f"{sp['era']} ERA")
+    if sp.get("whip") is not None:
+        parts.append(f"{sp['whip']} WHIP")
+    if sp.get("k9") is not None:
+        parts.append(f"{sp['k9']} K/9")
+    if sp.get("ip") is not None:
+        parts.append(f"{sp['ip']} IP")
+    return f" [{', '.join(parts)}]" if parts else " [no stats]"
 
 
 def _batch_goalie_tier(name: str) -> str:
@@ -245,11 +233,13 @@ def _build_batch_prompt(games: list, model_personality: str, sport: str = "") ->
 
         # MLB: pitcher tiers + park factor.
         if g_sport == "MLB":
-            h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
-            a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+            h_sp_d = hp.get("starting_pitcher") or {}
+            a_sp_d = ap.get("starting_pitcher") or {}
+            h_sp = h_sp_d.get("name", "TBD")
+            a_sp = a_sp_d.get("name", "TBD")
             lines.append(
-                f"  PITCHERS: {away} {a_sp} ({_batch_pitcher_tier(a_sp)}) | "
-                f"{home} {h_sp} ({_batch_pitcher_tier(h_sp)})"
+                f"  PITCHERS: {away} {a_sp}{_sp_stats_inline(a_sp_d)} | "
+                f"{home} {h_sp}{_sp_stats_inline(h_sp_d)}"
             )
             if home in _BATCH_HITTER_PARKS:
                 lines.append("  PARK: hitter-friendly (boost offense, hurt pitchers)")

@@ -141,7 +141,9 @@ def _nhl_goalie_tier_label(name: str) -> str:
 PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "bovada"]
 
 _cache: Dict[str, dict] = {}
-CACHE_TTL = 300
+# 4hr TTL — cron pre-warm at 6am must survive until user wakes ~7am AND past
+# the cron's own ~2hr worst-case run time. 5min TTL was racing the cron.
+CACHE_TTL = 14400
 
 # ─── User Profiles ────────────────────────────────────────────────────────────
 
@@ -747,8 +749,8 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         a_sp_dict = ap.get("starting_pitcher") or {}
         h_sp = h_sp_dict.get("name", "TBD")
         a_sp = a_sp_dict.get("name", "TBD")
-        a_tier = _pitcher_tier(a_sp).upper()
-        h_tier = _pitcher_tier(h_sp).upper()
+        a_tier = _pitcher_tier(a_sp_dict).upper()
+        h_tier = _pitcher_tier(h_sp_dict).upper()
 
         def _sp_stats_str(d: dict) -> str:
             parts = []
@@ -1675,33 +1677,12 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     }
 
 
-# Pitcher tier lookup — primary driver of NRFI. Last names matched case-insensitive.
-KNOWN_ACE_PITCHERS = {
-    # Aces: +3 NRFI lean
-    "skubal": "ace", "yamamoto": "ace", "cole": "ace", "sale": "ace", "wheeler": "ace",
-    "burnes": "ace", "degrom": "ace", "snell": "ace", "kirby": "ace", "cease": "ace",
-    "strider": "ace", "glasnow": "ace", "webb": "ace", "eovaldi": "ace", "crochet": "ace",
-    "nola": "ace", "verlander": "ace", "fried": "ace", "skenes": "ace", "imanaga": "ace",
-    "brown": "ace", "lugo": "ace", "ragans": "ace", "greene": "ace", "bibee": "ace",
-    "senga": "ace", "castillo": "ace",
-    # Good: +1.5 NRFI lean
-    "gausman": "good", "gallen": "good", "lopez": "good", "pivetta": "good", "civale": "good",
-    "kikuchi": "good", "manaea": "good", "detmers": "good", "houck": "good", "bradley": "good",
-    "freeland": "good", "heaney": "good", "berrios": "good", "bassitt": "good", "rodon": "good",
-    "quintana": "good", "wacha": "good", "suarez": "good", "means": "good", "lyles": "good",
-    "smith": "good", "severino": "good", "lynn": "good",
-    # Bad: -2 NRFI lean (rookie/struggling)
-    "schlittler": "bad",
-}
-
-_TIER_VALUES = {"ace": 3.0, "good": 1.5, "unknown": 0.0, "bad": -2.0}
-
-
-def _pitcher_tier(name: str) -> str:
-    if not name or name == "TBD":
-        return "unknown"
-    last = name.strip().split()[-1].lower().rstrip(".,")
-    return KNOWN_ACE_PITCHERS.get(last, "unknown")
+# Pitcher tier — derived from real MLB Stats API ERA/IP, not a name list.
+# _pitcher_tier accepts the sp dict (preferred) and returns ace/good/unknown/bad.
+from grade_engine import (  # noqa: E402
+    _pitcher_tier_from_stats as _pitcher_tier,
+    PITCHER_TIER_VALUES as _TIER_VALUES,
+)
 
 
 def _evaluate_nrfi(game: dict) -> dict:
@@ -1713,11 +1694,13 @@ def _evaluate_nrfi(game: dict) -> dict:
 
     hp = game.get("home_profile", {}) or {}
     ap = game.get("away_profile", {}) or {}
-    h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
-    a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+    h_sp_dict = hp.get("starting_pitcher") or {}
+    a_sp_dict = ap.get("starting_pitcher") or {}
+    h_sp = h_sp_dict.get("name", "TBD")
+    a_sp = a_sp_dict.get("name", "TBD")
 
-    h_tier = _pitcher_tier(h_sp)
-    a_tier = _pitcher_tier(a_sp)
+    h_tier = _pitcher_tier(h_sp_dict)
+    a_tier = _pitcher_tier(a_sp_dict)
     pitcher_score = _TIER_VALUES[h_tier] + _TIER_VALUES[a_tier]
 
     reasons = []
@@ -2256,23 +2239,11 @@ async def sync_odds():
     _save_odds_history(history)
     logger.info(f"[SYNC] Snapped {total_snapped} games across {sports_synced}")
 
-    # Now run AI analysis on active sports (the real model calls)
-    for sport in ["nba", "nhl", "mlb", "soccer"]:
-        try:
-            cache_key = f"{sport}:games:"
-            cached = _cache.get(cache_key)
-            if cached and cached.get("data"):
-                games = cached["data"]
-                model_grades = await crowdsource_grade(games, sport)
-                # Enrich games with real AI grades
-                for game in games:
-                    gid = game.get("id", "")
-                    if gid in model_grades and model_grades[gid]:
-                        game["aiModels"] = model_grades[gid]
-                _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
-                logger.info(f"[SYNC] AI analysis complete for {sport}: {len(games)} games")
-        except Exception as e:
-            logger.warning(f"[SYNC] AI analysis failed for {sport}: {e}")
+    # NOTE: AI analysis is owned by the cron pre-warm jobs (scripts/prewarm_slate.py)
+    # which call /api/analyze using the REAL_AI_MODELS path. The previous block
+    # here used the legacy ai_models.crowdsource_grade() path which referenced
+    # phantom deployments (claude-opus-4-6, gpt-5.4-nano, qwen3-32b) and silently
+    # overwrote cron-warmed aiModels with empty results. Removed 2026-04-08.
 
     # Log this sync
     sync_log = _load_sync_log()
@@ -2331,12 +2302,45 @@ async def get_games(sport: str = "nba", mode: str = "games", league: str = ""):
         age = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
         if age < CACHE_TTL:
             return cached["data"]
+    # If we have AI-enriched cached data, do NOT overwrite it with a bare
+    # un-enriched fetch — that would silently nuke the cron pre-warm work.
+    # Refresh cache only if there is no enriched data sitting in it.
+    cached_enriched = bool(
+        cached
+        and cached.get("data")
+        and any((g or {}).get("aiModels") for g in cached["data"])
+    )
+    if cached_enriched:
+        return cached["data"]
     games = await _fetch_and_grade(sport_lower, mode=mode, league=league)
     # Sort by date — soonest games first
     games.sort(key=lambda g: g.get("scheduledAt", "9999"))
     if games:
         _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
     return games
+
+
+@app.get("/api/cache-status")
+async def cache_status():
+    """Quick visibility into _cache so the morning check can confirm the cron
+    pre-warm survived. Returns per-sport: game count, enriched count, age."""
+    out = {}
+    now = datetime.now(timezone.utc)
+    for key, entry in _cache.items():
+        if not entry or not entry.get("data"):
+            continue
+        data = entry["data"]
+        if not isinstance(data, list):
+            continue
+        enriched = sum(1 for g in data if (g or {}).get("aiModels"))
+        age = (now - entry["fetched_at"]).total_seconds()
+        out[key] = {
+            "games": len(data),
+            "enriched": enriched,
+            "age_seconds": int(age),
+            "fetched_at": entry["fetched_at"].isoformat(),
+        }
+    return out
 
 
 @app.post("/api/grade")
