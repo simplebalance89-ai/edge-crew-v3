@@ -715,8 +715,27 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
             f"PROBABLE PITCHERS — {away}: {a_sp} ({a_tier}{a_stats}) | "
             f"{home}: {h_sp} ({h_tier}{h_stats}) | "
         )
-        # Park factor — hitter-friendly parks boost offense / hurt pitchers.
-        if home in HITTER_FRIENDLY_PARKS:
+        # Park factor — surface the actual FanGraphs park factor index when
+        # we know it. >100 = hitter friendly, <100 = pitcher friendly,
+        # 100 = neutral. Pulled from grade_engine.PARK_FACTORS.
+        try:
+            from grade_engine import PARK_FACTORS as _PF
+            pf_val = _PF.get(home)
+        except Exception:
+            pf_val = None
+        if pf_val is not None:
+            if pf_val >= 105:
+                pf_label = "very hitter-friendly"
+            elif pf_val >= 102:
+                pf_label = "mildly hitter-friendly"
+            elif pf_val <= 95:
+                pf_label = "very pitcher-friendly"
+            elif pf_val <= 98:
+                pf_label = "mildly pitcher-friendly"
+            else:
+                pf_label = "neutral"
+            pitcher_block += f"PARK FACTOR: {pf_val} ({pf_label}) | "
+        elif home in HITTER_FRIENDLY_PARKS:
             pitcher_block += "PARK: hitter-friendly (boost offense, hurt pitchers) | "
 
         # Weather (from MLB StatsAPI gameData when available)
