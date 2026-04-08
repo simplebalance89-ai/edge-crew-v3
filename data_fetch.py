@@ -475,7 +475,7 @@ async def _fetch_schedule_data(client: httpx.AsyncClient, sport: str, league: st
             return base
 
     result = {"L5": "", "L5_margin": 0, "road_trip_len": 0, "home_stand_len": 0,
-              "h2h_season": "0-0", "matches_in_10d": 0}
+              "h2h_season": "0-0", "matches_in_10d": 0, "nba_quarters": None}
 
     raw_events = []
     try:
@@ -730,6 +730,163 @@ def _calc_congestion(events: list) -> int:
         if -10 <= days_diff <= 10 and days_diff != 0:
             count += 1
     return count
+
+
+# ── NBA quarter splits (Phoenix-blows-leads variable) ─────────────────
+
+_nba_quarter_cache: Dict[str, dict] = {}
+_NBA_QUARTER_CACHE_TTL = 1800  # 30 min
+
+# Per-event linescore lookup cache (summary endpoint fallback)
+_nba_event_linescore_cache: Dict[str, dict] = {}
+_NBA_EVENT_LINESCORE_TTL = 86400  # 1 day — completed games never change
+
+
+def _extract_linescores_from_competition(comp: dict, team_name: str) -> Optional[dict]:
+    """Pull per-quarter score lists for our team and opponent from a competition.
+    Returns {"ours": [q1,q2,q3,q4,...], "opp": [...]}, or None if absent."""
+    competitors = comp.get("competitors", []) or []
+    ours = None
+    opp = None
+    for c in competitors:
+        team = c.get("team", {}) or {}
+        names = [
+            team.get("displayName", ""),
+            team.get("shortDisplayName", ""),
+            team.get("name", ""),
+            team.get("abbreviation", ""),
+        ]
+        ls = c.get("linescores") or []
+        qs = []
+        for q in ls:
+            if isinstance(q, dict):
+                v = q.get("value", q.get("displayValue", 0))
+            else:
+                v = q
+            try:
+                qs.append(float(v))
+            except (ValueError, TypeError):
+                qs.append(0.0)
+        if _name_match(team_name, names):
+            ours = qs
+        else:
+            opp = qs
+    if ours and opp and len(ours) >= 4 and len(opp) >= 4:
+        return {"ours": ours, "opp": opp}
+    return None
+
+
+async def _fetch_event_linescores(client: httpx.AsyncClient, sport: str,
+                                   league: str, event_id: str,
+                                   team_name: str) -> Optional[dict]:
+    """Fall back to ESPN summary endpoint when schedule omits linescores."""
+    cache_key = f"{sport}/{league}/{event_id}/{team_name}"
+    cached = _nba_event_linescore_cache.get(cache_key)
+    if cached:
+        age = (datetime.now(timezone.utc) - cached["_ts"]).total_seconds()
+        if age < _NBA_EVENT_LINESCORE_TTL:
+            return cached.get("data")
+    try:
+        url = f"{ESPN_BASE}/{sport}/{league}/summary"
+        resp = await client.get(url, params={"event": event_id})
+        if resp.status_code != 200:
+            _nba_event_linescore_cache[cache_key] = {"data": None, "_ts": datetime.now(timezone.utc)}
+            return None
+        data = resp.json()
+        header = data.get("header", {}) or {}
+        comps = header.get("competitions", []) or []
+        result = None
+        if comps:
+            result = _extract_linescores_from_competition(comps[0], team_name)
+        _nba_event_linescore_cache[cache_key] = {"data": result, "_ts": datetime.now(timezone.utc)}
+        return result
+    except Exception as e:
+        logger.debug(f"[ESPN] Event linescore fetch failed (id={event_id}): {e}")
+        return None
+
+
+async def _calc_nba_quarters(client: httpx.AsyncClient, completed: list,
+                              team_name: str, sport: str, league: str) -> Optional[dict]:
+    """Compute NBA L10 quarter-split metrics for one team.
+
+    Returns dict with q1_avg_for/against, q4_avg_for/against, q1_to_q4_swing,
+    leads_blown_l10, comebacks_l10, sample_size, label.
+    Falls back to L5 (per-event summary fetch) when schedule omits linescores.
+    """
+    cache_key = f"nba_quarters:{team_name}"
+    cached = _nba_quarter_cache.get(cache_key)
+    if cached:
+        age = (datetime.now(timezone.utc) - cached["_ts"]).total_seconds()
+        if age < _NBA_QUARTER_CACHE_TTL:
+            return cached.get("data")
+
+    if not completed:
+        return None
+
+    inline = []
+    needs_fallback = []
+    for ev in completed[:10]:
+        comps = ev.get("competitions", [])
+        if not comps:
+            continue
+        ls = _extract_linescores_from_competition(comps[0], team_name)
+        if ls:
+            inline.append(ls)
+        else:
+            ev_id = str(ev.get("id") or comps[0].get("id") or "")
+            if ev_id:
+                needs_fallback.append(ev_id)
+
+    used = list(inline)
+    label = "L10"
+
+    if not used and needs_fallback:
+        label = "L5"
+        for ev_id in needs_fallback[:5]:
+            ls = await _fetch_event_linescores(client, sport, league, ev_id, team_name)
+            if ls:
+                used.append(ls)
+
+    if not used:
+        return None
+
+    n = len(used)
+    q1_for = sum(g["ours"][0] for g in used) / n
+    q1_against = sum(g["opp"][0] for g in used) / n
+    q4_for = sum(g["ours"][3] for g in used) / n
+    q4_against = sum(g["opp"][3] for g in used) / n
+
+    swings = []
+    leads_blown = 0
+    comebacks = 0
+    for g in used:
+        ours = g["ours"]
+        opp = g["opp"]
+        m_q1 = ours[0] - opp[0]
+        m_final = sum(ours) - sum(opp)
+        swings.append(m_final - m_q1)
+        if len(ours) >= 4 and len(opp) >= 4:
+            m_q3 = sum(ours[:3]) - sum(opp[:3])
+            if m_q3 > 0 and m_final < 0:
+                leads_blown += 1
+            elif m_q3 < 0 and m_final > 0:
+                comebacks += 1
+
+    swing_avg = sum(swings) / len(swings) if swings else 0.0
+
+    data = {
+        "q1_avg_for": round(q1_for, 1),
+        "q1_avg_against": round(q1_against, 1),
+        "q4_avg_for": round(q4_for, 1),
+        "q4_avg_against": round(q4_against, 1),
+        "q1_to_q4_swing": round(swing_avg, 1),
+        "leads_blown_l10": leads_blown,
+        "comebacks_l10": comebacks,
+        "sample_size": n,
+        "label": label,
+    }
+    _nba_quarter_cache[cache_key] = {"data": data, "_ts": datetime.now(timezone.utc)}
+    return data
 
 
 # ── Finders ────────────────────────────────────────────────────────────
