@@ -1158,6 +1158,7 @@ SPORT_VARIABLES = {
         "star_player": 9, "rest": 9, "off_ranking": 8, "def_ranking": 8,
         "pace": 7, "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+        "late_game_strength": 7, "quarter_pace": 6, "bench_diff": 6,
     },
     "NHL": {
         "goalie": 9, "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
@@ -1315,6 +1316,18 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "umpire":
             score, note = score_umpire(game, pick_side)
             if note == "no umpire data" or "unknown tendency" in note:
+                available = False
+        elif var_name == "late_game_strength":
+            score, note = score_late_game_strength(game, pick_side)
+            if note == "no quarter data":
+                available = False
+        elif var_name == "quarter_pace":
+            score, note = score_quarter_pace(game, pick_side)
+            if note == "no quarter data":
+                available = False
+        elif var_name == "bench_diff":
+            score, note = score_bench_diff(game, pick_side)
+            if note == "no bench data":
                 available = False
         else:
             score, note = 5, f"{var_name}: no data"
