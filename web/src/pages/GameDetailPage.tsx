@@ -109,8 +109,15 @@ export default function GameDetailPage() {
         convergence={convergence}
       />
 
-      {/* Lock Pick button (standalone, prominent) */}
-      {pick && pick.side && user && (
+      {/* Lock Pick button (standalone, prominent) — hidden when killed */}
+      {pick && pick.side && (pick.killed === true || pick.sizing === 'PASS') && (
+        <div className="mt-4 flex justify-center">
+          <div className="px-8 py-3 rounded-xl text-sm font-black tracking-wider bg-red-600/20 border-2 border-red-500/70 text-red-300 uppercase">
+            KILLED — DO NOT BET (CONFLICT/KILL flag active)
+          </div>
+        </div>
+      )}
+      {pick && pick.side && user && !(pick.killed === true || pick.sizing === 'PASS') && (
         <div className="mt-4 flex justify-center">
           <button
             onClick={handleLockPick}

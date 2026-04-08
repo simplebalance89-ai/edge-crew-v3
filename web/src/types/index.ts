@@ -23,6 +23,7 @@ export interface Game {
     line: number;
     confidence: number;
     sizing: string;
+    killed?: boolean;
   };
   aiModels?: Array<{
     model: string;
