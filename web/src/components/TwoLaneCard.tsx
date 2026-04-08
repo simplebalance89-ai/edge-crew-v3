@@ -150,6 +150,12 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               </>
             )}
           </div>
+          {/* MLB starting pitchers */}
+          {game.sport === 'MLB' && (game.away_profile?.starting_pitcher?.name || game.home_profile?.starting_pitcher?.name) && (
+            <div className="mt-1 text-[11px] font-bold text-[#38BDF8]">
+              ⚾ {game.away_profile?.starting_pitcher?.name || 'TBD'} <span className="text-white/40 font-normal">vs</span> {game.home_profile?.starting_pitcher?.name || 'TBD'}
+            </div>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className={`px-3 py-1 rounded-full text-[10px] font-black tracking-wider border ${statusStyles[displayStatus] || statusStyles.PENDING}`}>
