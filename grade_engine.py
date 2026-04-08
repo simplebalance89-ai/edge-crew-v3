@@ -823,8 +823,16 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "off_ranking":
             score, note = score_off_ranking(profile, opp, sport)
+            # NHL: record-laundered ppg is not a real offense signal —
+            # standings points diverge sharply from goal differential.
+            if sport == "NHL" and profile.get("ppg_synthetic"):
+                available = False
+                note = f"{note} (synthetic from record)"
         elif var_name == "def_ranking":
             score, note = score_def_ranking(profile, opp, sport)
+            if sport == "NHL" and profile.get("ppg_synthetic"):
+                available = False
+                note = f"{note} (synthetic from record)"
         elif var_name == "form":
             if has_form:
                 score, note = score_recent_form(profile, opp)
