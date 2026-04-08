@@ -90,6 +90,90 @@ def _extract_pitcher_stats(player_id: int) -> dict:
     return out
 
 
+def _extract_bullpen_stats(team_id: int) -> dict:
+    """Pull bullpen workload + effectiveness via team_leaders + season-to-date.
+    Returns {era_L30, ip_L7, fresh_arms_count} when available, empty on failure.
+
+    Strategy: MLB StatsAPI doesn't expose a direct 'bullpen ERA L7' endpoint,
+    but team_stats(team_id, group='pitching') gives team-level pitching with
+    splits. We pull season totals as a baseline; the L7 freshness comes from
+    walking the last 7 days of game logs and tallying relief IP per pitcher
+    so we can flag arms used 3+ days in a row as 'tired'.
+    """
+    import statsapi
+    from datetime import timedelta
+    out: dict = {}
+    try:
+        # Season-to-date team pitching (baseline ERA)
+        team_stats = statsapi.team_stats(team_id, group="pitching", type="season")
+        for s_block in team_stats.get("stats", []):
+            if s_block.get("type", {}).get("displayName") == "season":
+                s = s_block.get("stats", {}) or {}
+                if s.get("era") is not None:
+                    try:
+                        out["team_era_season"] = float(s["era"])
+                    except (ValueError, TypeError):
+                        pass
+                break
+    except Exception as e:
+        logger.debug(f"[StatsAPI] team bullpen season fetch failed for {team_id}: {e}")
+
+    # Walk last 7 days of team schedule for relief workload signals
+    try:
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=7)
+        sched = statsapi.schedule(
+            team=team_id,
+            start_date=start_date.strftime("%Y-%m-%d"),
+            end_date=end_date.strftime("%Y-%m-%d"),
+        )
+        relief_games = 0
+        total_relief_ip = 0.0
+        relief_er = 0
+        recent_arms_used: dict = {}  # arm_id -> [dates]
+        for g in sched:
+            if g.get("status") not in ("Final", "Game Over"):
+                continue
+            game_pk = g.get("game_id")
+            if not game_pk:
+                continue
+            try:
+                box = statsapi.boxscore_data(game_pk)
+                team_side = "home" if g.get("home_id") == team_id else "away"
+                pitchers = (box.get(team_side, {}).get("pitchers") or [])
+                # First pitcher = starter; everyone else is bullpen
+                for arm_id in pitchers[1:]:
+                    arm_data = box.get(team_side, {}).get("players", {}).get(f"ID{arm_id}", {})
+                    arm_stats = (arm_data.get("stats", {}) or {}).get("pitching", {}) or {}
+                    ip_str = str(arm_stats.get("inningsPitched", "0.0"))
+                    try:
+                        # MLB IP format: "1.2" = 1 and 2/3 innings
+                        whole, frac = ip_str.split(".") if "." in ip_str else (ip_str, "0")
+                        ip = int(whole) + int(frac) / 3.0
+                    except (ValueError, IndexError):
+                        ip = 0.0
+                    er = int(arm_stats.get("earnedRuns", 0) or 0)
+                    if ip > 0:
+                        total_relief_ip += ip
+                        relief_er += er
+                        recent_arms_used.setdefault(arm_id, []).append(g.get("game_date", ""))
+                relief_games += 1
+            except Exception:
+                continue
+
+        if total_relief_ip > 0:
+            out["bullpen_era_L7"] = round((relief_er * 9.0) / total_relief_ip, 2)
+            out["bullpen_ip_L7"] = round(total_relief_ip, 1)
+            # "Tired" arms = appeared 3+ days in last 7
+            tired = sum(1 for dates in recent_arms_used.values() if len(dates) >= 3)
+            out["bullpen_tired_arms"] = tired
+            out["bullpen_relief_games"] = relief_games
+    except Exception as e:
+        logger.debug(f"[StatsAPI] bullpen L7 walk failed for {team_id}: {e}")
+
+    return out
+
+
 def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict]:
     """Synchronous StatsAPI lookup. Wrapped in asyncio.to_thread by callers."""
     if not _statsapi_available():
@@ -175,9 +259,27 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         except Exception as e:
             logger.debug(f"[StatsAPI] game info fetch failed for {game_pk}: {e}")
 
+    # Bullpen ERA L7 + tired-arm count for both teams
+    home_bullpen: dict = {}
+    away_bullpen: dict = {}
+    home_team_id = target.get("home_id")
+    away_team_id = target.get("away_id")
+    if home_team_id:
+        try:
+            home_bullpen = _extract_bullpen_stats(int(home_team_id))
+        except (ValueError, TypeError):
+            pass
+    if away_team_id:
+        try:
+            away_bullpen = _extract_bullpen_stats(int(away_team_id))
+        except (ValueError, TypeError):
+            pass
+
     return {
         "source": "mlb_statsapi",
         "game_pk": game_pk,
+        "home_bullpen": home_bullpen,
+        "away_bullpen": away_bullpen,
         "home_starting_pitcher": home_sp,
         "away_starting_pitcher": away_sp,
         "weather": weather,

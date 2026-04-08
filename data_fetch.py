@@ -922,6 +922,11 @@ def _derive_ppg_from_record(profile: dict, sport: str = "NBA") -> None:
             profile["ppg_L5"] = round(base + pct * span, 1)
             profile["opp_ppg_L5"] = round(base + span - pct * span, 1)
             profile["avg_margin_L10"] = round(profile["ppg_L5"] - profile["opp_ppg_L5"], 1)
+            # Mark synthetic so downstream scorers can suppress record
+            # laundering — off/def ranking derived from win% is not a
+            # real signal, especially in NHL where standings points
+            # diverge sharply from goal differential.
+            profile["ppg_synthetic"] = True
     except (ValueError, IndexError):
         pass
 
@@ -1138,6 +1143,11 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
                 home_profile["starting_pitcher"] = statsapi_data["home_starting_pitcher"]
             if statsapi_data.get("away_starting_pitcher"):
                 away_profile["starting_pitcher"] = statsapi_data["away_starting_pitcher"]
+            # Bullpen — last 7 days ERA + tired arm count from StatsAPI walk
+            if statsapi_data.get("home_bullpen"):
+                home_profile["bullpen"] = statsapi_data["home_bullpen"]
+            if statsapi_data.get("away_bullpen"):
+                away_profile["bullpen"] = statsapi_data["away_bullpen"]
             # Stash weather + umpire on the game dict for the prompt builder
             if statsapi_data.get("weather"):
                 game_data["weather"] = statsapi_data["weather"]
