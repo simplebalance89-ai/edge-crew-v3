@@ -185,11 +185,13 @@ export default function GameDetailPage() {
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-black text-[#00D4AA] uppercase">{m.model}</span>
                       {(() => {
-                        const src = (m as any).source || 'real';
-                        const label = src === 'real' ? 'LIVE' : 'FAIL';
+                        const src = (m as any).source;
+                        const label = src === 'real' ? 'LIVE' : src === 'fail' ? 'FAIL' : '?';
                         const cls = src === 'real'
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : 'bg-rose-500/20 text-rose-300 border-rose-500/40';
+                          : src === 'fail'
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          : 'bg-white/10 text-white/40 border-white/20';
                         return <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${cls}`}>{label}</span>;
                       })()}
                       <span className="text-lg font-black" style={{ color: gradeColor(m.grade) }}>{m.grade}</span>
