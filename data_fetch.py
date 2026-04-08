@@ -951,17 +951,29 @@ def _default_profile(team_name: str) -> dict:
     }
 
 
-async def _fetch_mlb_starting_pitchers(home: str, away: str) -> dict:
-    """Fetch today's MLB scoreboard and return {'home': sp_dict, 'away': sp_dict}
-    for the SPECIFIC event matching home vs away. This is fetched per-game
-    (not cached on the team profile) so the same team in different games gets
-    the correct pitcher for each game.
+async def _fetch_mlb_starting_pitchers(home: str, away: str, scheduled_at: str = "") -> dict:
+    """Fetch the MLB scoreboard for the game's date and return
+    {'home': sp_dict, 'away': sp_dict} for the SPECIFIC event matching home vs away.
+
+    `scheduled_at` is the game's ISO timestamp (e.g. "2026-04-08T16:36:00Z").
+    Without it the call defaults to today's scoreboard, which silently returns
+    yesterday/today's pitchers for tomorrow's games — wrong data, no error.
     """
     out = {"home": {}, "away": {}}
+    # Derive the YYYYMMDD scoreboard target date from the scheduled timestamp.
+    # ESPN's scoreboard ?dates= filter is UTC-day based, which matches how
+    # scheduledAt is stored, so no timezone conversion needed.
+    date_str = ""
+    if scheduled_at:
+        try:
+            dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            date_str = dt.strftime("%Y%m%d")
+        except (ValueError, TypeError):
+            date_str = ""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             espn_sport, espn_league = SPORT_ESPN_MAP.get("MLB", ("baseball", "mlb"))
-            scoreboard = await _fetch_scoreboard(client, espn_sport, espn_league)
+            scoreboard = await _fetch_scoreboard(client, espn_sport, espn_league, date_str=date_str)
             for event in scoreboard.get("events", []):
                 for comp in event.get("competitions", []):
                     competitors = comp.get("competitors", [])
@@ -1025,7 +1037,7 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
     # team-level profile cache can leak a stale value across calls. Always
     # overwrite with the game-specific probables from today's scoreboard.
     if sport == "MLB":
-        sp_map = await _fetch_mlb_starting_pitchers(home, away)
+        sp_map = await _fetch_mlb_starting_pitchers(home, away, game_data.get("scheduledAt", ""))
         if sp_map.get("home"):
             home_profile["starting_pitcher"] = sp_map["home"]
         if sp_map.get("away"):
