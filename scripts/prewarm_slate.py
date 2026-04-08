@@ -45,7 +45,7 @@ except ImportError:
 BASE_URL = os.environ.get("BASE_URL", "https://edge-crew-v3.onrender.com").rstrip("/")
 SPORT = (os.environ.get("SPORT") or "").strip().lower()
 GAME_DELAY_SECONDS = int(os.environ.get("GAME_DELAY_SECONDS", "30"))
-PER_REQUEST_TIMEOUT = float(os.environ.get("PER_REQUEST_TIMEOUT", "480"))
+PER_REQUEST_TIMEOUT = float(os.environ.get("PER_REQUEST_TIMEOUT", "600"))
 SLATE_FETCH_TIMEOUT = 60.0
 
 

@@ -2384,16 +2384,17 @@ async def analyze_games(request: AnalyzeRequest):
     """Deep analysis: call AI models for crowdsource grades + Kimi gatekeeper.
     Two-tier system -- this is the SLOW path triggered by 'Analyze All'.
 
-    Hard 450s top-level ceiling so the request can NEVER hang forever. This
-    is below the cron's 480s per-request budget, so the cron always gets a
-    response (success, partial, or error) and moves to the next game.
+    Hard 550s top-level ceiling so the request can NEVER hang forever.
+    Per-game worst case: 200s model batch + 260s gatekeeper (Kimi 200 + GPT
+    fallback 60) = 460s. 550s gives ~90s slack. Cron's per-request budget
+    is bumped to 600s to stay above this so the cron always gets a response.
     """
     try:
-        return await asyncio.wait_for(_analyze_games_impl(request), timeout=450)
+        return await asyncio.wait_for(_analyze_games_impl(request), timeout=550)
     except asyncio.TimeoutError:
-        logger.warning(f"[ANALYZE] HARD TIMEOUT (>450s) for sport={request.sport} game_id={request.game_id}")
+        logger.warning(f"[ANALYZE] HARD TIMEOUT (>550s) for sport={request.sport} game_id={request.game_id}")
         return {
-            "error": "analyze hard timeout (>450s)",
+            "error": "analyze hard timeout (>550s)",
             "sport": request.sport,
             "game_id": request.game_id,
         }
@@ -2506,12 +2507,23 @@ async def _analyze_games_impl(request: AnalyzeRequest):
 
         # Run Kimi gatekeeper
         if ai_grades_list:
-            gk = await kimi_gatekeeper(
-                game,
-                game.get("ourGrade", {}),
-                ai_grades_list,
-                game.get("convergence", {}),
-            )
+            # Defensive belt: gatekeeper has internal timeouts (Kimi 200s +
+            # GPT-4.1 fallback 60s = 260s worst case) but if httpx ever
+            # fails to honor them, this outer wait_for guarantees we never
+            # hang the analyze loop. 270s = internal worst case + 10s slack.
+            try:
+                gk = await asyncio.wait_for(
+                    kimi_gatekeeper(
+                        game,
+                        game.get("ourGrade", {}),
+                        ai_grades_list,
+                        game.get("convergence", {}),
+                    ),
+                    timeout=270,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[GATEKEEPER] outer wait_for tripped (>270s) for game {game.get('id')}")
+                gk = {"action": "?", "adjustment": 0, "reason": "Gatekeeper outer timeout (>270s)"}
             game["gatekeeper"] = gk
 
             # Apply gatekeeper adjustment to consensus
