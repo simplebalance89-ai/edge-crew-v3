@@ -688,20 +688,53 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         form_block += f"H2H — {home} {h2h} vs {away} this season | "
 
     # MLB-specific: include probable starting pitchers with tier label from
-    # KNOWN_ACE_PITCHERS so LLMs see pitcher quality, not just the raw name.
+    # KNOWN_ACE_PITCHERS, plus real ERA/WHIP/K9 when MLB Stats API populated
+    # them, plus weather + plate umpire from StatsAPI gameData.
     pitcher_block = ""
     if sport == "MLB":
-        h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
-        a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+        h_sp_dict = hp.get("starting_pitcher") or {}
+        a_sp_dict = ap.get("starting_pitcher") or {}
+        h_sp = h_sp_dict.get("name", "TBD")
+        a_sp = a_sp_dict.get("name", "TBD")
         a_tier = _pitcher_tier(a_sp).upper()
         h_tier = _pitcher_tier(h_sp).upper()
+
+        def _sp_stats_str(d: dict) -> str:
+            parts = []
+            if d.get("era") is not None:
+                parts.append(f"{d['era']} ERA")
+            if d.get("whip") is not None:
+                parts.append(f"{d['whip']} WHIP")
+            if d.get("k9") is not None:
+                parts.append(f"{d['k9']} K/9")
+            return f", {', '.join(parts)}" if parts else ""
+
+        a_stats = _sp_stats_str(a_sp_dict)
+        h_stats = _sp_stats_str(h_sp_dict)
         pitcher_block = (
-            f"PROBABLE PITCHERS — {away}: {a_sp} ({a_tier}) | "
-            f"{home}: {h_sp} ({h_tier}) | "
+            f"PROBABLE PITCHERS — {away}: {a_sp} ({a_tier}{a_stats}) | "
+            f"{home}: {h_sp} ({h_tier}{h_stats}) | "
         )
         # Park factor — hitter-friendly parks boost offense / hurt pitchers.
         if home in HITTER_FRIENDLY_PARKS:
             pitcher_block += "PARK: hitter-friendly (boost offense, hurt pitchers) | "
+
+        # Weather (from MLB StatsAPI gameData when available)
+        wx = game.get("weather") or {}
+        if wx and (wx.get("temp") or wx.get("wind") or wx.get("condition")):
+            parts = []
+            if wx.get("condition"):
+                parts.append(str(wx["condition"]))
+            if wx.get("temp"):
+                parts.append(f"{wx['temp']}°F")
+            if wx.get("wind"):
+                parts.append(f"wind {wx['wind']}")
+            pitcher_block += f"WEATHER: {', '.join(parts)} | "
+
+        # Plate umpire (from MLB StatsAPI officials)
+        ump = game.get("umpire") or {}
+        if ump.get("name"):
+            pitcher_block += f"HP UMPIRE: {ump['name']} | "
 
     # NHL-specific: starting goalies + tier label. NOTE: data_fetch.py does not
     # yet populate starting_goalie on NHL profiles, so this will mostly render
@@ -718,6 +751,21 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
             f"{home}: {h_g} ({h_gt}) | "
         )
 
+    # Sport-appropriate example reasoning so the prompt example doesn't leak
+    # baseball language ("pitching edge") into NBA grading. This was a real
+    # bug — DeepSeek V3.2 Spec parroted "pitching edge" on the Rockets-Suns
+    # NBA game tonight because the example said it.
+    sport_example = {
+        "NBA":   '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
+        "WNBA":  '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
+        "NCAAB": '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
+        "NHL":   '{"grade": 7.2, "pick": "Home", "reasoning": "elite goalie edge and rest advantage"}',
+        "MLB":   '{"grade": 7.2, "pick": "Home", "reasoning": "ace starter and lineup vs hand edge"}',
+        "NFL":   '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
+        "NCAAF": '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
+        "SOCCER":'{"grade": 7.2, "pick": "Home", "reasoning": "home form and key starter availability"}',
+    }.get(sport, '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form"}')
+
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
         f"{home} ({hp.get('record','?')}, L5 {hp.get('L5','?')}) | "
@@ -730,7 +778,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
         f'{{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}}. '
-        f'EXAMPLE OUTPUT: {{"grade": 7.2, "pick": "Home", "reasoning": "strong recent form and pitching edge"}} '
+        f'EXAMPLE OUTPUT: {sport_example} '
         f"Now output ONLY the JSON object, starting with {{ :"
     )
 
