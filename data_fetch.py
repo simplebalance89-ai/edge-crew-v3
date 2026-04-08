@@ -1024,6 +1024,93 @@ async def _fetch_mlb_starting_pitchers(home: str, away: str, scheduled_at: str =
     return out
 
 
+async def _fetch_nhl_starting_goalies(home: str, away: str, scheduled_at: str = "") -> dict:
+    """Fetch the NHL scoreboard for the game's date and return
+    {'home': goalie_dict, 'away': goalie_dict} for the matching event.
+
+    Mirrors _fetch_mlb_starting_pitchers. ESPN's NHL scoreboard exposes
+    `competitor.probables[].athlete` with the confirmed starting goalie on
+    game day, plus statistics (savePct / SV%) when available.
+    """
+    out = {"home": {}, "away": {}}
+    date_str = ""
+    if scheduled_at:
+        try:
+            dt = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            date_str = dt.strftime("%Y%m%d")
+        except (ValueError, TypeError):
+            date_str = ""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            espn_sport, espn_league = SPORT_ESPN_MAP.get("NHL", ("hockey", "nhl"))
+            scoreboard = await _fetch_scoreboard(client, espn_sport, espn_league, date_str=date_str)
+            for event in scoreboard.get("events", []):
+                for comp in event.get("competitions", []):
+                    competitors = comp.get("competitors", [])
+                    if len(competitors) < 2:
+                        continue
+                    by_side = {}
+                    for c in competitors:
+                        by_side[c.get("homeAway", "")] = c
+                    home_c = by_side.get("home")
+                    away_c = by_side.get("away")
+                    if not home_c or not away_c:
+                        continue
+                    home_names = [
+                        home_c.get("team", {}).get("displayName", ""),
+                        home_c.get("team", {}).get("shortDisplayName", ""),
+                        home_c.get("team", {}).get("name", ""),
+                        home_c.get("team", {}).get("abbreviation", ""),
+                    ]
+                    away_names = [
+                        away_c.get("team", {}).get("displayName", ""),
+                        away_c.get("team", {}).get("shortDisplayName", ""),
+                        away_c.get("team", {}).get("name", ""),
+                        away_c.get("team", {}).get("abbreviation", ""),
+                    ]
+                    if not (_name_match(home, home_names) and _name_match(away, away_names)):
+                        continue
+                    for side_key, comp_obj in (("home", home_c), ("away", away_c)):
+                        for prob in comp_obj.get("probables", []):
+                            athlete = prob.get("athlete", {})
+                            if not athlete:
+                                continue
+                            g_info = {
+                                "name": athlete.get("displayName",
+                                        athlete.get("fullName", "Unknown"))
+                            }
+                            # Pull SV% from athlete.statistics if present
+                            for stat_block in athlete.get("statistics", []) or []:
+                                splits = stat_block.get("splits", {}) or {}
+                                for cat in splits.get("categories", []) or []:
+                                    for s in cat.get("stats", []) or []:
+                                        nm = (s.get("name", "") or s.get("abbreviation", "")).lower()
+                                        if nm in ("savepct", "sv%", "svpct", "save_pct"):
+                                            try:
+                                                val = s.get("value") or s.get("displayValue")
+                                                g_info["sv_pct"] = float(val)
+                                            except (ValueError, TypeError):
+                                                pass
+                            # Also try flat positional stats array as fallback
+                            if "sv_pct" not in g_info:
+                                flat = athlete.get("stats", [])
+                                if isinstance(flat, list):
+                                    for item in flat:
+                                        try:
+                                            v = float(item)
+                                            if 0.80 <= v <= 1.0:
+                                                g_info["sv_pct"] = v
+                                                break
+                                        except (ValueError, TypeError):
+                                            continue
+                            out[side_key] = g_info
+                            break
+                    return out
+    except Exception as e:
+        logger.warning(f"[ESPN] NHL goalie fetch failed for {away}@{home}: {e}")
+    return out
+
+
 async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "") -> dict:
     home = game_data.get("homeTeam", "")
     away = game_data.get("awayTeam", "")
@@ -1063,6 +1150,21 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
                 home_profile["starting_pitcher"] = sp_map["home"]
             if sp_map.get("away"):
                 away_profile["starting_pitcher"] = sp_map["away"]
+
+    # ── NHL: starting goalies must be fetched per-game from ESPN scoreboard.
+    # Without this the prompt and score_starting_goalie both see "TBD" and the
+    # single biggest NHL signal is silently dark.
+    if sport == "NHL":
+        scheduled_at = game_data.get("scheduledAt", "")
+        try:
+            g_map = await _fetch_nhl_starting_goalies(home, away, scheduled_at)
+            if g_map.get("home"):
+                home_profile["starting_goalie"] = g_map["home"]
+            if g_map.get("away"):
+                away_profile["starting_goalie"] = g_map["away"]
+        except Exception as e:
+            logger.warning(f"[NHL] goalie fetch failed for {away}@{home}: {e}")
+
     odds = game_data.get("odds", {})
 
     # Pull injuries from profiles for the grade engine
