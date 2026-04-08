@@ -1,7 +1,7 @@
 import { useState, type MouseEvent } from 'react'
 import { Lock, Check } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
-import { lockPick, submitGutPick } from '@/services/api'
+import { lockPick, submitGutPick, analyzeGame } from '@/services/api'
 import type { Game, Grade, ConvergenceResult } from '@/types'
 
 interface TwoLaneCardProps {
@@ -406,6 +406,31 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         )}
         {gutToast && (
           <div className="mt-2 text-center text-[10px] font-bold text-purple-300">{gutToast}</div>
+        )}
+        {/* Single-game Analyze button — runs the full AI fan-out for ONLY this game */}
+        {(!game.aiModels || game.aiModels.length === 0) && (
+          <div className="mt-2 flex justify-center">
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                const btn = e.currentTarget as HTMLButtonElement;
+                if (btn.disabled) return;
+                const orig = btn.textContent;
+                btn.textContent = 'Analyzing...';
+                btn.disabled = true;
+                try {
+                  await analyzeGame((game.sport || '').toLowerCase(), game.id);
+                  window.location.reload();
+                } catch (err) {
+                  btn.textContent = 'Failed';
+                  setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+                }
+              }}
+              className="px-3 py-1 rounded-lg text-[10px] font-bold bg-[#00D4AA]/15 border border-[#00D4AA]/40 text-[#00D4AA] hover:bg-[#00D4AA]/25"
+            >
+              Analyze This Game
+            </button>
+          </div>
         )}
         {pick && pick.side && (
           <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">

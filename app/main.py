@@ -2125,6 +2125,7 @@ class GradeRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     sport: str
+    game_id: Optional[str] = None  # Optional: analyze a single game by id
 
 
 # ─── Odds Snapshot / Line Movement Sync ────────────────────────────────────────
@@ -2370,6 +2371,16 @@ async def analyze_games(request: AnalyzeRequest):
 
     if not games:
         return {"error": "No games found", "sport": sport_lower}
+
+    # Single-game mode: filter the slate to just one matchup. Faster path,
+    # designed for the per-card "Analyze This Game" button so the user
+    # doesn't have to re-run the entire slate to deep-dive one matchup.
+    if request.game_id:
+        single = [g for g in games if g.get("id") == request.game_id]
+        if not single:
+            return {"error": f"Game {request.game_id} not found in slate", "sport": sport_lower}
+        games = single
+        logger.info(f"[ANALYZE] Single-game mode for {sport_lower}: {games[0].get('awayTeam')} @ {games[0].get('homeTeam')}")
 
     # Call AI crowdsource for all games
     logger.info(f"[ANALYZE] Deep analysis for {sport_lower}: {len(games)} games (real Azure AI={'on' if AZURE_AI_KEY else 'OFF — fallback'})")
