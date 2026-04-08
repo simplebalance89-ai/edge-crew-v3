@@ -447,7 +447,18 @@ async def fetch_mlb_game_profile(home_team: str, away_team: str, game_date: str)
             return cached["data"]
 
     try:
-        data = await asyncio.to_thread(_fetch_sync, home_team, away_team, game_date)
+        # Hard 30s ceiling — statsapi (requests-based) has no built-in timeout
+        # and a single network stall would block the worker thread (and the
+        # entire analyze) forever. 30s is generous: a healthy MLB enrich
+        # finishes in 5-10s; anything slower is an upstream incident, not
+        # signal we should wait for.
+        data = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_sync, home_team, away_team, game_date),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[StatsAPI] HARD TIMEOUT (>30s) for {away_team}@{home_team} — skipping enrichment")
+        return None
     except Exception as e:
         logger.warning(f"[StatsAPI] async wrapper failed for {away_team}@{home_team}: {e}")
         return None

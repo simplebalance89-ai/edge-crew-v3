@@ -1826,7 +1826,22 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
             game["nrfi"] = _evaluate_nrfi(game)
         return game
 
-    all_games = list(await asyncio.gather(*[_grade_single(g) for g in all_games]))
+    # Hard 90s ceiling on the entire grading gather. Per-game enrichment
+    # already has a 30s ceiling on the StatsAPI thread; this is the outer
+    # safety net so a stuck game can't poison the whole slate fetch.
+    try:
+        all_games = list(
+            await asyncio.wait_for(
+                asyncio.gather(*[_grade_single(g) for g in all_games], return_exceptions=True),
+                timeout=90,
+            )
+        )
+        # Filter out any games that raised — they'll come back un-enriched
+        # rather than crash the slate.
+        all_games = [g for g in all_games if isinstance(g, dict)]
+    except asyncio.TimeoutError:
+        logger.warning(f"[FETCH+GRADE] HARD TIMEOUT (>90s) for {sport_lower} — returning whatever finished")
+        return []
 
     return all_games
 
@@ -2367,7 +2382,24 @@ async def grade_game_endpoint(request: GradeRequest):
 @app.post("/api/analyze")
 async def analyze_games(request: AnalyzeRequest):
     """Deep analysis: call AI models for crowdsource grades + Kimi gatekeeper.
-    Two-tier system -- this is the SLOW path triggered by 'Analyze All'."""
+    Two-tier system -- this is the SLOW path triggered by 'Analyze All'.
+
+    Hard 450s top-level ceiling so the request can NEVER hang forever. This
+    is below the cron's 480s per-request budget, so the cron always gets a
+    response (success, partial, or error) and moves to the next game.
+    """
+    try:
+        return await asyncio.wait_for(_analyze_games_impl(request), timeout=450)
+    except asyncio.TimeoutError:
+        logger.warning(f"[ANALYZE] HARD TIMEOUT (>450s) for sport={request.sport} game_id={request.game_id}")
+        return {
+            "error": "analyze hard timeout (>450s)",
+            "sport": request.sport,
+            "game_id": request.game_id,
+        }
+
+
+async def _analyze_games_impl(request: AnalyzeRequest):
     sport_lower = request.sport.lower()
 
     # Get cached games — match the same cache key format as /api/games
