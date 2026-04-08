@@ -755,19 +755,35 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         if ump.get("name"):
             pitcher_block += f"HP UMPIRE: {ump['name']} | "
 
-    # NHL-specific: starting goalies + tier label. NOTE: data_fetch.py does not
-    # yet populate starting_goalie on NHL profiles, so this will mostly render
-    # as "TBD (UNKNOWN)". TODO(next session): populate starting_goalie in the
-    # data layer so this prompt block actually lights up.
+    # NHL-specific: starting goalies + tier label + SV% when ESPN provides it.
+    # data_fetch._fetch_nhl_starting_goalies now populates starting_goalie on
+    # the profile for game-day matchups, so this block actually lights up.
     goalie_block = ""
     if sport == "NHL":
-        h_g = (hp.get("starting_goalie") or {}).get("name", "TBD")
-        a_g = (ap.get("starting_goalie") or {}).get("name", "TBD")
+        h_goalie = hp.get("starting_goalie") or {}
+        a_goalie = ap.get("starting_goalie") or {}
+        h_g = h_goalie.get("name", "TBD")
+        a_g = a_goalie.get("name", "TBD")
         a_gt = _nhl_goalie_tier_label(a_g)
         h_gt = _nhl_goalie_tier_label(h_g)
+
+        def _svp_txt(gd: dict) -> str:
+            sv = gd.get("sv_pct") or gd.get("SV%") or gd.get("svp")
+            try:
+                if sv is None:
+                    return ""
+                s = float(sv)
+                if s > 1.5:
+                    s /= 100.0
+                if 0.80 <= s <= 1.0:
+                    return f", {s:.3f} SV%"
+            except (ValueError, TypeError):
+                pass
+            return ""
+
         goalie_block = (
-            f"STARTING GOALIES — {away}: {a_g} ({a_gt}) | "
-            f"{home}: {h_g} ({h_gt}) | "
+            f"STARTING GOALIES — {away}: {a_g} ({a_gt}{_svp_txt(a_goalie)}) | "
+            f"{home}: {h_g} ({h_gt}{_svp_txt(h_goalie)}) | "
         )
 
     # Sport-appropriate example reasoning so the prompt example doesn't leak
