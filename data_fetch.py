@@ -1032,16 +1032,37 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
         fetch_team_profile(away, sport, odds_key, opponent_name=home),
     )
 
-    # ── MLB: starting pitcher must be fetched per-game (not from team cache)
-    # because the same team can appear in only one game per day but the
-    # team-level profile cache can leak a stale value across calls. Always
-    # overwrite with the game-specific probables from today's scoreboard.
+    # ── MLB: starting pitcher must be fetched per-game. PRIMARY source is the
+    # official MLB Stats API (free, no key) which gives real probable pitcher
+    # names + season ERA/WHIP/K9/BB9. ESPN scoreboard is the fallback when
+    # StatsAPI is unavailable or doesn't have the matchup yet.
     if sport == "MLB":
-        sp_map = await _fetch_mlb_starting_pitchers(home, away, game_data.get("scheduledAt", ""))
-        if sp_map.get("home"):
-            home_profile["starting_pitcher"] = sp_map["home"]
-        if sp_map.get("away"):
-            away_profile["starting_pitcher"] = sp_map["away"]
+        scheduled_at = game_data.get("scheduledAt", "")
+        statsapi_data = None
+        try:
+            from data_fetch_mlb import fetch_mlb_game_profile
+            statsapi_data = await fetch_mlb_game_profile(home, away, scheduled_at)
+        except Exception as e:
+            logger.warning(f"[MLB] StatsAPI primary fetch failed for {away}@{home}: {e}")
+
+        if statsapi_data:
+            # Authoritative path — real probable pitchers with real stats
+            if statsapi_data.get("home_starting_pitcher"):
+                home_profile["starting_pitcher"] = statsapi_data["home_starting_pitcher"]
+            if statsapi_data.get("away_starting_pitcher"):
+                away_profile["starting_pitcher"] = statsapi_data["away_starting_pitcher"]
+            # Stash weather + umpire on the game dict for the prompt builder
+            if statsapi_data.get("weather"):
+                game_data["weather"] = statsapi_data["weather"]
+            if statsapi_data.get("umpire"):
+                game_data["umpire"] = statsapi_data["umpire"]
+        else:
+            # ESPN fallback (existing path)
+            sp_map = await _fetch_mlb_starting_pitchers(home, away, scheduled_at)
+            if sp_map.get("home"):
+                home_profile["starting_pitcher"] = sp_map["home"]
+            if sp_map.get("away"):
+                away_profile["starting_pitcher"] = sp_map["away"]
     odds = game_data.get("odds", {})
 
     # Pull injuries from profiles for the grade engine
