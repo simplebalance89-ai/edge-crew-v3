@@ -4,6 +4,7 @@ Live odds → ESPN profiles → Grade Engine → Two-Lane Display
 """
 
 import asyncio
+import time
 import json
 import logging
 import os
@@ -455,15 +456,15 @@ AZURE_HOSTS = {
 # 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
 # token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
 REAL_AI_MODELS = [
-    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_tokens",            "max_tokens": 2000},
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000},
     {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000},
     {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000},
     {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500},
-    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 3500},
-    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 4000},
+    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 6000},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000},
     {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000},
-    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 2000},
-    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 4000},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000},
+    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000},
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000},
     {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000},
 ]
@@ -476,9 +477,16 @@ _THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 def _strip_think_tags(text: str) -> str:
     if not text:
         return text
-    text = _THINK_TAG_RE.sub("", text)
-    # If unclosed <think>, drop everything from it onward
-    text = _THINK_OPEN_RE.sub("", text)
+    # If a </think> exists, take everything AFTER the last one — that's the
+    # actual answer. This survives token-cutoff cases where <think> never
+    # closed cleanly OR where a reasoning model emitted a giant think block.
+    lower = text.lower()
+    last_close = lower.rfind("</think>")
+    if last_close != -1:
+        return text[last_close + len("</think>"):].strip()
+    # No closing tag at all. If there's an opening <think>, strip from there.
+    if "<think>" in lower:
+        return _THINK_OPEN_RE.sub("", text).strip()
     return text.strip()
 
 
@@ -736,8 +744,16 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
         return None
 
     raw_content = content
+    try:
+        finish_reason = choice0.get("finish_reason")
+    except Exception:
+        finish_reason = None
     cleaned = _strip_think_tags(content)
     cleaned = re.sub(r"```(?:json)?", "", cleaned, flags=re.IGNORECASE).replace("```", "").strip()
+    # If think-stripping wiped everything (truncated reasoning model), fall
+    # back to scanning the raw content for a balanced JSON object.
+    if not cleaned:
+        cleaned = raw_content
 
     # Extraction strategies in order: full parse → last balanced → first balanced
     data = None
@@ -760,12 +776,12 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
 
     if not data:
         logger.warning(
-            f"[REAL-AI NOJSON] {display} dep={deployment} tried=full,last,first "
-            f"raw[:200]={raw_content[:200]!r}"
+            f"[REAL-AI NOJSON] {display} dep={deployment} finish={finish_reason} "
+            f"raw_len={len(raw_content)} raw[:300]={raw_content[:300]!r}"
         )
         return None
     else:
-        logger.info(f"[REAL-AI OK] {display} strategy={strategy}")
+        logger.info(f"[REAL-AI OK] {display} strategy={strategy} finish={finish_reason}")
 
     try:
         grade = float(data.get("grade", 0))
@@ -2139,6 +2155,49 @@ async def analyze_games(request: AnalyzeRequest):
     _cache[cache_key] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
 
     return enriched
+
+
+@app.get("/api/probe-models")
+async def probe_models():
+    """Debug: ping every model in REAL_AI_MODELS with a trivial prompt and
+    report which respond. One curl away from knowing what's broken."""
+    probe_prompt = (
+        "GAME: Team A @ Team B | spread -3.5 | total 220. "
+        "Output ONLY one line of JSON: "
+        '{"grade": 6.0, "pick": "Home", "reasoning": "test"}'
+    )
+    async def _probe(m):
+        t0 = time.time()
+        try:
+            result = await _call_azure_model(m, probe_prompt)
+            ok = result is not None
+            return {
+                "display": m["display"],
+                "deployment": m["deployment"],
+                "host": m["host"],
+                "token_param": m.get("token_param"),
+                "max_tokens": m.get("max_tokens"),
+                "ok": ok,
+                "ms": int((time.time() - t0) * 1000),
+                "result": result,
+            }
+        except Exception as e:
+            return {
+                "display": m["display"],
+                "deployment": m["deployment"],
+                "host": m["host"],
+                "ok": False,
+                "ms": int((time.time() - t0) * 1000),
+                "error": f"{type(e).__name__}: {str(e)[:200]}",
+            }
+    results = await asyncio.gather(*[_probe(m) for m in REAL_AI_MODELS])
+    ok_count = sum(1 for r in results if r.get("ok"))
+    return {
+        "total": len(results),
+        "ok": ok_count,
+        "fail": len(results) - ok_count,
+        "models": results,
+    }
 
 
 @app.get("/api/engine/status")
