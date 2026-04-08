@@ -475,17 +475,17 @@ AZURE_HOSTS = {
 # 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
 # token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
 REAL_AI_MODELS = [
-    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000},
-    {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000},
-    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000},
-    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500},
-    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 6000},
-    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000},
-    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000},
-    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000},
-    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000},
-    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000},
-    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000},
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
+    {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 120},
+    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 60},
+    {"display": "Kimi K2 Thinking",  "deployment": "Kimi-K2-Thinking",                      "host": "gce", "persona": "tactical structural scout",                  "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 120},
+    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
+    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000, "timeout": 240},
+    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 60},
 ]
 
 
@@ -698,15 +698,21 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     # Reasoning models need much more headroom because reasoning tokens count toward the budget.
     token_budget = int(model_cfg.get("max_tokens") or 2000)
 
+    # Reasoning models (token_param == max_completion_tokens) reject temperature!=1
+    # and reject response_format at the Azure param-validation layer (HTTP 400 in
+    # ~450ms). Omit those fields entirely for reasoning models.
+    is_reasoning = model_cfg.get("token_param") == "max_completion_tokens"
+
     # Build URL + body shape based on host format
     if host_cfg["format"] == "openai_v1":
         url = host_cfg["url"]
         body = {
             "model": deployment,
             "messages": messages,
-            "temperature": 0.3,
             model_cfg.get("token_param", "max_tokens"): token_budget,
         }
+        if not is_reasoning:
+            body["temperature"] = 0.3
         headers = {
             "api-key": host_cfg["key"],
             "Authorization": f"Bearer {host_cfg['key']}",
@@ -729,9 +735,10 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
         url = host_cfg["url_template"].format(deployment=deployment)
         body = {
             "messages": messages,
-            "temperature": 0.3,
             model_cfg.get("token_param", "max_tokens"): token_budget,
         }
+        if not is_reasoning:
+            body["temperature"] = 0.3
         headers = {
             "api-key": host_cfg["key"],
             "Authorization": f"Bearer {host_cfg['key']}",
@@ -739,7 +746,8 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
         }
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        req_timeout = float(model_cfg.get("timeout") or 60)
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
             resp = await client.post(url, headers=headers, json=body)
     except Exception as e:
         logger.warning(f"[REAL-AI EXC] {display}: {type(e).__name__}: {str(e)[:160]}")
