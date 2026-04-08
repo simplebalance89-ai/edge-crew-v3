@@ -90,6 +90,55 @@ def _extract_pitcher_stats(player_id: int) -> dict:
     return out
 
 
+def _extract_pitcher_handedness(player_id: int) -> str:
+    """Return 'L' or 'R' for a pitcher, empty string on failure."""
+    import statsapi
+    try:
+        info = statsapi.lookup_player(player_id)
+        if info and isinstance(info, list) and info:
+            ph = (info[0].get("pitchHand") or {}).get("code") or ""
+            return ph.upper()[:1]
+    except Exception as e:
+        logger.debug(f"[StatsAPI] handedness lookup failed for {player_id}: {e}")
+    return ""
+
+
+def _extract_team_splits_vs_hand(team_id: int, opp_pitcher_hand: str) -> dict:
+    """Pull team batting splits vs LHP / RHP. Returns {ops, avg, woba} when
+    available. opp_pitcher_hand is 'L' or 'R'."""
+    import statsapi
+    out: dict = {}
+    if not opp_pitcher_hand:
+        return out
+    split_code = "vl" if opp_pitcher_hand == "L" else "vr"  # vs LHP / vs RHP
+    try:
+        team_stats = statsapi.team_stats(
+            team_id, group="hitting", type="statSplits", sitCodes=split_code
+        )
+        for s_block in team_stats.get("stats", []):
+            s = s_block.get("stats", {}) or {}
+            if s.get("ops") is not None:
+                try:
+                    out["ops_vs_hand"] = float(s["ops"])
+                except (ValueError, TypeError):
+                    pass
+            if s.get("avg") is not None:
+                try:
+                    out["avg_vs_hand"] = float(s["avg"])
+                except (ValueError, TypeError):
+                    pass
+            if s.get("homeRuns") is not None:
+                try:
+                    out["hr_vs_hand"] = int(s["homeRuns"])
+                except (ValueError, TypeError):
+                    pass
+            out["vs_hand"] = opp_pitcher_hand
+            break
+    except Exception as e:
+        logger.debug(f"[StatsAPI] team splits fetch failed for {team_id}/{split_code}: {e}")
+    return out
+
+
 def _extract_bullpen_stats(team_id: int) -> dict:
     """Pull bullpen workload + effectiveness via team_leaders + season-to-date.
     Returns {era_L30, ip_L7, fresh_arms_count} when available, empty on failure.
@@ -275,6 +324,36 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         except (ValueError, TypeError):
             pass
 
+    # Lineup vs SP hand — each team bats vs the OPPOSING starter's hand
+    home_lineup_vs_hand: dict = {}
+    away_lineup_vs_hand: dict = {}
+    away_sp_hand = ""
+    home_sp_hand = ""
+    if away_p_id:
+        try:
+            away_sp_hand = _extract_pitcher_handedness(int(away_p_id))
+            if away_sp_hand:
+                away_sp["hand"] = away_sp_hand
+        except (ValueError, TypeError):
+            pass
+    if home_p_id:
+        try:
+            home_sp_hand = _extract_pitcher_handedness(int(home_p_id))
+            if home_sp_hand:
+                home_sp["hand"] = home_sp_hand
+        except (ValueError, TypeError):
+            pass
+    if home_team_id and away_sp_hand:
+        try:
+            home_lineup_vs_hand = _extract_team_splits_vs_hand(int(home_team_id), away_sp_hand)
+        except (ValueError, TypeError):
+            pass
+    if away_team_id and home_sp_hand:
+        try:
+            away_lineup_vs_hand = _extract_team_splits_vs_hand(int(away_team_id), home_sp_hand)
+        except (ValueError, TypeError):
+            pass
+
     return {
         "source": "mlb_statsapi",
         "game_pk": game_pk,
@@ -282,6 +361,8 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         "away_bullpen": away_bullpen,
         "home_starting_pitcher": home_sp,
         "away_starting_pitcher": away_sp,
+        "home_lineup_vs_hand": home_lineup_vs_hand,
+        "away_lineup_vs_hand": away_lineup_vs_hand,
         "weather": weather,
         "umpire": umpire,
     }

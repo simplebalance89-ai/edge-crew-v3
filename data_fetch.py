@@ -1148,6 +1148,11 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
                 home_profile["bullpen"] = statsapi_data["home_bullpen"]
             if statsapi_data.get("away_bullpen"):
                 away_profile["bullpen"] = statsapi_data["away_bullpen"]
+            # Lineup vs SP hand — OPS / AVG / HR vs the opposing starter's hand
+            if statsapi_data.get("home_lineup_vs_hand"):
+                home_profile["lineup_vs_hand"] = statsapi_data["home_lineup_vs_hand"]
+            if statsapi_data.get("away_lineup_vs_hand"):
+                away_profile["lineup_vs_hand"] = statsapi_data["away_lineup_vs_hand"]
             # Stash weather + umpire on the game dict for the prompt builder
             if statsapi_data.get("weather"):
                 game_data["weather"] = statsapi_data["weather"]
