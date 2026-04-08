@@ -522,6 +522,17 @@ async def _fetch_schedule_data(client: httpx.AsyncClient, sport: str, league: st
         # Fixture congestion (matches in +/- 10 days)
         result["matches_in_10d"] = _calc_congestion(events)
 
+        # NBA quarter splits L10 — Phoenix-blows-leads variable.
+        # Only run for basketball/nba; cheap when linescores are inline,
+        # falls back to per-event summary for L5 if not.
+        if sport == "basketball" and league == "nba":
+            try:
+                nba_q = await _calc_nba_quarters(client, completed, team_name, sport, league)
+                if nba_q:
+                    result["nba_quarters"] = nba_q
+            except Exception as nq_err:
+                logger.debug(f"[ESPN] NBA quarter calc failed for {team_name}: {nq_err}")
+
     except Exception as e:
         logger.debug(f"[ESPN] Schedule fetch failed for team {team_id}: {e}")
 
@@ -1153,6 +1164,19 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
                 home_profile["lineup_vs_hand"] = statsapi_data["home_lineup_vs_hand"]
             if statsapi_data.get("away_lineup_vs_hand"):
                 away_profile["lineup_vs_hand"] = statsapi_data["away_lineup_vs_hand"]
+            # REAL runs scored / allowed L10 from StatsAPI walk — overrides the
+            # synthetic-from-win% ppg_L5 / opp_ppg_L5 that was record laundering.
+            # Now MLB off_ranking and def_ranking grade against actual recent runs.
+            home_runs = statsapi_data.get("home_runs_l10") or {}
+            away_runs = statsapi_data.get("away_runs_l10") or {}
+            if home_runs.get("runs_for_l10") is not None:
+                home_profile["ppg_L5"] = home_runs["runs_for_l10"]
+                home_profile["opp_ppg_L5"] = home_runs.get("runs_against_l10", 0)
+                home_profile["ppg_synthetic"] = False  # explicit: this is REAL
+            if away_runs.get("runs_for_l10") is not None:
+                away_profile["ppg_L5"] = away_runs["runs_for_l10"]
+                away_profile["opp_ppg_L5"] = away_runs.get("runs_against_l10", 0)
+                away_profile["ppg_synthetic"] = False
             # Stash weather + umpire on the game dict for the prompt builder
             if statsapi_data.get("weather"):
                 game_data["weather"] = statsapi_data["weather"]
