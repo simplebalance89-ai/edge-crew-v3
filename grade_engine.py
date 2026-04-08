@@ -449,43 +449,75 @@ def _goalie_tier(name: str) -> str | None:
     return None
 
 
+def _normalize_sv_pct(val) -> float | None:
+    """Normalize a SV% value into a 0-1 fraction, or None if junk."""
+    if val is None:
+        return None
+    try:
+        s = float(val)
+    except (ValueError, TypeError):
+        return None
+    if s > 1.5:
+        s /= 100.0
+    if 0.80 <= s <= 1.0:
+        return s
+    return None
+
+
 def score_starting_goalie(game: dict, side: str) -> tuple:
-    """NHL goalie scorer — biggest single factor in NHL outcomes.
-    Uses SV% differential when available, falls back to elite hardcoded list."""
+    """NHL goalie scorer — tier-first, SV% bonus on top.
+
+    Mirrors the MLB pitcher template (commit d707fc8): tier delta is the
+    primary signal, SV% is a small modifier. Returns (score, note).
+    Score ladder:
+      ELITE  -> 8.5 base
+      GOOD   -> 7.0 base
+      UNKNOWN-> 5.0 base
+    SV% modifier on OUR goalie:
+      > .920 -> +0.5
+      > .910 -> +0.25
+      < .890 -> -0.5
+    Then add +/- 1.5 for the opponent tier delta so this variable is a
+    relative matchup score, not just a solo grade.
+    """
     profile = game.get(f"{side}_profile", {}) or {}
     opp_profile = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}) or {}
     g = profile.get("starting_goalie") or {}
     opp_g = opp_profile.get("starting_goalie") or {}
 
-    # If both sides have SV% data, score on differential (higher SV% = better)
-    sv = g.get("sv_pct") or g.get("SV%") or g.get("svp")
-    opp_sv = opp_g.get("sv_pct") or opp_g.get("SV%") or opp_g.get("svp")
-    if sv and opp_sv:
-        try:
-            # Normalize to fraction if given as e.g. 91.5
-            s = float(sv); os_ = float(opp_sv)
-            if s > 1: s /= 100
-            if os_ > 1: os_ /= 100
-            diff = s - os_  # positive = our goalie better
-            # Each .010 SV% diff ~ 1.5 grade points
-            return _clamp(5 + diff * 150), f"SV% {s:.3f} vs {os_:.3f}"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: hardcoded elite list lookup
     our_name = g.get("name") or profile.get("recent_starter") or profile.get("goalie")
     opp_name = opp_g.get("name") or opp_profile.get("recent_starter") or opp_profile.get("goalie")
+
+    if not our_name and not opp_name:
+        return 5, "No goalie data"
+
+    tier_base = {"ELITE": 8.5, "GOOD": 7.0, None: 5.0}
     our_tier = _goalie_tier(our_name) if our_name else None
     opp_tier = _goalie_tier(opp_name) if opp_name else None
 
-    if our_tier or opp_tier:
-        tier_val = {"ELITE": 8.5, "GOOD": 6.5, None: 5.0}
-        ours = tier_val[our_tier]
-        theirs = tier_val[opp_tier]
-        score = 5 + (ours - theirs)
-        return _clamp(score), f"Goalie: {our_name or '?'}({our_tier or 'avg'}) vs {opp_name or '?'}({opp_tier or 'avg'})"
+    score = tier_base[our_tier]
 
-    return 5, "No goalie data"
+    # SV% bonus on our goalie (tier ladder remains primary)
+    our_sv = _normalize_sv_pct(g.get("sv_pct") or g.get("SV%") or g.get("svp"))
+    opp_sv = _normalize_sv_pct(opp_g.get("sv_pct") or opp_g.get("SV%") or opp_g.get("svp"))
+    if our_sv is not None:
+        if our_sv > 0.920:
+            score += 0.5
+        elif our_sv > 0.910:
+            score += 0.25
+        elif our_sv < 0.890:
+            score -= 0.5
+
+    # Opponent delta (half weight so tier remains primary)
+    score += (tier_base[our_tier] - tier_base[opp_tier]) * 0.3
+
+    our_label = our_tier or "UNKNOWN"
+    opp_label = opp_tier or "UNKNOWN"
+    our_sv_txt = f" {our_sv:.3f}" if our_sv is not None else ""
+    opp_sv_txt = f" {opp_sv:.3f}" if opp_sv is not None else ""
+    note = (f"Goalie: {our_name or '?'} ({our_label}{our_sv_txt}) "
+            f"vs {opp_name or '?'} ({opp_label}{opp_sv_txt})")
+    return _clamp(score), note
 
 
 def score_fixture_congestion(game: dict, side: str) -> tuple:
