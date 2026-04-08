@@ -108,6 +108,36 @@ HITTER_FRIENDLY_PARKS = {
     "Cincinnati Reds", "Philadelphia Phillies", "Arizona Diamondbacks",
 }
 
+# NHL goalie tiers — re-imported from grade_engine so the AI prompt can surface
+# who's actually in net. Fallback to inline copies if import fails (keeps
+# main.py resilient to grade_engine refactors).
+try:
+    from grade_engine import ELITE_NHL_GOALIES, GOOD_NHL_GOALIES  # type: ignore
+except Exception:  # pragma: no cover — defensive fallback
+    ELITE_NHL_GOALIES = {
+        "hellebuyck", "sorokin", "vasilevskiy", "shesterkin", "bobrovsky",
+        "saros", "markstrom", "oettinger", "hill", "kuemper", "swayman",
+        "ullmark", "skinner", "demko", "hart", "gibson", "talbot", "stolarz",
+    }
+    GOOD_NHL_GOALIES = {
+        "andersen", "husso", "husarek", "mrazek", "binnington", "georgiev",
+        "jarry", "blackwood", "vanecek", "lyon", "merzlikins", "kahkonen",
+        "wedgewood", "samsonov", "knight", "varlamov", "luukkonen",
+    }
+
+
+def _nhl_goalie_tier_label(name: str) -> str:
+    """Return uppercase tier label for an NHL goalie name."""
+    if not name or name == "TBD":
+        return "UNKNOWN"
+    parts = name.strip().lower().split()
+    last = parts[-1] if parts else ""
+    if last in ELITE_NHL_GOALIES:
+        return "ELITE"
+    if last in GOOD_NHL_GOALIES:
+        return "GOOD"
+    return "AVERAGE"
+
 PREFERRED_BOOKS = ["fanduel", "draftkings", "betmgm", "caesars", "bovada"]
 
 _cache: Dict[str, dict] = {}
@@ -657,12 +687,36 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     if h2h and h2h != "0-0":
         form_block += f"H2H — {home} {h2h} vs {away} this season | "
 
-    # MLB-specific: include probable starting pitchers (huge variable, models have training knowledge)
+    # MLB-specific: include probable starting pitchers with tier label from
+    # KNOWN_ACE_PITCHERS so LLMs see pitcher quality, not just the raw name.
     pitcher_block = ""
     if sport == "MLB":
         h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
         a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
-        pitcher_block = f"PROBABLE PITCHERS — {away}: {a_sp} | {home}: {h_sp} | "
+        a_tier = _pitcher_tier(a_sp).upper()
+        h_tier = _pitcher_tier(h_sp).upper()
+        pitcher_block = (
+            f"PROBABLE PITCHERS — {away}: {a_sp} ({a_tier}) | "
+            f"{home}: {h_sp} ({h_tier}) | "
+        )
+        # Park factor — hitter-friendly parks boost offense / hurt pitchers.
+        if home in HITTER_FRIENDLY_PARKS:
+            pitcher_block += "PARK: hitter-friendly (boost offense, hurt pitchers) | "
+
+    # NHL-specific: starting goalies + tier label. NOTE: data_fetch.py does not
+    # yet populate starting_goalie on NHL profiles, so this will mostly render
+    # as "TBD (UNKNOWN)". TODO(next session): populate starting_goalie in the
+    # data layer so this prompt block actually lights up.
+    goalie_block = ""
+    if sport == "NHL":
+        h_g = (hp.get("starting_goalie") or {}).get("name", "TBD")
+        a_g = (ap.get("starting_goalie") or {}).get("name", "TBD")
+        a_gt = _nhl_goalie_tier_label(a_g)
+        h_gt = _nhl_goalie_tier_label(h_g)
+        goalie_block = (
+            f"STARTING GOALIES — {away}: {a_g} ({a_gt}) | "
+            f"{home}: {h_g} ({h_gt}) | "
+        )
 
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
@@ -670,6 +724,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{spread_label} {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
         f"{form_block}"
         f"{pitcher_block}"
+        f"{goalie_block}"
         f"{injury_block}"
         f"engine composite: {our_score:.1f}/10. "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "

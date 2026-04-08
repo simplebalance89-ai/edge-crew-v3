@@ -158,8 +158,66 @@ Return ONLY valid JSON:
 Be specific. Name players, cite records, reference the odds. Don't hedge — take a side."""
 
 
-def _build_batch_prompt(games: list, model_personality: str) -> str:
+# Hardcoded knowledge — mirrored from app/main.py and grade_engine so batch
+# prompts surface the same pitcher/park/goalie context the live per-game
+# prompt uses. Keep these in sync.
+_BATCH_ACE_PITCHERS = {
+    "skubal", "yamamoto", "cole", "sale", "wheeler", "burnes", "degrom",
+    "snell", "kirby", "cease", "strider", "glasnow", "webb", "eovaldi",
+    "crochet", "nola", "verlander", "fried", "skenes", "imanaga", "brown",
+    "lugo", "ragans", "greene", "bibee", "senga", "castillo",
+}
+_BATCH_GOOD_PITCHERS = {
+    "gausman", "gallen", "lopez", "pivetta", "civale", "kikuchi", "manaea",
+    "detmers", "houck", "bradley", "freeland", "heaney", "berrios", "bassitt",
+    "rodon", "quintana", "wacha", "suarez", "means", "lyles", "smith",
+    "severino", "lynn",
+}
+_BATCH_BAD_PITCHERS = {"schlittler"}
+_BATCH_HITTER_PARKS = {
+    "Colorado Rockies", "Texas Rangers", "Boston Red Sox",
+    "Cincinnati Reds", "Philadelphia Phillies", "Arizona Diamondbacks",
+}
+_BATCH_ELITE_GOALIES = {
+    "hellebuyck", "sorokin", "vasilevskiy", "shesterkin", "bobrovsky",
+    "saros", "markstrom", "oettinger", "hill", "kuemper", "swayman",
+    "ullmark", "skinner", "demko", "hart", "gibson", "talbot", "stolarz",
+}
+_BATCH_GOOD_GOALIES = {
+    "andersen", "husso", "husarek", "mrazek", "binnington", "georgiev",
+    "jarry", "blackwood", "vanecek", "lyon", "merzlikins", "kahkonen",
+    "wedgewood", "samsonov", "knight", "varlamov", "luukkonen",
+}
+
+
+def _batch_pitcher_tier(name: str) -> str:
+    if not name or name == "TBD":
+        return "UNKNOWN"
+    last = name.strip().split()[-1].lower().rstrip(".,")
+    if last in _BATCH_ACE_PITCHERS:
+        return "ACE"
+    if last in _BATCH_GOOD_PITCHERS:
+        return "GOOD"
+    if last in _BATCH_BAD_PITCHERS:
+        return "BAD"
+    return "UNKNOWN"
+
+
+def _batch_goalie_tier(name: str) -> str:
+    if not name or name == "TBD":
+        return "UNKNOWN"
+    parts = name.strip().lower().split()
+    last = parts[-1] if parts else ""
+    if last in _BATCH_ELITE_GOALIES:
+        return "ELITE"
+    if last in _BATCH_GOOD_GOALIES:
+        return "GOOD"
+    return "AVERAGE"
+
+
+def _build_batch_prompt(games: list, model_personality: str, sport: str = "") -> str:
     """Build prompt for batch grading multiple games."""
+    sport_u = (sport or "").upper()
     game_blocks = []
     for i, game in enumerate(games):
         home = game.get("homeTeam", "?")
@@ -167,6 +225,8 @@ def _build_batch_prompt(games: list, model_personality: str) -> str:
         odds = game.get("odds", {})
         hp = game.get("home_profile", {})
         ap = game.get("away_profile", {})
+        # Per-game sport fallback in case caller passes "" (mixed batch).
+        g_sport = (game.get("sport") or sport_u).upper()
 
         lines = [f"GAME {i+1}: {away} @ {home}"]
         if odds:
@@ -182,6 +242,27 @@ def _build_batch_prompt(games: list, model_personality: str) -> str:
             if prof.get("is_b2b"): parts.append("B2B")
             if parts:
                 lines.append(f"  {tag}: {' | '.join(parts)}")
+
+        # MLB: pitcher tiers + park factor.
+        if g_sport == "MLB":
+            h_sp = (hp.get("starting_pitcher") or {}).get("name", "TBD")
+            a_sp = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+            lines.append(
+                f"  PITCHERS: {away} {a_sp} ({_batch_pitcher_tier(a_sp)}) | "
+                f"{home} {h_sp} ({_batch_pitcher_tier(h_sp)})"
+            )
+            if home in _BATCH_HITTER_PARKS:
+                lines.append("  PARK: hitter-friendly (boost offense, hurt pitchers)")
+
+        # NHL: starting goalies + tiers. Data layer often leaves this TBD —
+        # TODO: populate starting_goalie in profile dicts (next session).
+        if g_sport == "NHL":
+            h_g = (hp.get("starting_goalie") or {}).get("name", "TBD")
+            a_g = (ap.get("starting_goalie") or {}).get("name", "TBD")
+            lines.append(
+                f"  GOALIES: {away} {a_g} ({_batch_goalie_tier(a_g)}) | "
+                f"{home} {h_g} ({_batch_goalie_tier(h_g)})"
+            )
 
         game_blocks.append("\n".join(lines))
 
@@ -378,7 +459,7 @@ async def crowdsource_grade(games: list, sport: str) -> Dict[str, list]:
         personality = model_cfg["personality"]
 
         # Build batch prompt
-        prompt = _build_batch_prompt(games, personality)
+        prompt = _build_batch_prompt(games, personality, sport)
 
         # Call model — route to correct endpoint
         endpoint_type = model_cfg.get("endpoint", "ai_services")
