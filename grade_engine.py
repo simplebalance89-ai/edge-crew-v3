@@ -374,6 +374,48 @@ def score_park_factor(game: dict, side: str) -> tuple:
     return 5.0, f"neutral park ({pf})"
 
 
+def score_bullpen(game: dict, side: str) -> tuple:
+    """Score MLB bullpen quality + freshness from MLB Stats API L7 walk.
+
+    Reads profile.bullpen which is populated by data_fetch_mlb._extract_bullpen_stats
+    and contains: bullpen_era_L7, bullpen_ip_L7, bullpen_tired_arms,
+    bullpen_relief_games, team_era_season.
+
+    Returns (score, note). Score 5.0 = neutral, lower for tired/bad bullpens,
+    higher for fresh/elite bullpens.
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    bp = profile.get("bullpen") or {}
+    if not bp or "bullpen_era_L7" not in bp:
+        return 5.0, "no bullpen data"
+
+    era_L7 = bp.get("bullpen_era_L7", 4.00)
+    tired = bp.get("bullpen_tired_arms", 0)
+    season_era = bp.get("team_era_season")
+
+    # Score from L7 ERA: lower = better. Anchor 4.00 = neutral 5.0.
+    # Each 0.5 ERA difference moves score by ~1 point.
+    score = 5.0 + (4.00 - era_L7) * 2.0
+    # Penalty for tired arms (3+ appearances in 7 days)
+    if tired >= 3:
+        score -= 1.5
+    elif tired >= 2:
+        score -= 0.75
+    # Bonus when L7 ERA is significantly better than season ERA (heating up)
+    if season_era and era_L7 < season_era - 0.75:
+        score += 0.5
+    # Penalty when L7 ERA is significantly worse than season (slumping)
+    if season_era and era_L7 > season_era + 0.75:
+        score -= 0.5
+
+    note = f"bullpen ERA L7 {era_L7}"
+    if tired:
+        note += f", {tired} tired arm{'s' if tired != 1 else ''}"
+    if season_era:
+        note += f" (season {season_era})"
+    return _clamp(score), note
+
+
 # Sentinel prefix in the note so grade_game can mark this variable unavailable
 _SP_PROXY_NOTE_PREFIX = "SP unknown"
 
@@ -521,19 +563,33 @@ def score_starting_goalie(game: dict, side: str) -> tuple:
 
 
 def score_fixture_congestion(game: dict, side: str) -> tuple:
-    p = game.get(f"{side}_profile", {})
-    opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {})
-    our = p.get("matches_in_10d") or p.get("congestion_10d")
-    their = opp.get("matches_in_10d") or opp.get("congestion_10d")
-    if our and their:
-        try:
-            diff = int(their) - int(our)
-            if diff >= 2: return 9, f"Them:{their} vs Us:{our} in 10d"
-            elif diff >= 1: return 7, f"Them:{their} vs Us:{our} in 10d"
-            return 5, f"Even:{our} matches"
-        except (ValueError, TypeError):
-            pass
-    return 5, "No congestion data"
+    p = game.get(f"{side}_profile", {}) or {}
+    opp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}) or {}
+    # Treat 0 as a real value (not missing). Only fall through when BOTH sides
+    # return None. Previously `our or ...` dropped zeros and forced a flat 5
+    # for every match, and the function had no penalty branch (our > their
+    # never scored below 5).
+    our = p.get("matches_in_10d")
+    if our is None:
+        our = p.get("congestion_10d")
+    their = opp.get("matches_in_10d")
+    if their is None:
+        their = opp.get("congestion_10d")
+    if our is None and their is None:
+        return 5, "No congestion data"
+    try:
+        our_i = int(our or 0)
+        their_i = int(their or 0)
+    except (ValueError, TypeError):
+        return 5, "No congestion data"
+    diff = their_i - our_i  # positive = opp more congested = edge for us
+    if diff >= 3: return 9, f"Them:{their_i} vs Us:{our_i} in 10d (heavy legs opp)"
+    if diff == 2: return 8, f"Them:{their_i} vs Us:{our_i} in 10d"
+    if diff == 1: return 6.5, f"Them:{their_i} vs Us:{our_i} in 10d"
+    if diff == 0: return 5, f"Even:{our_i} matches in 10d"
+    if diff == -1: return 3.5, f"Them:{their_i} vs Us:{our_i} in 10d"
+    if diff == -2: return 2, f"Them:{their_i} vs Us:{our_i} in 10d (heavy legs us)"
+    return 1.5, f"Them:{their_i} vs Us:{our_i} in 10d (very heavy legs us)"
 
 
 def score_motivation(game: dict, side: str) -> tuple:
@@ -694,7 +750,8 @@ SPORT_VARIABLES = {
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "MLB": {
-        "starting_pitcher": 10, "star_player": 8, "off_ranking": 7, "def_ranking": 7,
+        "starting_pitcher": 10, "bullpen": 8, "star_player": 8,
+        "off_ranking": 7, "def_ranking": 7,
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
@@ -819,6 +876,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "park_factor":
             score, note = score_park_factor(game, pick_side)
             if "unknown park" in note:
+                available = False
+        elif var_name == "bullpen":
+            score, note = score_bullpen(game, pick_side)
+            if note == "no bullpen data":
                 available = False
         else:
             score, note = 5, f"{var_name}: no data"
