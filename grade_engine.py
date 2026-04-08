@@ -106,7 +106,7 @@ def score_recent_form(profile: dict, opp: dict) -> tuple:
     w, l = _parse_record(profile.get("L5"))
     ow, _ = _parse_record(opp.get("L5"))
     streak = profile.get("streak", "")
-    margin = profile.get("margin_L5", 0)
+    margin = profile.get("L5_margin", profile.get("margin_L5", 0))
     if w + l == 0:
         return 5, "No L5 data"
     base = {5: 9, 4: 7, 3: 5, 2: 3.5, 1: 2, 0: 1}.get(w, 5)
@@ -249,19 +249,93 @@ def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
 
 # ─── Sport-Specific Variables ──────────────────────────────────────────────────
 
+# Hardcoded MLB pitcher tiers — primary driver of MLB grading.
+# Originally lived in app/main.py for NRFI use; copied here so the main
+# grade engine can use the same domain knowledge.
+KNOWN_ACE_PITCHERS = {
+    # Aces (+3 tier value)
+    "skubal": "ace", "yamamoto": "ace", "cole": "ace", "sale": "ace", "wheeler": "ace",
+    "burnes": "ace", "degrom": "ace", "snell": "ace", "kirby": "ace", "cease": "ace",
+    "strider": "ace", "glasnow": "ace", "webb": "ace", "eovaldi": "ace", "crochet": "ace",
+    "nola": "ace", "verlander": "ace", "fried": "ace", "skenes": "ace", "imanaga": "ace",
+    "brown": "ace", "lugo": "ace", "ragans": "ace", "greene": "ace", "bibee": "ace",
+    "senga": "ace", "castillo": "ace",
+    # Good (+1.5 tier value)
+    "gausman": "good", "gallen": "good", "lopez": "good", "pivetta": "good", "civale": "good",
+    "kikuchi": "good", "manaea": "good", "detmers": "good", "houck": "good", "bradley": "good",
+    "freeland": "good", "heaney": "good", "berrios": "good", "bassitt": "good", "rodon": "good",
+    "quintana": "good", "wacha": "good", "suarez": "good", "means": "good", "lyles": "good",
+    "smith": "good", "severino": "good", "lynn": "good",
+    # Bad (-2 tier value)
+    "schlittler": "bad",
+}
+
+PITCHER_TIER_VALUES = {"ace": 3.0, "good": 1.5, "unknown": 0.0, "bad": -2.0}
+
+
+def _pitcher_tier_lookup(name: str) -> str:
+    """Return ace/good/unknown/bad for a pitcher last name."""
+    if not name or name == "TBD":
+        return "unknown"
+    last = name.strip().split()[-1].lower().rstrip(".,")
+    return KNOWN_ACE_PITCHERS.get(last, "unknown")
+
+
+# Hitter-friendly parks (boost offense for hitters, hurt pitchers)
+HITTER_FRIENDLY_PARKS_GE = {
+    "Colorado Rockies", "Cincinnati Reds", "Texas Rangers",
+    "New York Yankees", "Boston Red Sox", "Philadelphia Phillies",
+}
+
+
+# Sentinel prefix in the note so grade_game can mark this variable unavailable
+_SP_PROXY_NOTE_PREFIX = "SP unknown"
+
+
 def score_starting_pitcher(game: dict, side: str) -> tuple:
-    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {})
-    opp_sp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}).get("starting_pitcher", {})
-    era = sp.get("era") or sp.get("ERA")
-    opp_era = opp_sp.get("era") or opp_sp.get("ERA")
-    if era and opp_era:
-        try:
-            diff = float(opp_era) - float(era)
-            return _clamp(5 + diff * 1.2), f"SP ERA {era} vs {opp_era}"
-        except (ValueError, TypeError):
-            pass
-    margin = game.get(f"{side}_profile", {}).get("margin_L5", 0)
-    return _clamp(5 + margin / 3), f"SP proxy from margin: {margin:+.1f}"
+    """Score MLB starting pitcher. Tier (Skenes/Skubal/etc.) is the primary
+    driver — ERA differential is a tiebreaker bonus, margin proxy is the
+    last resort and marks itself unavailable via note prefix so the engine
+    knows not to trust it.
+    """
+    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {}) or {}
+    opp_sp = game.get(f"{'away' if side == 'home' else 'home'}_profile", {}).get("starting_pitcher", {}) or {}
+
+    our_name = sp.get("name", "")
+    opp_name = opp_sp.get("name", "")
+    our_tier = _pitcher_tier_lookup(our_name)
+    opp_tier = _pitcher_tier_lookup(opp_name)
+    our_val = PITCHER_TIER_VALUES[our_tier]
+    opp_val = PITCHER_TIER_VALUES[opp_tier]
+
+    # Primary driver: tier delta (Skenes vs unknown = +3.0 → score 8.0)
+    if our_tier != "unknown" or opp_tier != "unknown":
+        delta = our_val - opp_val
+        score = _clamp(5 + delta)
+        # ERA bonus (small) when both ERAs available
+        era = sp.get("era") or sp.get("ERA")
+        opp_era = opp_sp.get("era") or opp_sp.get("ERA")
+        if era and opp_era:
+            try:
+                era_diff = float(opp_era) - float(era)
+                score = _clamp(score + era_diff * 0.3)
+            except (ValueError, TypeError):
+                pass
+        # Park penalty: pitcher at hitter-friendly park
+        home_team = game.get("homeTeam", "")
+        if side == "home" and home_team in HITTER_FRIENDLY_PARKS_GE:
+            score = _clamp(score - 0.5)
+        return score, f"SP tier: {our_name or '?'} ({our_tier}) vs {opp_name or '?'} ({opp_tier})"
+
+    # Last resort: margin proxy. Read CORRECT field name (L5_margin, not
+    # margin_L5 — old bug). Note prefix marks this as unavailable.
+    profile = game.get(f"{side}_profile", {}) or {}
+    margin = profile.get("L5_margin", profile.get("margin_L5", 0)) or 0
+    try:
+        margin = float(margin)
+    except (ValueError, TypeError):
+        margin = 0.0
+    return _clamp(5 + margin / 3), f"{_SP_PROXY_NOTE_PREFIX} ({our_name or 'TBD'} vs {opp_name or 'TBD'}) — proxy from L5 margin {margin:+.1f}"
 
 
 # Hardcoded elite/good NHL goalies — fallback when SV% data not available.
@@ -616,6 +690,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_motivation(game, pick_side)
         elif var_name == "starting_pitcher":
             score, note = score_starting_pitcher(game, pick_side)
+            if note.startswith(_SP_PROXY_NOTE_PREFIX):
+                available = False
         elif var_name == "goalie":
             score, note = score_starting_goalie(game, pick_side)
             if note == "No goalie data":
