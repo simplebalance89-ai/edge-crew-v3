@@ -378,8 +378,13 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         for o in markets.get("h2h", []):
             if o["name"] == event["home_team"]: ml_home = o.get("price")
             elif o["name"] == event["away_team"]: ml_away = o.get("price")
+        spread_price_home = spread_price_away = None
         for o in markets.get("spreads", []):
-            if o["name"] == event["home_team"]: spread = o.get("point")
+            if o["name"] == event["home_team"]:
+                spread = o.get("point")
+                spread_price_home = o.get("price")
+            elif o["name"] == event["away_team"]:
+                spread_price_away = o.get("price")
         for o in markets.get("totals", []):
             if o["name"] == "Over": total = o.get("point")
         if ml_home is not None:
@@ -401,7 +406,12 @@ def _parse_event(event: dict, sport_label: str) -> dict:
     # Arbitrage detection across all bookmakers
     arb = _detect_arbitrage(event)
 
-    odds = {"spread": spread or 0, "total": total or 0, "mlHome": ml_home or 0, "mlAway": ml_away or 0}
+    odds = {
+        "spread": spread or 0, "total": total or 0,
+        "mlHome": ml_home or 0, "mlAway": ml_away or 0,
+        "spreadPriceHome": spread_price_home or -110,
+        "spreadPriceAway": spread_price_away or -110,
+    }
     return {
         "id": event["id"],
         "sport": sport_label,
@@ -1249,7 +1259,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
             pick_side = "away"
 
     # EV calculation
-    ev = calculate_ev(enriched or game, pick_side, conv["consensusScore"])
+    ev = calculate_ev(enriched or game, pick_side, conv["consensusScore"], pick)
 
     # Peter's Rules
     pr = peter_rules(enriched or game, pick_side)

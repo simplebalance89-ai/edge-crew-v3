@@ -853,21 +853,31 @@ def grade_to_true_prob(final_score: float, implied_prob: float | None = None) ->
     return max(0.15, min(0.90, true_prob))
 
 
-def calculate_ev(game: dict, pick_side: str, consensus_final: float) -> dict:
+def calculate_ev(game: dict, pick_side: str, consensus_final: float, pick: dict | None = None) -> dict:
     """
     Calculate expected value for a pick.
-    EV = (true_prob * payout) - ((1 - true_prob) * stake)
-    Kelly = (bp - q) / b
+    Branches by pick type: spread picks price against the spread juice (cover prob),
+    moneyline picks price against the ML (win prob). Mixing them produces nonsense
+    (e.g. -3500 ML vs a -18 spread looks like -7% EV when the spread itself is +EV).
     """
     odds = game.get("odds", {})
+    pick_type = (pick or {}).get("type", "ml")
 
-    # Get moneyline for our pick side
-    if pick_side == "home":
-        ml = odds.get("mlHome") or odds.get("home_ml_current") or odds.get("ml_home")
+    if pick_type == "spread":
+        # Use the spread price for the pick side (default -110 if missing)
+        if pick_side == "home":
+            ml = odds.get("spreadPriceHome") or -110
+        else:
+            ml = odds.get("spreadPriceAway") or -110
     else:
-        ml = odds.get("mlAway") or odds.get("away_ml_current") or odds.get("ml_away")
+        if pick_side == "home":
+            ml = odds.get("mlHome") or odds.get("home_ml_current") or odds.get("ml_home")
+        else:
+            ml = odds.get("mlAway") or odds.get("away_ml_current") or odds.get("ml_away")
 
     implied_prob = ml_to_implied_prob(ml)
+    # For spread picks, true_prob is interpreted as cover probability (anchored on
+    # the ~52.4% spread implied), not win probability against the ML.
     true_prob = grade_to_true_prob(consensus_final, implied_prob)
 
     if implied_prob is None or ml is None or ml == 0:
