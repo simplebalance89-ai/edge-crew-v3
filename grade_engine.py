@@ -374,6 +374,35 @@ def score_park_factor(game: dict, side: str) -> tuple:
     return 5.0, f"neutral park ({pf})"
 
 
+def score_lineup_vs_hand(game: dict, side: str) -> tuple:
+    """Score the picking team's offensive matchup vs the opposing starter's
+    handedness. Reads profile.lineup_vs_hand which is populated by
+    data_fetch_mlb._extract_team_splits_vs_hand.
+
+    Anchors at .720 OPS = neutral 5.0. Each .020 OPS difference moves the
+    score by ~1 point. Returns (score, note).
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    splits = profile.get("lineup_vs_hand") or {}
+    if not splits or splits.get("ops_vs_hand") is None:
+        return 5.0, "no lineup vs hand splits"
+
+    ops = splits.get("ops_vs_hand", 0.720)
+    hand = splits.get("vs_hand", "?")
+    avg = splits.get("avg_vs_hand")
+    hr = splits.get("hr_vs_hand")
+
+    # OPS .720 = neutral 5.0, each .020 above moves +1
+    score = 5.0 + (ops - 0.720) * 50
+
+    note_parts = [f"OPS {ops:.3f} vs {hand}HP"]
+    if avg is not None:
+        note_parts.append(f"AVG .{int(avg*1000):03d}")
+    if hr is not None:
+        note_parts.append(f"{hr} HR")
+    return _clamp(score), " ".join(note_parts)
+
+
 def score_bullpen(game: dict, side: str) -> tuple:
     """Score MLB bullpen quality + freshness from MLB Stats API L7 walk.
 
@@ -959,7 +988,7 @@ SPORT_VARIABLES = {
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "MLB": {
-        "starting_pitcher": 10, "bullpen": 8, "star_player": 8,
+        "starting_pitcher": 10, "bullpen": 8, "lineup_vs_hand": 7, "star_player": 8,
         "off_ranking": 7, "def_ranking": 7,
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
@@ -1100,6 +1129,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "bullpen":
             score, note = score_bullpen(game, pick_side)
             if note == "no bullpen data":
+                available = False
+        elif var_name == "lineup_vs_hand":
+            score, note = score_lineup_vs_hand(game, pick_side)
+            if note == "no lineup vs hand splits":
                 available = False
         else:
             score, note = 5, f"{var_name}: no data"
