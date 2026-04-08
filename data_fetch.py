@@ -270,6 +270,80 @@ async def _fetch_rest_days(client: httpx.AsyncClient, sport: str, league: str,
 
 # ── Injuries ──────────────────────────────────────────────────────────
 
+_SEASON_COMMENT_PATTERNS = (
+    "season-ending",
+    "out for the season",
+    "out for the year",
+    "out indefinitely",
+    "season-ending surgery",
+    "ruled out for the season",
+    "entire season",
+    "entire 2025-26",
+    "entire 2026-27",
+    "miss the remainder",
+    "remainder of the season",
+)
+_FRESH_COMMENT_PATTERNS = (
+    "day-to-day",
+    "day to day",
+    "questionable",
+    "probable",
+    "game-time decision",
+    "game time decision",
+)
+
+
+def _classify_injury_freshness(inj: dict) -> str:
+    """Classify injury into FRESH | RECENT | ESTABLISHED | SEASON.
+
+    FRESH       = no return date / within 7d / day-to-day language (new edge)
+    RECENT      = 8-21 days out (partial edge)
+    ESTABLISHED = 22-90 days (already priced in)
+    SEASON      = >90 days, torn ACL w/o recovery, season-ending language (ghost)
+    """
+    comment = (inj.get("comment") or "").lower()
+    return_date_raw = (inj.get("return_date") or "").strip()
+
+    # Hard SEASON matches from comment
+    for pat in _SEASON_COMMENT_PATTERNS:
+        if pat in comment:
+            return "SEASON"
+    if "torn acl" in comment and "recovering" not in comment:
+        return "SEASON"
+
+    # Parse return date
+    days_out = None
+    if return_date_raw:
+        try:
+            # ESPN format: "2026-10-01T07:00Z" or "2026-10-01"
+            rd_clean = return_date_raw.replace("Z", "+00:00")
+            try:
+                rd = datetime.fromisoformat(rd_clean)
+            except ValueError:
+                rd = datetime.strptime(return_date_raw[:10], "%Y-%m-%d")
+            if rd.tzinfo is None:
+                rd = rd.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days_out = (rd - now).total_seconds() / 86400.0
+        except Exception:
+            days_out = None
+
+    # FRESH short-circuits if day-to-day / questionable language is present
+    for pat in _FRESH_COMMENT_PATTERNS:
+        if pat in comment:
+            return "FRESH"
+
+    if days_out is None:
+        return "FRESH"  # no return date = treat as fresh / unknown
+    if days_out <= 7:
+        return "FRESH"
+    if days_out <= 21:
+        return "RECENT"
+    if days_out <= 90:
+        return "ESTABLISHED"
+    return "SEASON"
+
+
 async def _fetch_injuries(client: httpx.AsyncClient, sport: str, league: str,
                            team_id: str) -> List[dict]:
     """Fetch injuries from ESPN core API + follow $refs. Cached."""
@@ -362,6 +436,7 @@ async def _fetch_injuries(client: httpx.AsyncClient, sport: str, league: str,
                 r["status"] = "QUESTIONABLE"
             elif "DAY" in s:
                 r["status"] = "DAY_TO_DAY"
+            r["freshness"] = _classify_injury_freshness(r)
 
         injuries = injury_records
     except Exception as e:
