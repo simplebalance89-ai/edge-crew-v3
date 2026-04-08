@@ -568,8 +568,22 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     total = odds.get("total", 0)
     ml_h = odds.get("mlHome", 0)
     ml_a = odds.get("mlAway", 0)
-    inj_home_str = _format_injuries(inj.get("home", []))
-    inj_away_str = _format_injuries(inj.get("away", []))
+    # Guardrail: distinguish "we have injury data and nobody is OUT" from
+    # "we have NO injury data at all" so models stop hallucinating names.
+    inj_present = isinstance(inj, dict) and ("home" in inj or "away" in inj)
+    if inj_present:
+        inj_home_str = _format_injuries(inj.get("home", []))
+        inj_away_str = _format_injuries(inj.get("away", []))
+        injury_block = (
+            f"INJURIES (verified ESPN data — DO NOT invent or speculate about any "
+            f"player not listed here) — {home}: {inj_home_str} | {away}: {inj_away_str} | "
+        )
+    else:
+        injury_block = (
+            "INJURY DATA: UNAVAILABLE — DO NOT SPECULATE ABOUT INJURED PLAYERS. "
+            "Do not mention any player by name as injured, out, or absent. "
+            "Grade purely on records, form, rest, and line. | "
+        )
     rest = game.get("rest", {}) or {}
     shifts = game.get("shifts", {}) or {}
 
@@ -622,7 +636,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{spread_label} {spread:+.1f} | total {total} | ML {away}: {ml_a} / {home}: {ml_h} | "
         f"{form_block}"
         f"{pitcher_block}"
-        f"INJURIES — {home}: {inj_home_str} | {away}: {inj_away_str} | "
+        f"{injury_block}"
         f"engine composite: {our_score:.1f}/10. "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
