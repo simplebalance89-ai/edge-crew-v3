@@ -651,6 +651,12 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         direction = home if sd < 0 else away
         form_block += f"LINE — spread moved {abs(sd):.1f} toward {direction} | "
 
+    # Head-to-head season series — huge ignored variable. Frame from home's
+    # perspective since home_profile.h2h_season = home wins-losses vs opponent.
+    h2h = str(hp.get("h2h_season") or "").strip()
+    if h2h and h2h != "0-0":
+        form_block += f"H2H — {home} {h2h} vs {away} this season | "
+
     # MLB-specific: include probable starting pitchers (huge variable, models have training knowledge)
     pitcher_block = ""
     if sport == "MLB":
