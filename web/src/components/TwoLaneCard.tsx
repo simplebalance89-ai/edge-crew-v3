@@ -353,13 +353,17 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <div className="mt-2 text-center text-[10px] font-bold text-purple-300">{gutToast}</div>
         )}
         {pick && pick.side && (
-          <div className="mt-3 flex items-center justify-center gap-2">
+          <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
             <div className="inline-block bg-[#D4A017]/15 border border-[#D4A017]/30 text-[#D4A017] text-sm font-extrabold py-2 px-4 rounded-lg">
               {pick.side}
               {pick.type === 'spread' && pick.line !== 0 ? ` ${pick.line > 0 ? '+' : ''}${pick.line}` : ` ${pick.type.toUpperCase()}`}
               {pick.sizing && pick.sizing !== 'No Play' ? ` (${pick.sizing})` : ''}
             </div>
-            {user && (
+            {(pick.killed === true || pick.sizing === 'PASS') ? (
+              <div className="inline-block bg-red-600/20 border-2 border-red-500/70 text-red-300 text-[11px] font-black tracking-wider py-2 px-3 rounded-lg uppercase">
+                KILLED — DO NOT BET (CONFLICT/KILL flag active)
+              </div>
+            ) : user && (
               locked ? (
                 <span className="flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">
                   <Check size={12} /> Locked!
