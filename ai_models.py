@@ -524,48 +524,100 @@ Your action — be AGGRESSIVE, not a rubber stamp:
 Return ONLY valid JSON:
 {{"action": "CONFIRM|CHALLENGE|BOOST", "adjustment": 0, "reason": "1-2 sentences taking a clear side — WHY", "verdict_tag": "SHORT_TAG"}}"""
 
-    # aoai_classic URL — same shape app/main.py uses for gce-hosted deployments.
-    url = (
-        "https://gce-personal-resource.openai.azure.com/openai/deployments/"
-        "Kimi-K2-Thinking/chat/completions?api-version=2024-12-01-preview"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                url,
-                headers={"api-key": key, "Content-Type": "application/json"},
-                json={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 6000,
-                    "response_format": {"type": "json_object"},
-                },
-            )
-            if resp.status_code != 200:
-                err = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                logger.warning(f"[GATEKEEPER] {err}")
-                return {"action": "?", "adjustment": 0, "reason": err}
+    # Two-stage gatekeeper:
+    #   1) Kimi K2 Thinking — preferred (deep reasoning, can challenge convergence)
+    #   2) GPT-4.1 fallback — fast deterministic backup if Kimi times out
+    # Both routed through gce-personal-resource (aoai_classic format).
+    base = "https://gce-personal-resource.openai.azure.com/openai/deployments"
+    api_v = "api-version=2024-12-01-preview"
+    headers = {"api-key": key, "Content-Type": "application/json"}
+
+    def _parse_gk_response(content: str, finish: str) -> dict | None:
+        """Strip think tags, find JSON, return parsed dict or None on failure."""
+        if not content:
+            return None
+        if "</think>" in content.lower():
+            content = content[content.lower().rfind("</think>") + len("</think>"):].strip()
+        if not content:
+            return None
+        try:
+            s = content.find("{")
+            e = content.rfind("}") + 1
+            return json.loads(content[s:e] if s >= 0 and e > s else content)
+        except Exception:
+            return None
+
+    async def _try_gatekeeper(deployment: str, max_tokens: int, timeout: int,
+                              include_temp: bool) -> tuple[dict | None, str]:
+        """Returns (parsed_result_or_None, error_string)."""
+        url = f"{base}/{deployment}/chat/completions?{api_v}"
+        body = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+        }
+        # Reasoning models (Kimi K2 Thinking) reject temperature; only include
+        # for the GPT-4.1 fallback path.
+        if include_temp:
+            body["temperature"] = 0.3
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException:
+            return None, f"timeout (>{timeout}s)"
+        except Exception as e:
+            return None, f"{type(e).__name__}: {e}"
+        if resp.status_code != 200:
+            return None, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        try:
             data = resp.json()
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             finish = data.get("choices", [{}])[0].get("finish_reason", "")
-            # Strip <think> reasoning block if present
-            if "</think>" in content.lower():
-                content = content[content.lower().rfind("</think>") + len("</think>"):].strip()
-            if not content:
-                return {"action": "?", "adjustment": 0,
-                        "reason": f"Empty content (finish_reason={finish})"}
-            try:
-                # Find JSON object in content
-                s = content.find("{")
-                e = content.rfind("}") + 1
-                result = json.loads(content[s:e] if s >= 0 and e > s else content)
-            except Exception as pe:
-                return {"action": "?", "adjustment": 0,
-                        "reason": f"Parse error: {pe} | raw={content[:120]}"}
-            logger.info(f"[GATEKEEPER] {away}@{home}: {result.get('action')} adj={result.get('adjustment')} — {str(result.get('reason',''))[:80]}")
-            return result
-    except httpx.TimeoutException:
-        return {"action": "?", "adjustment": 0, "reason": "Gatekeeper timeout (>120s)"}
-    except Exception as e:
-        logger.warning(f"[GATEKEEPER] Failed: {e}")
-        return {"action": "?", "adjustment": 0, "reason": f"Gatekeeper error: {e}"}
+        except Exception as e:
+            return None, f"json parse: {e}"
+        parsed = _parse_gk_response(content, finish)
+        if parsed is None:
+            return None, f"empty/unparseable (finish={finish})"
+        return parsed, ""
+
+    # Stage 1: Kimi K2 Thinking — bumped timeout 120 -> 200s (matches model-path
+    # headroom), dropped response_format (reasoning models choke on it), dropped
+    # temperature (reasoning models reject it), kept max_tokens=6000 per Peter's
+    # call (the thinking budget IS the point).
+    result, kimi_err = await _try_gatekeeper(
+        deployment="Kimi-K2-Thinking",
+        max_tokens=6000,
+        timeout=200,
+        include_temp=False,
+    )
+    if result is not None:
+        logger.info(
+            f"[GATEKEEPER kimi] {away}@{home}: {result.get('action')} "
+            f"adj={result.get('adjustment')} — {str(result.get('reason',''))[:80]}"
+        )
+        return result
+
+    logger.warning(f"[GATEKEEPER kimi] FAIL ({kimi_err}); falling back to GPT-4.1")
+
+    # Stage 2: GPT-4.1 fallback — fast, deterministic, no think tokens.
+    result, gpt_err = await _try_gatekeeper(
+        deployment="gpt-41",
+        max_tokens=2000,
+        timeout=60,
+        include_temp=True,
+    )
+    if result is not None:
+        # Tag the result so the UI can show it came from the fallback.
+        result.setdefault("verdict_tag", "GPT4.1_FALLBACK")
+        result["fallback"] = True
+        logger.info(
+            f"[GATEKEEPER gpt-fallback] {away}@{home}: {result.get('action')} "
+            f"adj={result.get('adjustment')} — {str(result.get('reason',''))[:80]}"
+        )
+        return result
+
+    logger.warning(f"[GATEKEEPER gpt-fallback] FAIL ({gpt_err})")
+    return {
+        "action": "?",
+        "adjustment": 0,
+        "reason": f"Both gatekeepers failed — kimi: {kimi_err} | gpt: {gpt_err}",
+    }
