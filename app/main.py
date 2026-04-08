@@ -305,30 +305,55 @@ def _apply_kill_override(pick: dict, conv: dict, pr: dict | None) -> None:
 
 
 def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> dict:
-    """Determine pick recommendation from convergence."""
+    """Determine pick recommendation from convergence.
+
+    The picked SIDE is whichever team the engine actually scored higher for
+    (our["pick_team"] / our["pick_side"]), NOT the spread favorite. The spread
+    is only used to compute the LINE for the picked side (flipped when the
+    engine prefers the underdog). Earlier versions blindly returned the spread
+    favorite which created false CONFLICT/KILL flags whenever the engine
+    disagreed with the market.
+    """
     consensus = conv["consensusScore"]
     status = conv["status"]
     spread = odds.get("spread", 0)
     home = event.get("homeTeam", "") or event.get("home_team", "")
     away = event.get("awayTeam", "") or event.get("away_team", "")
 
-    if spread <= 0:
-        fav, dog, fav_spread = home, away, spread
+    # Engine-preferred side is the source of truth. Fall back to spread fav
+    # only if the engine didn't expose one (legacy / fallback grade paths).
+    pick_side = (our or {}).get("pick_side")
+    pick_team = (our or {}).get("pick_team")
+
+    if pick_team and pick_team in (home, away):
+        side = pick_team
+    elif pick_side == "home":
+        side = home
+    elif pick_side == "away":
+        side = away
     else:
-        fav, dog, fav_spread = away, home, -spread
+        # No engine signal — last-resort fall back to spread favorite so we
+        # never crash, but log it so we can find the path that needs fixing.
+        side = home if spread <= 0 else away
+        logger.warning(
+            f"[PICK] no engine pick_side for {away} @ {home}; falling back to spread fav={side}"
+        )
+
+    # Line: spread is from the home team's perspective. If we're picking
+    # home we use the spread as-is; if we're picking away we flip the sign.
+    line = spread if side == home else -spread
 
     if status in ("LOCK", "ALIGNED") and consensus >= 7.0:
-        return {"side": fav, "type": "spread", "line": fav_spread,
+        return {"side": side, "type": "spread", "line": line,
                 "confidence": min(95, int(consensus * 10 + 10)), "sizing": "Strong Play"}
     elif status == "ALIGNED" and consensus >= 6.0:
-        return {"side": fav, "type": "spread", "line": fav_spread,
+        return {"side": side, "type": "spread", "line": line,
                 "confidence": min(80, int(consensus * 8 + 10)), "sizing": "Standard"}
     elif consensus >= 5.5:
-        return {"side": fav, "type": "ml", "line": 0,
+        return {"side": side, "type": "ml", "line": 0,
                 "confidence": min(70, int(consensus * 7)), "sizing": "Lean"}
     else:
-        # Always show a pick — low consensus = Lean on favorite ML
-        return {"side": fav, "type": "ml", "line": 0,
+        return {"side": side, "type": "ml", "line": 0,
                 "confidence": max(30, int(consensus * 6)), "sizing": "Lean"}
 
 
@@ -1431,6 +1456,12 @@ def _grade_combat_from_odds(odds: dict, game: dict, sport: str) -> dict:
     fav = fighter_a if (ml_home and ml_away and ml_home < ml_away) else fighter_b
     dog = fighter_b if fav == fighter_a else fighter_a
 
+    # Combat has no team-data side grading — the engine pick IS the favorite
+    # by ML. Encode that explicitly so downstream _compute_pick reads the
+    # same field name as the team-sport path instead of falling back to the
+    # spread-favorite shortcut.
+    fav_side = "home" if fav == fighter_a else "away"
+
     return {
         "grade": grade,
         "score": score,
@@ -1442,6 +1473,8 @@ def _grade_combat_from_odds(odds: dict, game: dict, sport: str) -> dict:
             f"Favorite: {fav}",
         ],
         "profiles": {},
+        "pick_side": fav_side,
+        "pick_team": fav,
         "variables": {
             "moneyline_gap": {"score": round(max(1, 10 - ml_diff / 50), 1), "name": "Moneyline Gap", "available": True},
             "line_value": {"score": score, "name": "Line Value", "available": True},
@@ -1612,6 +1645,12 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
                 "thesis": f"{len(best.get('chains_fired', []))} chains | {best['sizing']}",
                 "keyFactors": best.get("chains_fired", [])[:5],
                 "profiles": profiles,
+                # Engine's actual preferred side — fed into _compute_pick so
+                # the final pick always reflects what the engine recommended,
+                # not whatever team happens to be the spread favorite. This
+                # is the field that fixes the false-CONFLICT KILL flag.
+                "pick_side": best.get("pick_side"),
+                "pick_team": best.get("pick_team"),
                 "variables": {k: {"score": v["score"], "name": k.replace("_", " "), "available": v.get("available", True)}
                               for k, v in best.get("variables", {}).items()},
             }
