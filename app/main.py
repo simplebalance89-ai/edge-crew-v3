@@ -755,6 +755,22 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         if ump.get("name"):
             pitcher_block += f"HP UMPIRE: {ump['name']} | "
 
+        # Bullpen ERA L7 + tired arm count (from MLB StatsAPI 7-day walk)
+        h_bp = hp.get("bullpen") or {}
+        a_bp = ap.get("bullpen") or {}
+        if h_bp.get("bullpen_era_L7") is not None or a_bp.get("bullpen_era_L7") is not None:
+            def _bp_str(d: dict) -> str:
+                if not d or d.get("bullpen_era_L7") is None:
+                    return "?"
+                era = d["bullpen_era_L7"]
+                tired = d.get("bullpen_tired_arms", 0)
+                tag = " TIRED" if tired >= 3 else " STRESSED" if tired >= 2 else ""
+                return f"{era} ERA L7{tag}"
+            pitcher_block += (
+                f"BULLPEN — {away}: {_bp_str(a_bp)} | "
+                f"{home}: {_bp_str(h_bp)} | "
+            )
+
     # NHL-specific: starting goalies + tier label + SV% when ESPN provides it.
     # data_fetch._fetch_nhl_starting_goalies now populates starting_goalie on
     # the profile for game-day matchups, so this block actually lights up.
