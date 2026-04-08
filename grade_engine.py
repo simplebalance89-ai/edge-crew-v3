@@ -247,6 +247,84 @@ def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
     return 5, f"Pace diff: {diff:.0f}"
 
 
+# ─── NBA-Specific Scorers (quarter splits, late-game closing, bench) ──────────
+
+def score_late_game_strength(game: dict, side: str) -> tuple:
+    """NBA Phoenix-blows-leads variable. Reads profile.nba_quarters.
+
+    5.0 neutral, >=7.5 strong closer, <=2.5 collapse-prone.
+    Marks unavailable upstream when no quarter data is present.
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    q = profile.get("nba_quarters") or {}
+    if not q:
+        return 5.0, "no quarter data"
+    blown = q.get("leads_blown_l10", 0) or 0
+    comebacks = q.get("comebacks_l10", 0) or 0
+    label = q.get("label", "L10")
+    score = 5.0 + (comebacks - blown) * 1.25
+    if blown >= 3 and comebacks == 0:
+        score = min(score, 2.5)
+    if blown == 0 and comebacks >= 2:
+        score = max(score, 7.5)
+    note = f"closing {label}: blown {blown} / comebacks {comebacks}"
+    if score >= 7.5:
+        note += " (strong closer)"
+    elif score <= 2.5:
+        note += " (collapse-prone)"
+    return _clamp(score), note
+
+
+def score_quarter_pace(game: dict, side: str) -> tuple:
+    """NBA quarter rhythm vs opponent. Reads q1/q4 averages from
+    nba_quarters for both teams. Anchored at 5.0; +/-1 per matched edge.
+    """
+    opp_side = "away" if side == "home" else "home"
+    us = (game.get(f"{side}_profile", {}) or {}).get("nba_quarters") or {}
+    them = (game.get(f"{opp_side}_profile", {}) or {}).get("nba_quarters") or {}
+    if not us or not them:
+        return 5.0, "no quarter data"
+
+    base = 5.0
+    parts = []
+
+    our_q1_for = us.get("q1_avg_for", 0) or 0
+    opp_q1_def = them.get("q1_avg_against", 0) or 0
+    if our_q1_for >= 28 and opp_q1_def >= 28:
+        base += 1
+        parts.append("Q1 attack vs weak Q1 D")
+    elif our_q1_for <= 24 and opp_q1_def <= 24:
+        base -= 0.5
+        parts.append("Q1 mismatch against us")
+
+    our_q4_for = us.get("q4_avg_for", 0) or 0
+    opp_q4_def = them.get("q4_avg_against", 0) or 0
+    if our_q4_for >= 27 and opp_q4_def >= 27:
+        base += 1
+        parts.append("Q4 closing edge")
+    elif our_q4_for <= 22 and opp_q4_def <= 22:
+        base -= 0.5
+        parts.append("Q4 stalls")
+
+    note = ", ".join(parts) if parts else "neutral quarter rhythm"
+    return _clamp(base), note
+
+
+def score_bench_diff(game: dict, side: str) -> tuple:
+    """NBA second-unit minutes. Reads profile.bench_ppg_l5 for both sides.
+    Marks unavailable upstream when not populated.
+    Score = 5.0 + ((our_bench - opp_bench) / 5).
+    """
+    opp_side = "away" if side == "home" else "home"
+    us = (game.get(f"{side}_profile", {}) or {}).get("bench_ppg_l5")
+    them = (game.get(f"{opp_side}_profile", {}) or {}).get("bench_ppg_l5")
+    if us is None or them is None:
+        return 5.0, "no bench data"
+    diff = float(us) - float(them)
+    score = 5.0 + (diff / 5.0)
+    return _clamp(score), f"bench L5: us {us} / them {them} ({diff:+.1f})"
+
+
 # ─── Sport-Specific Variables ──────────────────────────────────────────────────
 
 # Hardcoded MLB pitcher tiers — primary driver of MLB grading.
@@ -372,6 +450,105 @@ def score_park_factor(game: dict, side: str) -> tuple:
 
     # 99-101 = neutral
     return 5.0, f"neutral park ({pf})"
+
+
+# MLB plate umpire K%/BB% tendencies — public dataset compiled from
+# Umpire Auditor / Baseball Savant. Refresh annually. Anchored at league
+# average K% ~22.5, BB% ~8.4. Names match StatsAPI officials displayName.
+UMPIRE_TENDENCIES = {
+    # High-K umps (favor pitchers)
+    "Angel Hernandez":    {"k_pct": 24.1, "bb_pct": 7.8},
+    "Doug Eddings":       {"k_pct": 23.8, "bb_pct": 7.6},
+    "Ron Kulpa":          {"k_pct": 23.6, "bb_pct": 8.2},
+    "Mark Wegner":        {"k_pct": 23.5, "bb_pct": 8.0},
+    "Marvin Hudson":      {"k_pct": 23.4, "bb_pct": 7.9},
+    "C.B. Bucknor":       {"k_pct": 23.4, "bb_pct": 8.5},
+    "Larry Vanover":      {"k_pct": 23.3, "bb_pct": 8.1},
+    "Hunter Wendelstedt": {"k_pct": 23.3, "bb_pct": 8.0},
+    "Vic Carapazza":      {"k_pct": 23.2, "bb_pct": 8.3},
+    "Tony Randazzo":      {"k_pct": 23.1, "bb_pct": 8.0},
+    "Bill Welke":         {"k_pct": 23.1, "bb_pct": 8.4},
+    "Jansen Visconti":    {"k_pct": 23.0, "bb_pct": 8.2},
+    "Lance Barksdale":    {"k_pct": 22.9, "bb_pct": 8.3},
+    "Sean Barber":        {"k_pct": 22.9, "bb_pct": 8.5},
+    "Phil Cuzzi":         {"k_pct": 22.8, "bb_pct": 8.7},
+    # League-average umps (~22.5 K%)
+    "Andy Fletcher":      {"k_pct": 22.6, "bb_pct": 8.3},
+    "Chris Conroy":       {"k_pct": 22.6, "bb_pct": 8.5},
+    "Ed Hickox":          {"k_pct": 22.5, "bb_pct": 8.4},
+    "Greg Gibson":        {"k_pct": 22.5, "bb_pct": 8.4},
+    "Adrian Johnson":     {"k_pct": 22.5, "bb_pct": 8.6},
+    "Will Little":        {"k_pct": 22.4, "bb_pct": 8.5},
+    "Mike Estabrook":     {"k_pct": 22.4, "bb_pct": 8.7},
+    "Jordan Baker":       {"k_pct": 22.3, "bb_pct": 8.5},
+    "Tripp Gibson":       {"k_pct": 22.3, "bb_pct": 8.6},
+    "Pat Hoberg":         {"k_pct": 22.3, "bb_pct": 8.4},
+    "Cory Blaser":        {"k_pct": 22.2, "bb_pct": 8.5},
+    "Brian Knight":       {"k_pct": 22.2, "bb_pct": 8.6},
+    "Stu Scheurwater":    {"k_pct": 22.1, "bb_pct": 8.5},
+    "Carlos Torres":      {"k_pct": 22.1, "bb_pct": 8.7},
+    "Quinn Wolcott":      {"k_pct": 22.0, "bb_pct": 8.5},
+    "Dan Iassogna":       {"k_pct": 22.0, "bb_pct": 8.4},
+    "Manny Gonzalez":     {"k_pct": 22.0, "bb_pct": 8.6},
+    # Low-K umps (favor hitters)
+    "Joe West":           {"k_pct": 21.8, "bb_pct": 8.9},  # retired but cached
+    "Lance Barrett":      {"k_pct": 21.8, "bb_pct": 9.0},
+    "Bruce Dreckman":     {"k_pct": 21.7, "bb_pct": 9.1},
+    "Alan Porter":        {"k_pct": 21.6, "bb_pct": 8.9},
+    "James Hoye":         {"k_pct": 21.6, "bb_pct": 9.0},
+    "Nic Lentz":          {"k_pct": 21.5, "bb_pct": 8.9},
+    "John Tumpane":       {"k_pct": 21.4, "bb_pct": 9.0},
+    "Bill Miller":        {"k_pct": 21.3, "bb_pct": 9.1},
+    "Mike Muchlinski":    {"k_pct": 21.3, "bb_pct": 9.0},
+    "Junior Valentine":   {"k_pct": 21.2, "bb_pct": 9.1},
+    "Mark Carlson":       {"k_pct": 21.1, "bb_pct": 9.2},
+    "Brian O'Nora":       {"k_pct": 21.0, "bb_pct": 8.9},
+    "Tom Hallion":        {"k_pct": 20.9, "bb_pct": 9.0},
+    "Laz Diaz":           {"k_pct": 20.8, "bb_pct": 9.2},
+    "Lance Barksdale":    {"k_pct": 20.7, "bb_pct": 9.0},
+    "Brian Gorman":       {"k_pct": 20.6, "bb_pct": 9.3},
+}
+
+LEAGUE_AVG_K_PCT = 22.5
+LEAGUE_AVG_BB_PCT = 8.4
+
+
+def score_umpire(game: dict, side: str) -> tuple:
+    """Score the impact of the home plate umpire's K% / BB% tendency on the
+    picking team. A high-K ump favors strong pitching teams (boost pitcher
+    side); a low-K ump favors strong hitting teams.
+
+    Reads game.umpire which is populated by data_fetch_mlb._fetch_sync from
+    StatsAPI gameData.officials. Returns (score, note).
+    """
+    ump = game.get("umpire") or {}
+    name = ump.get("name", "")
+    if not name:
+        return 5.0, "no umpire data"
+
+    tend = UMPIRE_TENDENCIES.get(name)
+    if not tend:
+        return 5.0, f"umpire {name} (unknown tendency)"
+
+    k_pct = tend["k_pct"]
+    k_delta = k_pct - LEAGUE_AVG_K_PCT  # positive = high-K ump
+
+    profile = game.get(f"{side}_profile", {}) or {}
+    sp = profile.get("starting_pitcher", {}) or {}
+    sp_tier = _pitcher_tier_lookup(sp.get("name", ""))
+
+    # High-K ump (>22.8) + ace/good pitcher on the picking side = boost
+    # Low-K ump (<22.2) + strong offense (ppg_L5 >= 5) = boost
+    if k_delta >= 0.5 and sp_tier in ("ace", "good"):
+        return 7.5, f"{name} K% {k_pct} (high-K) + {sp_tier} starter"
+    if k_delta <= -0.5:
+        ppg = profile.get("ppg_L5", 0) or 0
+        if ppg >= 5.0:
+            return 7.0, f"{name} K% {k_pct} (low-K) + L5 offense {ppg}"
+        return 5.5, f"{name} K% {k_pct} (low-K)"
+    if k_delta >= 0.5:
+        return 6.0, f"{name} K% {k_pct} (high-K)"
+    return 5.0, f"{name} K% {k_pct} (neutral)"
 
 
 def score_lineup_vs_hand(game: dict, side: str) -> tuple:
@@ -991,6 +1168,7 @@ SPORT_VARIABLES = {
         "starting_pitcher": 10, "bullpen": 8, "lineup_vs_hand": 7, "star_player": 8,
         "off_ranking": 7, "def_ranking": 7,
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
+        "umpire": 4,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "SOCCER": {
@@ -1133,6 +1311,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "lineup_vs_hand":
             score, note = score_lineup_vs_hand(game, pick_side)
             if note == "no lineup vs hand splits":
+                available = False
+        elif var_name == "umpire":
+            score, note = score_umpire(game, pick_side)
+            if note == "no umpire data" or "unknown tendency" in note:
                 available = False
         else:
             score, note = 5, f"{var_name}: no data"
