@@ -2013,46 +2013,25 @@ async def analyze_games(request: AnalyzeRequest):
         real_list = real_res if (not isinstance(real_res, Exception) and real_res) else []
         real_by_display = {m.get("model"): m for m in real_list}
 
-        # Build math fallback keyed by model display name
-        math_list = _generate_ai_models(game, game.get("odds", {}) or {}, our_score)
-        math_by_display = {m.get("model"): m for m in math_list}
-
         ai_grades_list = []
-        home_team = game.get("homeTeam", "Home")
-        away_team = game.get("awayTeam", "Away")
-        odds_local = game.get("odds", {}) or {}
-        spread_local = odds_local.get("spread", 0)
-        # Default pick = home if home is favored (spread < 0), else away
-        default_pick = home_team if spread_local <= 0 else away_team
         for disp in expected_displays:
             if disp in real_by_display:
                 m = real_by_display[disp]
                 m["source"] = "real"
                 ai_grades_list.append(m)
                 real_ok_total += 1
-            elif disp in math_by_display:
-                m = dict(math_by_display[disp])
-                m["source"] = "math_fallback"
-                ai_grades_list.append(m)
-                real_fail_total += 1
             else:
-                # No real and no math fallback for this display name — synthesize a stub
-                # so the UI panel doesn't show empty slots.
-                stub_score = round(max(3.0, min(9.0, our_score)), 1)
-                stub_grade = "F"
-                for threshold, g in GRADE_MAP:
-                    if stub_score >= threshold:
-                        stub_grade = g
-                        break
+                # No silent fallback. Show a FAIL card so the UI never displays a
+                # math/stub grade under a real model's name.
                 ai_grades_list.append({
                     "model": disp,
-                    "grade": stub_grade,
-                    "score": stub_score,
-                    "confidence": 50,
-                    "thesis": f"Engine score mirrored ({stub_score:.1f}/10) — model unavailable.",
-                    "pick": default_pick,
+                    "grade": "—",
+                    "score": 0,
+                    "confidence": 0,
+                    "thesis": "Model call failed — no grade contributed to consensus.",
+                    "pick": None,
                     "key_factors": [],
-                    "source": "stub",
+                    "source": "fail",
                 })
                 real_fail_total += 1
 
@@ -2064,10 +2043,11 @@ async def analyze_games(request: AnalyzeRequest):
 
         # If we got AI model grades, compute a blended AI score from them
         if ai_grades_list:
-            valid_scores = [m.get("score", 0) for m in ai_grades_list if m.get("score", 0) > 0]
+            valid_models = [m for m in ai_grades_list if m.get("source") == "real" and m.get("score", 0) > 0]
+            valid_scores = [m["score"] for m in valid_models]
             if valid_scores:
                 avg_score = round(sum(valid_scores) / len(valid_scores), 1)
-                avg_conf = int(sum(m.get("confidence", 50) for m in ai_grades_list) / len(ai_grades_list))
+                avg_conf = int(sum(m.get("confidence", 50) for m in valid_models) / len(valid_models))
                 blended_grade = "F"
                 for threshold, g in GRADE_MAP:
                     if avg_score >= threshold:

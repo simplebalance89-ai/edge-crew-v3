@@ -186,11 +186,9 @@ export default function GameDetailPage() {
                       <span className="text-xs font-black text-[#00D4AA] uppercase">{m.model}</span>
                       {(() => {
                         const src = (m as any).source || 'real';
-                        const label = src === 'real' ? 'LIVE' : src === 'math_fallback' ? 'MATH' : 'STUB';
+                        const label = src === 'real' ? 'LIVE' : 'FAIL';
                         const cls = src === 'real'
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : src === 'math_fallback'
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                           : 'bg-rose-500/20 text-rose-300 border-rose-500/40';
                         return <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${cls}`}>{label}</span>;
                       })()}
