@@ -339,9 +339,12 @@ def _compute_pick(event: dict, odds: dict, our: dict, ai: dict, conv: dict) -> d
             f"[PICK] no engine pick_side for {away} @ {home}; falling back to spread fav={side}"
         )
 
-    # Line: spread is from the home team's perspective. If we're picking
-    # home we use the spread as-is; if we're picking away we flip the sign.
-    line = spread if side == home else -spread
+    # Line: by frontend convention (TwoLaneCard.tsx), odds.spread is the
+    # AWAY team's point spread — homeLine = -spread, awayLine = spread.
+    # So if we're picking home, the line is the negated spread; if away,
+    # the line is the spread as-is. Pirates (home) -1.5 favorite has
+    # odds.spread = +1.5 (Padres' line), so home line = -1.5.
+    line = -spread if side == home else spread
 
     if status in ("LOCK", "ALIGNED") and consensus >= 7.0:
         return {"side": side, "type": "spread", "line": line,
