@@ -483,6 +483,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDEN_KEY", "")
 AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 
 AZURE_HOSTS = {
     "gce": {
@@ -500,6 +501,11 @@ AZURE_HOSTS = {
         "key": GEMINI_API_KEY,
         "format": "gemini",
     },
+    "perplexity": {
+        "url": "https://api.perplexity.ai/chat/completions",
+        "key": PERPLEXITY_API_KEY,
+        "format": "openai_v1",
+    },
 }
 
 # 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
@@ -516,6 +522,7 @@ REAL_AI_MODELS = [
     {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000, "timeout": 180},
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 60},
+    {"display": "Perplexity Sonar",  "deployment": "sonar",                                  "host": "perplexity","persona": "real-time web research, contrarian to consensus", "token_param": "max_tokens", "max_tokens": 2000, "timeout": 90},
 ]
 
 
