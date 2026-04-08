@@ -771,6 +771,19 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
                 f"{home}: {_bp_str(h_bp)} | "
             )
 
+        # Lineup vs SP hand — OPS splits vs the opposing starter's handedness
+        h_lvh = hp.get("lineup_vs_hand") or {}
+        a_lvh = ap.get("lineup_vs_hand") or {}
+        if h_lvh.get("ops_vs_hand") is not None or a_lvh.get("ops_vs_hand") is not None:
+            def _lvh_str(d: dict) -> str:
+                if not d or d.get("ops_vs_hand") is None:
+                    return "?"
+                return f"{d['ops_vs_hand']:.3f} OPS vs {d.get('vs_hand', '?')}HP"
+            pitcher_block += (
+                f"LINEUP VS HAND — {away}: {_lvh_str(a_lvh)} | "
+                f"{home}: {_lvh_str(h_lvh)} | "
+            )
+
     # NHL-specific: starting goalies + tier label + SV% when ESPN provides it.
     # data_fetch._fetch_nhl_starting_goalies now populates starting_goalie on
     # the profile for game-day matchups, so this block actually lights up.
@@ -802,6 +815,53 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
             f"{home}: {h_g} ({h_gt}{_svp_txt(h_goalie)}) | "
         )
 
+    # SOCCER-specific: key-player-out flags (matched against hardcoded top
+    # scorer dict), fixture congestion legs, keeper tier, competition tag.
+    soccer_block = ""
+    if sport == "SOCCER":
+        try:
+            from grade_engine import (
+                _soccer_stars_out as _ssout,
+                _soccer_keeper_tier as _skt,
+            )
+        except Exception:
+            _ssout = None
+            _skt = None
+        if _ssout and inj_present:
+            h_stars_out = _ssout(game, "home")
+            a_stars_out = _ssout(game, "away")
+            if h_stars_out or a_stars_out:
+                def _fmt(lst):
+                    return ", ".join(f"{n} ({s})" for n, s in lst) if lst else "none"
+                soccer_block += (
+                    f"KEY ATTACKERS OUT — {away}: {_fmt(a_stars_out)} | "
+                    f"{home}: {_fmt(h_stars_out)} | "
+                )
+        # Fixture congestion legs (matches in last 10d)
+        h_cong = hp.get("matches_in_10d")
+        a_cong = ap.get("matches_in_10d")
+        if h_cong is not None or a_cong is not None:
+            soccer_block += (
+                f"FIXTURE CONGESTION — {away}: {a_cong or 0} matches in 10d, "
+                f"{home}: {h_cong or 0} matches in 10d | "
+            )
+        # Keeper tier (if a starting_keeper ever gets populated)
+        if _skt:
+            h_kp = (hp.get("starting_keeper") or {}).get("name")
+            a_kp = (ap.get("starting_keeper") or {}).get("name")
+            if h_kp or a_kp:
+                h_kt = _skt(h_kp) or "AVG" if h_kp else "?"
+                a_kt = _skt(a_kp) or "AVG" if a_kp else "?"
+                soccer_block += (
+                    f"KEEPERS — {away}: {a_kp or 'TBD'} ({a_kt}) | "
+                    f"{home}: {h_kp or 'TBD'} ({h_kt}) | "
+                )
+        # Competition / league label so the model treats EFL Cup form
+        # differently from league form
+        league = game.get("league") or game.get("league_name") or ""
+        if league:
+            soccer_block += f"COMPETITION: {league} | "
+
     # Sport-appropriate example reasoning so the prompt example doesn't leak
     # baseball language ("pitching edge") into NBA grading. This was a real
     # bug — DeepSeek V3.2 Spec parroted "pitching edge" on the Rockets-Suns
@@ -824,6 +884,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{form_block}"
         f"{pitcher_block}"
         f"{goalie_block}"
+        f"{soccer_block}"
         f"{injury_block}"
         f"engine composite: {our_score:.1f}/10. "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
