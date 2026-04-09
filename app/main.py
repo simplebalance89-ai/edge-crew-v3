@@ -2650,6 +2650,19 @@ async def _analyze_games_impl(request: AnalyzeRequest):
     return enriched
 
 
+@app.get("/api/calibration")
+async def get_calibration():
+    """Per-grade and per-sport hit-rate from settled picks. Written by the
+    settle_picks cron; this endpoint just reads the JSON. Empty until the
+    cron has run at least once."""
+    return _load_json("calibration.json", {
+        "generated_at": None,
+        "by_grade": {},
+        "by_sport": {},
+        "note": "settle_picks cron has not run yet",
+    })
+
+
 @app.get("/api/probe-models")
 async def probe_models():
     """Debug: ping every model in REAL_AI_MODELS with a trivial prompt and
