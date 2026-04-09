@@ -32,6 +32,11 @@ GCE_KEY = os.environ.get("AZURE_GCE_KEY", "") or os.environ.get("AZURE_OPENAI_KE
 # Anthropic (Claude)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Moonshot (direct Kimi K2 — replaces unreliable Azure-hosted Kimi for the gatekeeper)
+MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "")
+MOONSHOT_BASE = os.environ.get("MOONSHOT_BASE", "https://api.moonshot.ai/v1")
+MOONSHOT_KIMI_MODEL = os.environ.get("MOONSHOT_KIMI_MODEL", "kimi-thinking-preview")
+
 # Google Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
@@ -579,24 +584,56 @@ Return ONLY valid JSON:
             return None, f"empty/unparseable (finish={finish})"
         return parsed, ""
 
-    # Stage 1: Kimi K2 Thinking — bumped timeout 120 -> 200s (matches model-path
-    # headroom), dropped response_format (reasoning models choke on it), dropped
-    # temperature (reasoning models reject it), kept max_tokens=6000 per Peter's
-    # call (the thinking budget IS the point).
-    result, kimi_err = await _try_gatekeeper(
-        deployment="Kimi-K2-Thinking",
-        max_tokens=6000,
-        timeout=200,
-        include_temp=False,
-    )
+    # Stage 1: Kimi K2 via Moonshot direct API (when MOONSHOT_API_KEY is set).
+    # Azure-hosted Kimi-K2-Thinking is unreliable — consistently times out at
+    # 200-240s in production. Moonshot's own endpoint is fast and stable, so
+    # when Peter has the key configured, route Kimi gatekeeper directly there
+    # and skip the Azure path entirely.
+    async def _try_moonshot_gatekeeper() -> tuple[dict | None, str]:
+        if not MOONSHOT_API_KEY:
+            return None, "no MOONSHOT_API_KEY"
+        url = f"{MOONSHOT_BASE.rstrip('/')}/chat/completions"
+        body = {
+            "model": MOONSHOT_KIMI_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 6000,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {MOONSHOT_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+        except httpx.TimeoutException:
+            return None, "moonshot timeout (>120s)"
+        except Exception as e:
+            return None, f"moonshot {type(e).__name__}: {e}"
+        if resp.status_code != 200:
+            return None, f"moonshot HTTP {resp.status_code}: {resp.text[:200]}"
+        try:
+            data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            finish = data.get("choices", [{}])[0].get("finish_reason", "")
+        except Exception as e:
+            return None, f"moonshot json parse: {e}"
+        parsed = _parse_gk_response(content, finish)
+        if parsed is None:
+            return None, f"moonshot empty/unparseable (finish={finish})"
+        return parsed, ""
+
+    result, kimi_err = await _try_moonshot_gatekeeper()
     if result is not None:
         logger.info(
-            f"[GATEKEEPER kimi] {away}@{home}: {result.get('action')} "
+            f"[GATEKEEPER kimi/moonshot] {away}@{home}: {result.get('action')} "
             f"adj={result.get('adjustment')} — {str(result.get('reason',''))[:80]}"
         )
         return result
 
-    logger.warning(f"[GATEKEEPER kimi] FAIL ({kimi_err}); falling back to GPT-4.1")
+    logger.warning(f"[GATEKEEPER kimi/moonshot] FAIL ({kimi_err}); falling back to GPT-4.1")
 
     # Stage 2: GPT-4.1 fallback — fast, deterministic, no think tokens.
     result, gpt_err = await _try_gatekeeper(
