@@ -1936,6 +1936,25 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         # Outdoor-sport weather: NFL today, NCAAF/Soccer when their stadium
         # tables get filled in. Skipped for domes (weather doesn't matter
         # inside an enclosed roof) and skipped silently if open-meteo errors.
+        # Combat sports — pull fighter records from ESPN MMA athletes endpoint
+        # so the prompt builder and combat scorer have real career context
+        # instead of pure-odds reasoning. Best-effort: any failure leaves
+        # home_fighter / away_fighter unset and the existing odds-only path
+        # continues to work.
+        if sport_upper == "MMA" and not (game.get("home_fighter") or game.get("away_fighter")):
+            try:
+                from services.mma_fighter import get_fighter_profile
+                home_f, away_f = await asyncio.gather(
+                    get_fighter_profile(game.get("homeTeam") or ""),
+                    get_fighter_profile(game.get("awayTeam") or ""),
+                )
+                if home_f:
+                    game["home_fighter"] = home_f
+                if away_f:
+                    game["away_fighter"] = away_f
+            except Exception as e:
+                logger.debug(f"[MMA_FIGHTER] {game.get('awayTeam')} vs {game.get('homeTeam')}: {e}")
+
         if sport_upper in ("NFL", "NCAAF", "SOCCER") and not game.get("weather"):
             try:
                 from services.stadium_coords import lookup_nfl, lookup_ncaaf, lookup_soccer
