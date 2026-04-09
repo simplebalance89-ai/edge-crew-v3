@@ -2602,8 +2602,25 @@ async def _analyze_games_impl(request: AnalyzeRequest):
         f"across {len(games)} games"
     )
 
-    # Update cache with enriched data — use same key so /api/games returns it
-    _cache[cache_key] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
+    # Update cache with enriched data — use same key so /api/games returns it.
+    # CRITICAL: in single-game mode `enriched` only contains the one game we
+    # analyzed. We must MERGE it into the existing cached slate, not replace
+    # the slate with a 1-element array — otherwise the prewarm cron (which
+    # calls /api/analyze once per game) silently wipes the slate down to the
+    # last game it processed, leaving the home page apparently empty.
+    if request.game_id:
+        existing = (_cache.get(cache_key) or {}).get("data") or []
+        enriched_by_id = {g.get("id"): g for g in enriched}
+        merged = [enriched_by_id.get(g.get("id"), g) for g in existing]
+        # If the analyzed game wasn't in the existing slate (shouldn't happen,
+        # but be defensive), append it.
+        existing_ids = {g.get("id") for g in existing}
+        for g in enriched:
+            if g.get("id") not in existing_ids:
+                merged.append(g)
+        _cache[cache_key] = {"data": merged, "fetched_at": datetime.now(timezone.utc)}
+    else:
+        _cache[cache_key] = {"data": enriched, "fetched_at": datetime.now(timezone.utc)}
 
     return enriched
 
