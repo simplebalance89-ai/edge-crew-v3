@@ -187,6 +187,13 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
               <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MAIN MATRIX</div>
               {Object.entries(displayOur.variables as Record<string, {score: number; name: string; available: boolean}>)
                 .filter(([, v]) => v.available)
+                .filter(([key]) => {
+                  // Pace is only real for NBA — every other sport derives it
+                  // synthetically from win% and the score is misleading. Hide
+                  // it on non-NBA cards rather than tricking the user.
+                  if (game.sport?.toUpperCase() !== 'NBA' && /pace/i.test(key)) return false
+                  return true
+                })
                 .sort(([, a], [, b]) => b.score - a.score)
                 .slice(0, 8)
                 .map(([key, v]) => (
