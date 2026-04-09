@@ -1362,6 +1362,26 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
         except Exception as e:
             logger.warning(f"[NHL] goalie fetch failed for {away}@{home}: {e}")
 
+        # Real NHL pace from the official Stats API. Replaces the
+        # not-set-at-all path that left score_pace_matchup returning a
+        # neutral 5.0 for every NHL game. pace_L5 here is combined
+        # shots/game (shots-for + shots-against), so the existing
+        # score_pace_matchup NHL branch (added in this same PR) can
+        # actually flag fast vs grind matchups.
+        try:
+            from services.nhl_pace import get_team_pace
+            home_pace, away_pace = await asyncio.gather(
+                get_team_pace(home), get_team_pace(away)
+            )
+            if home_pace and home_pace.get("pace_L5") is not None:
+                home_profile["pace_L5"] = home_pace["pace_L5"]
+                home_profile["nhl_pace"] = home_pace
+            if away_pace and away_pace.get("pace_L5") is not None:
+                away_profile["pace_L5"] = away_pace["pace_L5"]
+                away_profile["nhl_pace"] = away_pace
+        except Exception as e:
+            logger.debug(f"[NHL_PACE] fetch failed for {away}@{home}: {e}")
+
     odds = game_data.get("odds", {})
 
     # Pull injuries from profiles for the grade engine
