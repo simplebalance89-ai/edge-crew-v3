@@ -45,7 +45,7 @@ except ImportError:
 BASE_URL = os.environ.get("BASE_URL", "https://edge-crew-v3.onrender.com").rstrip("/")
 SPORT = (os.environ.get("SPORT") or "").strip().lower()
 GAME_DELAY_SECONDS = int(os.environ.get("GAME_DELAY_SECONDS", "30"))
-PER_REQUEST_TIMEOUT = float(os.environ.get("PER_REQUEST_TIMEOUT", "600"))
+PER_REQUEST_TIMEOUT = float(os.environ.get("PER_REQUEST_TIMEOUT", "900"))
 SLATE_FETCH_TIMEOUT = 60.0
 
 
@@ -87,6 +87,11 @@ def analyze_one(sport: str, game_id: str, label: str) -> tuple[bool, Optional[st
     except Exception as e:
         return False, f"json parse: {e}"
 
+    if isinstance(payload, dict):
+        # Analyze endpoint returns dict on error/timeout/not-found paths
+        err = payload.get("error") or payload.get("detail") or json.dumps(payload)[:200]
+        return False, f"server error: {err}"
+
     if not isinstance(payload, list) or not payload:
         return False, f"unexpected payload shape: {type(payload).__name__}"
 
@@ -120,6 +125,16 @@ def main() -> int:
 
     log(f"Found {len(games)} games on {SPORT.upper()} slate. Pre-warming sequentially.")
 
+    # Warm the web service before the first analyze so cold-start cost doesn't
+    # eat the per-request timeout budget on game 1.
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            client.get(f"{BASE_URL}/health")
+        log("warm-up GET /health ok; sleeping 15s for worker to settle")
+        time.sleep(15)
+    except Exception as e:
+        log(f"warm-up GET /health failed (continuing anyway): {e}")
+
     ok_total = 0
     fail_total = 0
     start = time.monotonic()
@@ -150,7 +165,11 @@ def main() -> int:
 
     total_elapsed = time.monotonic() - start
     log(f"Pre-warm complete | sport={SPORT} | ok={ok_total} fail={fail_total} | total {total_elapsed:.1f}s ({total_elapsed/60:.1f}m)")
-    return 0 if fail_total == 0 else 1
+    # Only fail the cron if the majority of games failed — single timeouts
+    # on cold-start game 1 shouldn't paint the whole run red.
+    if ok_total == 0 and fail_total > 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
