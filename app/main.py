@@ -1890,11 +1890,12 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         # Outdoor-sport weather: NFL today, NCAAF/Soccer when their stadium
         # tables get filled in. Skipped for domes (weather doesn't matter
         # inside an enclosed roof) and skipped silently if open-meteo errors.
-        if sport_upper == "NFL" and not game.get("weather"):
+        if sport_upper in ("NFL", "NCAAF") and not game.get("weather"):
             try:
-                from services.stadium_coords import lookup_nfl
+                from services.stadium_coords import lookup_nfl, lookup_ncaaf
                 from services.weather_open_meteo import fetch_weather
-                coords = lookup_nfl(game.get("homeTeam") or "")
+                home = game.get("homeTeam") or ""
+                coords = lookup_nfl(home) if sport_upper == "NFL" else lookup_ncaaf(home)
                 if coords:
                     lat, lon, dome = coords
                     if dome:
