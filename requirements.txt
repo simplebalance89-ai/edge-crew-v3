@@ -4,3 +4,16 @@ httpx==0.26.0
 pydantic==2.5.3
 python-dotenv==1.0.0
 MLB-StatsAPI==1.7.2
+
+# ── Optional opt-in deps ─────────────────────────────────────────────────────
+# Each of these is gated on an env var in the app code; uncomment when you
+# wire the matching env var in Render and want the integration live.
+#
+# Sentry error reporting (gated on SENTRY_DSN):
+#sentry-sdk[fastapi]==2.20.0
+#
+# Structured JSON logging (gated on STRUCTLOG=1):
+#structlog==24.4.0
+#
+# Postgres write-through for picks (gated on DATABASE_URL):
+#asyncpg==0.30.0
