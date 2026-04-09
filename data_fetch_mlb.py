@@ -272,6 +272,45 @@ def _extract_bullpen_stats(team_id: int) -> dict:
     return out
 
 
+def _extract_lineup(game_pk: int, side: str) -> list[dict]:
+    """Pull confirmed batting order for one side of a game.
+
+    Returns [] if StatsAPI hasn't published the lineup yet (which is normal
+    until ~30-60 min before first pitch). Each entry: {order, name, position,
+    bats}. Used by the grade engine to weight platoon splits and the prompt
+    builder to render a lineup card on the frontend.
+    """
+    if not _statsapi_available():
+        return []
+    import statsapi
+    try:
+        box = statsapi.boxscore_data(game_pk)
+    except Exception as e:
+        logger.debug(f"[StatsAPI] boxscore fetch failed for lineup {game_pk}: {e}")
+        return []
+
+    side_data = box.get(side) or {}
+    # `batters` is the ordered list of batter player ids in the lineup
+    batter_ids = side_data.get("batters") or []
+    players = side_data.get("players") or {}
+    out: list[dict] = []
+    for order, pid in enumerate(batter_ids[:9], start=1):
+        p = players.get(f"ID{pid}") or {}
+        person = p.get("person") or {}
+        position = (p.get("position") or {}).get("abbreviation") or ""
+        bat_side = ((p.get("stats") or {}).get("batting") or {}).get("note") or ""
+        # Some lineups expose handedness via `batSide` on the person; both
+        # paths are best-effort and either may be empty pre-game.
+        bats = (person.get("batSide") or {}).get("code") or bat_side or ""
+        out.append({
+            "order": order,
+            "name": person.get("fullName") or "",
+            "position": position,
+            "bats": bats,
+        })
+    return out
+
+
 def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict]:
     """Synchronous StatsAPI lookup. Wrapped in asyncio.to_thread by callers."""
     if not _statsapi_available():
@@ -417,6 +456,18 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         except (ValueError, TypeError):
             pass
 
+    # Confirmed batting order for each side. Empty until StatsAPI publishes
+    # the lineup ~30-60 min before first pitch — that's expected and the
+    # grade engine treats empty as "lineup unknown" rather than fatal.
+    home_lineup: list[dict] = []
+    away_lineup: list[dict] = []
+    if game_pk:
+        try:
+            home_lineup = _extract_lineup(int(game_pk), "home")
+            away_lineup = _extract_lineup(int(game_pk), "away")
+        except (ValueError, TypeError):
+            pass
+
     return {
         "source": "mlb_statsapi",
         "game_pk": game_pk,
@@ -426,6 +477,8 @@ def _fetch_sync(home_team: str, away_team: str, game_date: str) -> Optional[dict
         "away_starting_pitcher": away_sp,
         "home_lineup_vs_hand": home_lineup_vs_hand,
         "away_lineup_vs_hand": away_lineup_vs_hand,
+        "home_lineup": home_lineup,
+        "away_lineup": away_lineup,
         "home_runs_l10": home_runs_l10,
         "away_runs_l10": away_runs_l10,
         "weather": weather,
