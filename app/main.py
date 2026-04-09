@@ -30,6 +30,52 @@ from ai_models import crowdsource_grade, kimi_gatekeeper
 logger = logging.getLogger("edge-crew-v3")
 logging.basicConfig(level=logging.INFO)
 
+# ─── Observability ────────────────────────────────────────────────────────────
+# Both Sentry and structlog are opt-in via env vars so the default dev path
+# stays exactly the same as before. Set SENTRY_DSN to capture exceptions;
+# set STRUCTLOG=1 to swap stdlib logging for structured JSON output.
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk  # type: ignore
+        from sentry_sdk.integrations.fastapi import FastApiIntegration  # type: ignore
+        from sentry_sdk.integrations.logging import LoggingIntegration  # type: ignore
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.environ.get("SENTRY_ENV", "production"),
+            release=os.environ.get("RENDER_GIT_COMMIT", "")[:12] or None,
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES", "0.0")),
+            integrations=[
+                FastApiIntegration(),
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+        )
+        logger.info("[OBS] Sentry initialized")
+    except ImportError:
+        logger.warning("[OBS] SENTRY_DSN set but sentry-sdk not installed; pip install sentry-sdk[fastapi]")
+    except Exception as _e:
+        logger.warning(f"[OBS] Sentry init failed: {_e}")
+
+if os.environ.get("STRUCTLOG", "").strip() == "1":
+    try:
+        import structlog  # type: ignore
+        structlog.configure(
+            processors=[
+                structlog.contextvars.merge_contextvars,
+                structlog.processors.add_log_level,
+                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.processors.JSONRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+            logger_factory=structlog.PrintLoggerFactory(),
+        )
+        logger.info("[OBS] structlog JSON output enabled")
+    except ImportError:
+        logger.warning("[OBS] STRUCTLOG=1 but structlog not installed; pip install structlog")
+    except Exception as _e:
+        logger.warning(f"[OBS] structlog init failed: {_e}")
+
 app = FastAPI(title="Edge Crew v3.0", version="3.0.0")
 
 app.add_middleware(
