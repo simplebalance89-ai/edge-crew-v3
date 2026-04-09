@@ -1226,17 +1226,18 @@ async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[lis
         for cfg in REAL_AI_MODELS
     ]
     # Hard ceiling on the whole batch — even if one reasoning model hangs,
-    # the analyze endpoint never blocks longer than this per game. 200s gives
-    # the slowest reasoning models (o4-mini 180s, Grok 4.1 / GPT-5 Mini /
-    # Kimi K2 150s) full headroom plus 20s slack. Slate of 10 games processed
-    # in parallel still finishes inside the 5-minute budget.
+    # the analyze endpoint never blocks longer than this per game. 280s gives
+    # the slowest 240s reasoning models (Grok 4.1, Kimi K2 Thinking, o4-mini)
+    # full headroom plus 40s slack for connection/parse overhead. The per-game
+    # /api/analyze hard cap is 550s; with this 280s batch + ~200s gatekeeper
+    # we still finish well under that.
     try:
         results = await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=200.0,
+            timeout=280.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("[REAL-AI BATCH] hard 200s ceiling hit — returning whatever finished")
+        logger.warning("[REAL-AI BATCH] hard 280s ceiling hit — returning whatever finished")
         results = [TimeoutError("batch ceiling exceeded") for _ in REAL_AI_MODELS]
     out = []
     for cfg, res in zip(REAL_AI_MODELS, results):
