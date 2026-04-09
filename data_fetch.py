@@ -40,6 +40,13 @@ SOCCER_LEAGUE_MAP = {
     "soccer_usa_mls": ("soccer", "usa.1"),
     "soccer_germany_bundesliga": ("soccer", "ger.1"),
     "soccer_france_ligue_one": ("soccer", "fra.1"),
+    # Continental + South American — needed so cup matches and Liga MX
+    # / Brasileirão games don't fall through to "usa.1" and silently
+    # break injury / schedule lookups for European clubs.
+    "soccer_uefa_champs_league": ("soccer", "uefa.champions"),
+    "soccer_uefa_europa_league": ("soccer", "uefa.europa"),
+    "soccer_brazil_campeonato": ("soccer", "bra.1"),
+    "soccer_mexico_ligamx": ("soccer", "mex.1"),
 }
 
 _team_cache: Dict[str, dict] = {}
