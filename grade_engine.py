@@ -244,6 +244,17 @@ def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
         if our >= 235 and their >= 235: return 5.5, "FAST matchup"
         elif our <= 210 and their <= 210: return 5, "Grind game"
         elif diff >= 20: return 3.5, f"PACE MISMATCH: {diff:.0f}"
+    if sport == "NHL":
+        # pace_L5 = combined shots-for + shots-against per game from
+        # services.nhl_pace. League average ~60; high-pace 65+; grind <55.
+        avg = (our + their) / 2
+        if avg >= 65:
+            return 7.0, f"FAST matchup ({avg:.1f} sh/g)"
+        elif avg <= 55:
+            return 4.0, f"Grind game ({avg:.1f} sh/g)"
+        elif diff >= 8:
+            return 6.0, f"Pace mismatch: {diff:.1f} sh/g"
+        return 5.5, f"Pace diff: {diff:.1f} sh/g"
     return 5, f"Pace diff: {diff:.0f}"
 
 
