@@ -2963,6 +2963,12 @@ async def lock_pick(username: str, req: LockPickRequest):
     user["bankroll"]["wagered"] += req.amount
     _save_picks()
     _save_users()
+    # Optional postgres write-through (no-op if DATABASE_URL unset).
+    try:
+        from services.db import upsert_pick as _db_upsert_pick
+        await _db_upsert_pick(pick, username)
+    except Exception as _e:
+        logger.debug(f"[DB] lock_pick write-through skipped: {_e}")
     return pick
 
 
@@ -3011,6 +3017,12 @@ async def grade_pick(username: str, pick_id: str, req: GradePickRequest):
         bankroll["pushes"] += 1
     _save_picks()
     _save_users()
+    # Optional postgres write-through (no-op if DATABASE_URL unset).
+    try:
+        from services.db import update_pick_result as _db_update_pick_result
+        await _db_update_pick_result(pick_id, result, pick.get("profit", 0))
+    except Exception as _e:
+        logger.debug(f"[DB] grade_pick write-through skipped: {_e}")
     return {"pick": pick, "bankroll": bankroll}
 
 
