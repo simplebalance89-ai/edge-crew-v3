@@ -255,6 +255,28 @@ def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
         elif diff >= 8:
             return 6.0, f"Pace mismatch: {diff:.1f} sh/g"
         return 5.5, f"Pace diff: {diff:.1f} sh/g"
+    if sport in ("NFL", "NCAAF"):
+        # pace_L5 = offensive plays per game from services.espn_pace.
+        # NFL average ~63 plays/game; high-tempo 68+; slow grind <58.
+        avg = (our + their) / 2
+        if avg >= 68:
+            return 7.0, f"HIGH-TEMPO ({avg:.1f} plays/g)"
+        elif avg <= 58:
+            return 4.0, f"Slow grind ({avg:.1f} plays/g)"
+        elif diff >= 5:
+            return 6.0, f"Pace mismatch: {diff:.1f} plays/g"
+        return 5.5, f"Pace diff: {diff:.1f} plays/g"
+    if sport == "NCAAB":
+        # pace_L5 = possessions proxy (FGA + 0.44*FTA) per game.
+        # CBB average ~70 possessions; high-pace 75+; grind <65.
+        avg = (our + their) / 2
+        if avg >= 75:
+            return 7.0, f"FAST matchup ({avg:.1f} pos/g)"
+        elif avg <= 65:
+            return 4.0, f"Grind game ({avg:.1f} pos/g)"
+        elif diff >= 7:
+            return 6.0, f"Pace mismatch: {diff:.1f} pos/g"
+        return 5.5, f"Pace diff: {diff:.1f} pos/g"
     return 5, f"Pace diff: {diff:.0f}"
 
 
