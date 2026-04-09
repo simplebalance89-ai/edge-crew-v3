@@ -27,17 +27,23 @@ except ImportError:
 logger = logging.getLogger("edge-crew-v3.mma_fighter")
 
 ESPN_SEARCH = "https://site.web.api.espn.com/apis/search/v2"
-ESPN_ATHLETE_DETAIL = "http://sports.core.api.espn.com/v2/sports/mma/leagues/ufc/athletes/{athlete_id}"
+ESPN_ATHLETE_DETAIL = "http://sports.core.api.espn.com/v2/sports/{sport_path}/leagues/{league}/athletes/{athlete_id}"
+
+# (sport_path, league, search_sport_filter) per combat sport
+SPORT_ROUTES = {
+    "MMA":    ("mma",    "ufc",    "mma"),
+    "BOXING": ("boxing", "boxing", "boxing"),
+}
 
 _CACHE_TTL = 3600
 _cache: dict = {}  # {name_lower: (fetched_at, dict_or_none)}
 
 
-async def _search_athlete_id(client, name: str) -> Optional[str]:
+async def _search_athlete_id(client, name: str, search_sport: str = "mma") -> Optional[str]:
     try:
         r = await client.get(
             ESPN_SEARCH,
-            params={"query": name, "limit": 5, "type": "player", "sport": "mma"},
+            params={"query": name, "limit": 5, "type": "player", "sport": search_sport},
         )
         if r.status_code != 200:
             return None
@@ -61,14 +67,15 @@ async def _search_athlete_id(client, name: str) -> Optional[str]:
         return None
 
 
-async def _fetch_athlete_detail(client, athlete_id: str) -> Optional[dict]:
+async def _fetch_athlete_detail(client, athlete_id: str, sport_path: str, league: str) -> Optional[dict]:
     try:
-        r = await client.get(ESPN_ATHLETE_DETAIL.format(athlete_id=athlete_id))
+        url = ESPN_ATHLETE_DETAIL.format(sport_path=sport_path, league=league, athlete_id=athlete_id)
+        r = await client.get(url)
         if r.status_code != 200:
             return None
         return r.json()
     except Exception as e:
-        logger.debug(f"[MMA] athlete detail failed for {athlete_id}: {e}")
+        logger.debug(f"[COMBAT] athlete detail failed for {athlete_id}: {e}")
         return None
 
 
@@ -89,24 +96,33 @@ def _parse_record(record_str: str) -> dict:
     return out
 
 
-async def get_fighter_profile(name: str) -> Optional[dict]:
-    """Return a fighter profile dict, or None if lookup fails."""
+async def get_fighter_profile(name: str, sport: str = "MMA") -> Optional[dict]:
+    """Return a fighter/boxer profile dict, or None if lookup fails.
+
+    `sport` is "MMA" or "BOXING" — both go through ESPN's combat sports
+    endpoints with the right league fragment swapped in.
+    """
     if not name or httpx is None:
         return None
-    key = name.lower().strip()
+    sport_upper = sport.upper()
+    if sport_upper not in SPORT_ROUTES:
+        return None
+    sport_path, league, search_sport = SPORT_ROUTES[sport_upper]
+
+    key = f"{sport_upper}:{name.lower().strip()}"
     cached = _cache.get(key)
     if cached and (time.monotonic() - cached[0]) < _CACHE_TTL:
         return cached[1]
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            athlete_id = await _search_athlete_id(client, name)
+            athlete_id = await _search_athlete_id(client, name, search_sport)
             if not athlete_id:
                 _cache[key] = (time.monotonic(), None)
                 return None
-            detail = await _fetch_athlete_detail(client, athlete_id)
+            detail = await _fetch_athlete_detail(client, athlete_id, sport_path, league)
     except Exception as e:
-        logger.debug(f"[MMA] get_fighter_profile failed for {name}: {e}")
+        logger.debug(f"[COMBAT] get_fighter_profile failed for {name} ({sport_upper}): {e}")
         _cache[key] = (time.monotonic(), None)
         return None
 
