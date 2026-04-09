@@ -142,6 +142,21 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
                 injuries, schedule_data = await asyncio.gather(inj_task, sched_task)
                 profile["injuries"] = injuries
                 profile.update(schedule_data)
+                profile["espn_team_id"] = team_id
+
+                # ── Real pace for NFL/NCAAF/NCAAB via ESPN team statistics
+                # endpoint. NHL gets pace via the official Stats API in
+                # enrich_game_for_grading; NBA already has real quarter
+                # data; everything else used to be a flat 5.0 neutral.
+                if sport in ("NFL", "NCAAF", "NCAAB"):
+                    try:
+                        from services.espn_pace import get_team_pace as _espn_pace
+                        p = await _espn_pace(team_id, sport)
+                        if p and p.get("pace_L5") is not None:
+                            profile["pace_L5"] = p["pace_L5"]
+                            profile["espn_pace"] = p
+                    except Exception as _e:
+                        logger.debug(f"[ESPN_PACE] {sport}/{team_name} failed: {_e}")
 
     except Exception as e:
         logger.warning(f"[ESPN] Fetch failed for {team_name}: {e}")
