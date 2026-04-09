@@ -27,6 +27,7 @@ SPORT_ESPN_MAP = {
     "MLB": ("baseball", "mlb"),
     "NFL": ("football", "nfl"),
     "NCAAB": ("basketball", "mens-college-basketball"),
+    "NCAAF": ("football", "college-football"),
     "SOCCER": ("soccer", "usa.1"),
     "MMA": ("mma", "ufc"),
     "BOXING": ("boxing", "boxing"),

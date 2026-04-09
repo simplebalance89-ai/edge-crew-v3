@@ -4,6 +4,7 @@ Live odds → ESPN profiles → Grade Engine → Two-Lane Display
 """
 
 import asyncio
+import hashlib
 import time
 import json
 import logging
@@ -84,6 +85,7 @@ SPORT_KEYS = {
     "mlb": ["baseball_mlb"],
     "nfl": ["americanfootball_nfl"],
     "ncaab": ["basketball_ncaab"],
+    "ncaaf": ["americanfootball_ncaaf"],
     "soccer": ["soccer_usa_mls", "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga", "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_uefa_europa_league", "soccer_brazil_campeonato", "soccer_mexico_ligamx"],
     "mma": ["mma_mixed_martial_arts"],
     "boxing": ["boxing_boxing"],
@@ -492,8 +494,15 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         "spreadPriceHome": spread_price_home or -110,
         "spreadPriceAway": spread_price_away or -110,
     }
+    # Deterministic game id derived from matchup + commence time so the same
+    # game keys identically across sync runs (Odds API's raw event id can drift
+    # between fetches, breaking line-movement diffs and pick references).
+    stable_id = hashlib.md5(
+        f"{event['home_team']}|{event['away_team']}|{commence}".encode("utf-8")
+    ).hexdigest()[:16]
     return {
-        "id": event["id"],
+        "id": stable_id,
+        "oddsApiId": event["id"],
         "sport": sport_label,
         "homeTeam": event["home_team"],
         "awayTeam": event["away_team"],
@@ -1852,6 +1861,22 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                     logger.warning(f"[ODDS API] {key}: HTTP {resp.status_code}")
             except Exception as e:
                 logger.warning(f"[ODDS API] {key}: {e}")
+
+    # Dedupe by stable game id — soccer hits 10 league endpoints and the same
+    # cup match can be returned by multiple leagues (e.g. EPL + UCL), which
+    # would otherwise grade and pick the same game twice.
+    if all_games:
+        seen_ids = set()
+        deduped = []
+        for g in all_games:
+            gid = g.get("id")
+            if gid in seen_ids:
+                continue
+            seen_ids.add(gid)
+            deduped.append(g)
+        if len(deduped) != len(all_games):
+            logger.info(f"[DEDUPE] {sport.lower()}: {len(all_games)} -> {len(deduped)} games after dedupe")
+        all_games = deduped
 
     # Determine odds_key for soccer league routing
     odds_key = ""
