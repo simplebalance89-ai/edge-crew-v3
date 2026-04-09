@@ -1941,12 +1941,12 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         # instead of pure-odds reasoning. Best-effort: any failure leaves
         # home_fighter / away_fighter unset and the existing odds-only path
         # continues to work.
-        if sport_upper == "MMA" and not (game.get("home_fighter") or game.get("away_fighter")):
+        if sport_upper in ("MMA", "BOXING") and not (game.get("home_fighter") or game.get("away_fighter")):
             try:
                 from services.mma_fighter import get_fighter_profile
                 home_f, away_f = await asyncio.gather(
-                    get_fighter_profile(game.get("homeTeam") or ""),
-                    get_fighter_profile(game.get("awayTeam") or ""),
+                    get_fighter_profile(game.get("homeTeam") or "", sport_upper),
+                    get_fighter_profile(game.get("awayTeam") or "", sport_upper),
                 )
                 if home_f:
                     game["home_fighter"] = home_f
