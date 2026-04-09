@@ -1887,6 +1887,25 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
 
     # Grade all games in parallel
     async def _grade_single(game):
+        # Outdoor-sport weather: NFL today, NCAAF/Soccer when their stadium
+        # tables get filled in. Skipped for domes (weather doesn't matter
+        # inside an enclosed roof) and skipped silently if open-meteo errors.
+        if sport_upper == "NFL" and not game.get("weather"):
+            try:
+                from services.stadium_coords import lookup_nfl
+                from services.weather_open_meteo import fetch_weather
+                coords = lookup_nfl(game.get("homeTeam") or "")
+                if coords:
+                    lat, lon, dome = coords
+                    if dome:
+                        game["weather"] = {"condition": "Dome", "temp": 70, "wind": "0 mph"}
+                    else:
+                        wx = await fetch_weather(lat, lon, game.get("scheduledAt"))
+                        if wx:
+                            game["weather"] = wx
+            except Exception as e:
+                logger.debug(f"[WEATHER] {game.get('homeTeam')}: {e}")
+
         grades = await _grade_game_full(game, sport_upper, odds_key)
         game.update(grades)
         if sport_upper == "MLB" and mode == "nrfi":
