@@ -491,6 +491,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
                     o["name"] = TEAM_NAME_OVERRIDES[o["name"]]
 
     spread = total = ml_home = ml_away = None
+    spread_price_home = spread_price_away = None
     over_price = under_price = None
     btts_yes = btts_no = None
     draw_price = None
