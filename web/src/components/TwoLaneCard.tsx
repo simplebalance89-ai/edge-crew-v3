@@ -131,12 +131,13 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             <span className="text-xs text-[#6E6E80]">
               {game.scheduledAt ? new Date(game.scheduledAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date(game.scheduledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
             </span>
-            {game.odds && (
+            {game.odds && (() => {
+              const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`)
+              return (
               <>
                 {game.odds.spread !== 0 && (() => {
                   const homeLine = -game.odds.spread
                   const awayLine = game.odds.spread
-                  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`)
                   const ph = game.odds.spreadPriceHome
                   const pa = game.odds.spreadPriceAway
                   return (
@@ -145,10 +146,28 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                     </span>
                   )
                 })()}
-                {game.odds.total > 0 && <span className="text-xs text-[#6E6E80]">O/U: {game.odds.total}</span>}
-                {game.odds.mlHome !== 0 && <span className="text-xs text-[#6E6E80]">ML: {game.awayTeam} {game.odds.mlAway > 0 ? '+' : ''}{game.odds.mlAway} / {game.homeTeam} {game.odds.mlHome > 0 ? '+' : ''}{game.odds.mlHome}</span>}
+                {game.odds.total > 0 && (
+                  <span className="text-xs text-[#6E6E80]">
+                    O/U: {game.odds.total}
+                    {game.odds.overPrice != null && game.odds.underPrice != null && (
+                      <> ({fmt(game.odds.overPrice)}/{fmt(game.odds.underPrice)})</>
+                    )}
+                  </span>
+                )}
+                {game.odds.mlHome !== 0 && (
+                  <span className="text-xs text-[#6E6E80]">
+                    ML: {game.awayTeam} {fmt(game.odds.mlAway)} / {game.homeTeam} {fmt(game.odds.mlHome)}
+                    {game.odds.draw != null && <> / Draw {fmt(game.odds.draw)}</>}
+                  </span>
+                )}
+                {game.odds.bttsYes != null && (
+                  <span className="text-xs text-[#38BDF8] font-medium">
+                    BTTS: Yes {fmt(game.odds.bttsYes)} / No {game.odds.bttsNo != null ? fmt(game.odds.bttsNo) : '—'}
+                  </span>
+                )}
               </>
-            )}
+              )
+            })()}
           </div>
           {/* MLB starting pitchers */}
           {game.sport === 'MLB' && (game.away_profile?.starting_pitcher?.name || game.home_profile?.starting_pitcher?.name) && (

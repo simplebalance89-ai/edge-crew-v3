@@ -89,6 +89,11 @@ export interface Odds {
   mlAway: number;
   spreadPriceHome?: number;
   spreadPriceAway?: number;
+  overPrice?: number | null;
+  underPrice?: number | null;
+  bttsYes?: number | null;
+  bttsNo?: number | null;
+  draw?: number | null;
 }
 
 export interface Grade {
