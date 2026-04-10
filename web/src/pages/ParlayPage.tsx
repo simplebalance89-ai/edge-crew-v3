@@ -7,7 +7,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { Game, Sport, BetSlip } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
-const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing']
+const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
 
 const gradeRank = (g?: string): number => {
   if (!g) return 0
