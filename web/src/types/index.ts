@@ -80,6 +80,9 @@ export interface Game {
     best_home: { book: string; odds: number };
     best_away: { book: string; odds: number };
   } | null;
+  outrights?: GolfOutright[];
+  favorite?: string;
+  favoriteOdds?: number;
 }
 
 export interface Odds {
@@ -213,7 +216,7 @@ export interface GutPickEntry {
   timestamp: string;
 }
 
-export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing";
+export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing" | "golf";
 
 export const SPORT_LABELS: Record<Sport, string> = {
   nba: "NBA",
@@ -224,7 +227,14 @@ export const SPORT_LABELS: Record<Sport, string> = {
   soccer: "Soccer",
   mma: "MMA",
   boxing: "Boxing",
+  golf: "Golf",
 };
+
+export interface GolfOutright {
+  name: string;
+  odds: number;
+  book: string;
+}
 
 export const GRADE_COLORS: Record<string, string> = {
   "A+": "#10B981",
