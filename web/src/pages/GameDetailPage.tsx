@@ -21,7 +21,7 @@ export default function GameDetailPage() {
   const [locked, setLocked] = useState(false)
 
   // Try all sports to find the game
-  const sports = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing']
+  const sports = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
 
   const { data: allGames, isLoading } = useQuery({
     queryKey: ['all-games-detail', id],

@@ -6,7 +6,7 @@ import { getGames, analyzeGames } from '@/services/api'
 import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
-const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing']
+const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
 
 type MlbMode = 'games' | 'nrfi'
 type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls' | 'bundesliga' | 'ligue_1' | 'ucl' | 'europa' | 'brazil' | 'liga_mx'
