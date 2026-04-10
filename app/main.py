@@ -491,6 +491,9 @@ def _parse_event(event: dict, sport_label: str) -> dict:
                     o["name"] = TEAM_NAME_OVERRIDES[o["name"]]
 
     spread = total = ml_home = ml_away = None
+    over_price = under_price = None
+    btts_yes = btts_no = None
+    draw_price = None
     bookmaker_used = None
     bookmakers_data = {bk["key"]: bk for bk in event.get("bookmakers", [])}
     book_order = PREFERRED_BOOKS + [k for k in bookmakers_data if k not in PREFERRED_BOOKS]
@@ -506,6 +509,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         for o in markets.get("h2h", []):
             if o["name"] == event["home_team"]: ml_home = o.get("price")
             elif o["name"] == event["away_team"]: ml_away = o.get("price")
+            elif o["name"] == "Draw": draw_price = o.get("price")
         spread_price_home = spread_price_away = None
         for o in markets.get("spreads", []):
             if o["name"] == event["home_team"]:
@@ -514,7 +518,15 @@ def _parse_event(event: dict, sport_label: str) -> dict:
             elif o["name"] == event["away_team"]:
                 spread_price_away = o.get("price")
         for o in markets.get("totals", []):
-            if o["name"] == "Over": total = o.get("point")
+            if o["name"] == "Over":
+                total = o.get("point")
+                over_price = o.get("price")
+            elif o["name"] == "Under":
+                under_price = o.get("price")
+        # BTTS (Both Teams To Score) — soccer-specific market
+        for o in markets.get("btts", []):
+            if o["name"] == "Yes": btts_yes = o.get("price")
+            elif o["name"] == "No": btts_no = o.get("price")
         if ml_home is not None:
             break
 
@@ -539,6 +551,11 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         "mlHome": ml_home or 0, "mlAway": ml_away or 0,
         "spreadPriceHome": spread_price_home or -110,
         "spreadPriceAway": spread_price_away or -110,
+        "overPrice": over_price,
+        "underPrice": under_price,
+        "bttsYes": btts_yes,
+        "bttsNo": btts_no,
+        "draw": draw_price,
     }
     # Deterministic game id derived from matchup + commence time so the same
     # game keys identically across sync runs (Odds API's raw event id can drift
@@ -1881,12 +1898,14 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
     async with httpx.AsyncClient(timeout=15) as client:
         for key in keys:
             try:
+                # Soccer gets BTTS market; all sports get h2h, spreads, totals
+                mkts = "h2h,spreads,totals,btts" if sport_upper == "SOCCER" else "h2h,spreads,totals"
                 resp = await client.get(
                     f"{ODDS_API_BASE}/{key}/odds/",
                     params={
                         "apiKey": ODDS_API_KEY,
                         "regions": "us,us2",
-                        "markets": "h2h,spreads,totals",
+                        "markets": mkts,
                         "oddsFormat": "american",
                     },
                 )
