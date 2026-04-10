@@ -135,6 +135,7 @@ SPORT_KEYS = {
     "soccer": ["soccer_usa_mls", "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga", "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_uefa_europa_league", "soccer_brazil_campeonato", "soccer_mexico_ligamx"],
     "mma": ["mma_mixed_martial_arts"],
     "boxing": ["boxing_boxing"],
+    "golf": ["golf_masters_tournament_winner", "golf_pga_championship_winner", "golf_us_open_winner", "golf_the_open_championship_winner"],
 }
 
 SOCCER_LEAGUE_MAP = {
@@ -1890,6 +1891,79 @@ def _evaluate_nrfi(game: dict) -> dict:
     return {"verdict": verdict, "confidence": confidence, "reason": reason}
 
 
+async def _fetch_golf_outrights(keys: list) -> list:
+    """Fetch golf tournament outrights — one 'game' card per active tournament."""
+    tournaments = []
+    async with httpx.AsyncClient(timeout=15) as client:
+        for key in keys:
+            try:
+                resp = await client.get(
+                    f"{ODDS_API_BASE}/{key}/odds/",
+                    params={
+                        "apiKey": ODDS_API_KEY,
+                        "regions": "us,us2",
+                        "markets": "outrights",
+                        "oddsFormat": "american",
+                    },
+                )
+                if resp.status_code != 200:
+                    continue
+                events = resp.json()
+                for event in events:
+                    commence = event.get("commence_time", "")
+                    # Aggregate outrights across bookmakers — best price per golfer
+                    golfer_odds: dict = {}
+                    for bk in event.get("bookmakers", []):
+                        book_key = bk.get("key", "")
+                        for mkt in bk.get("markets", []):
+                            if mkt.get("key") != "outrights":
+                                continue
+                            for o in mkt.get("outcomes", []):
+                                name = o.get("name", "")
+                                price = o.get("price", 0)
+                                if name not in golfer_odds or price > golfer_odds[name]["price"]:
+                                    golfer_odds[name] = {"price": price, "book": book_key}
+                    # Sort by odds (favorites first)
+                    sorted_golfers = sorted(golfer_odds.items(), key=lambda x: x[1]["price"])
+                    outrights = [
+                        {"name": name, "odds": info["price"], "book": info["book"]}
+                        for name, info in sorted_golfers
+                    ]
+                    # Tournament title from sport_title (e.g. "Masters Tournament Winner")
+                    title = event.get("sport_title", key.replace("golf_", "").replace("_", " ").title())
+                    title = title.replace(" Winner", "")
+                    stable_id = hashlib.md5(f"golf|{key}|{commence}".encode()).hexdigest()[:16]
+                    tournaments.append({
+                        "id": stable_id,
+                        "oddsApiId": event.get("id", ""),
+                        "sport": "GOLF",
+                        "homeTeam": title,
+                        "awayTeam": f"{len(outrights)} golfers",
+                        "scheduledAt": commence,
+                        "status": "scheduled",
+                        "odds": {"spread": 0, "total": 0, "mlHome": 0, "mlAway": 0},
+                        "outrights": outrights,
+                        "bookmaker": outrights[0]["book"] if outrights else None,
+                        "favorite": outrights[0]["name"] if outrights else None,
+                        "favoriteOdds": outrights[0]["odds"] if outrights else None,
+                        # Minimal grading for golf — no engine, just display
+                        "ourGrade": {
+                            "grade": "—", "score": 0, "confidence": 0,
+                            "thesis": f"Tournament outrights — {len(outrights)} golfers",
+                        },
+                        "aiGrade": {"grade": "—", "score": 0, "confidence": 0, "model": "Outrights"},
+                        "convergence": {
+                            "status": "ALIGNED", "consensusScore": 0,
+                            "consensusGrade": "—", "delta": 0, "variance": 0,
+                        },
+                        "pick": None,
+                        "aiModels": [],
+                    })
+            except Exception as e:
+                logger.warning(f"[GOLF] {key}: {e}")
+    return tournaments
+
+
 async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") -> list:
     """Fetch live games from Odds API, then grade each one."""
     if not ODDS_API_KEY:
@@ -1903,6 +1977,10 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         keys = SPORT_KEYS.get(sport.lower(), [sport.lower()])
     sport_upper = sport.upper()
     all_games = []
+
+    # Golf: outrights market, completely different structure
+    if sport_upper == "GOLF":
+        return await _fetch_golf_outrights(keys)
 
     async with httpx.AsyncClient(timeout=15) as client:
         for key in keys:

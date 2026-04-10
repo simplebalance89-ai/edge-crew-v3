@@ -193,8 +193,33 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         </div>
       </div>
 
+      {/* ═══ GOLF OUTRIGHTS ═══ */}
+      {game.sport === 'GOLF' && game.outrights && game.outrights.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] font-black tracking-[1.5px] text-[#10B981] mb-2 pb-1.5 border-b border-white/[0.06]">
+            TOURNAMENT OUTRIGHTS — {game.outrights.length} GOLFERS
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
+            {game.outrights.map((g: any, i: number) => (
+              <div
+                key={g.name}
+                className={`flex justify-between items-center px-2.5 py-1.5 rounded-lg text-[11px] ${
+                  i === 0 ? 'bg-[#D4A017]/15 border border-[#D4A017]/40 text-[#D4A017] font-bold'
+                    : i < 5 ? 'bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981]'
+                    : i < 15 ? 'bg-white/5 border border-white/10 text-white/70'
+                    : 'bg-white/[0.02] border border-white/5 text-white/40'
+                }`}
+              >
+                <span className="truncate mr-2">{i === 0 ? '👑 ' : ''}{g.name}</span>
+                <span className="font-mono font-bold whitespace-nowrap">{g.odds > 0 ? '+' : ''}{g.odds}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ═══ TWO-LANE FORK ═══ */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      {game.sport !== 'GOLF' && <div className="grid grid-cols-2 gap-3 mb-3">
 
         {/* ── LEFT LANE: OUR PROCESS ── */}
         <div className="bg-[#F72585]/[0.04] border border-[#F72585]/20 rounded-xl p-3">
@@ -336,7 +361,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* ═══ NRFI VERDICT (replaces convergence header when present) ═══ */}
       {game.nrfi ? (
