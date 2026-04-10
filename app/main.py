@@ -81,7 +81,7 @@ app = FastAPI(title="Edge Crew v3.0", version="3.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1988,22 +1988,29 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
             game["nrfi"] = _evaluate_nrfi(game)
         return game
 
-    # Hard 90s ceiling on the entire grading gather. Per-game enrichment
-    # already has a 30s ceiling on the StatsAPI thread; this is the outer
-    # safety net so a stuck game can't poison the whole slate fetch.
+    # Per-sport timeout ceiling. Soccer hits 10 league endpoints so needs
+    # more headroom than single-league sports.
+    grade_timeout = 180 if sport_upper == "SOCCER" else 90
+
     try:
         all_games = list(
             await asyncio.wait_for(
                 asyncio.gather(*[_grade_single(g) for g in all_games], return_exceptions=True),
-                timeout=90,
+                timeout=grade_timeout,
             )
         )
         # Filter out any games that raised — they'll come back un-enriched
         # rather than crash the slate.
         all_games = [g for g in all_games if isinstance(g, dict)]
     except asyncio.TimeoutError:
-        logger.warning(f"[FETCH+GRADE] HARD TIMEOUT (>90s) for {sport_lower} — returning whatever finished")
-        return []
+        logger.warning(f"[FETCH+GRADE] HARD TIMEOUT (>{grade_timeout}s) for {sport_lower} — returning whatever finished")
+        # Return whatever tasks completed before the timeout instead of
+        # dropping the entire slate. gather() results are lost on timeout,
+        # so fall back to any games that were already updated in-place by
+        # _grade_single (it calls game.update(grades) before returning).
+        all_games = [g for g in all_games if isinstance(g, dict) and g.get("ourGrade")]
+        if not all_games:
+            return []
 
     return all_games
 
@@ -2461,12 +2468,23 @@ async def sync_status():
 
 @app.get("/health")
 async def health():
+    # Check DB status
+    db_status = "disabled"
+    try:
+        from services.db import is_enabled as _db_enabled
+        db_status = "enabled" if _db_enabled() else "disabled"
+    except Exception:
+        pass
+
     return {
         "status": "healthy",
-        "version": "3.0.0-b3",
+        "version": "3.0.0-b4",
         "time": datetime.now().isoformat(),
         "odds_api": bool(ODDS_API_KEY),
         "engine": "grade_engine_v3",
+        "persist_dir": PERSIST_DIR,
+        "persist_disk": os.path.exists("/data"),
+        "database": db_status,
     }
 
 

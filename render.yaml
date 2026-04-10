@@ -5,6 +5,10 @@ services:
     plan: standard
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: ec8-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -18,3 +22,119 @@ services:
         sync: false
       - key: AZURE_GCE_KEY
         sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  # ── Cron: Settle picks against final scores ────────────────────────────────
+  - type: cron
+    name: ec8-settle-picks
+    runtime: python
+    plan: starter
+    schedule: "0 10 * * *"  # 10:00 UTC = 3:00 AM PST — settle yesterday's games
+    buildCommand: pip install httpx
+    startCommand: python scripts/settle_picks.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: ODDS_API_KEY_PAID
+        sync: false
+
+  # ── Cron: Pre-warm MLB slate ────────────────────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-mlb
+    runtime: python
+    plan: starter
+    schedule: "0 14 * * *"  # 14:00 UTC = 7:00 AM PST
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: mlb
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
+
+  # ── Cron: Pre-warm NBA slate ────────────────────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-nba
+    runtime: python
+    plan: starter
+    schedule: "0 14 * * *"  # 14:00 UTC = 7:00 AM PST
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: nba
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
+
+  # ── Cron: Pre-warm NHL slate ────────────────────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-nhl
+    runtime: python
+    plan: starter
+    schedule: "15 14 * * *"  # 14:15 UTC — stagger to not hammer worker
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: nhl
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
+
+  # ── Cron: Pre-warm Soccer slate ─────────────────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-soccer
+    runtime: python
+    plan: starter
+    schedule: "30 14 * * *"  # 14:30 UTC — stagger after NHL
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: soccer
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
+      - key: PER_REQUEST_TIMEOUT
+        value: "900"  # 15 min — soccer has 10 leagues, needs more headroom
+      - key: GAME_DELAY_SECONDS
+        value: "45"  # longer delay — 10 league endpoints = heavier per-game
+
+  # ── Cron: Pre-warm NFL slate (season only) ──────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-nfl
+    runtime: python
+    plan: starter
+    schedule: "0 15 * * 4,5,6,0,1"  # Thu-Mon only during season
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: nfl
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
+
+  # ── Cron: Pre-warm MMA/Boxing slate ─────────────────────────────────────────
+  - type: cron
+    name: ec8-prewarm-combat
+    runtime: python
+    plan: starter
+    schedule: "45 14 * * 5,6"  # Fri-Sat — fight nights
+    buildCommand: pip install httpx
+    startCommand: python scripts/prewarm_slate.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SPORT
+        value: mma
+      - key: BASE_URL
+        value: https://edge-crew-v3.onrender.com
