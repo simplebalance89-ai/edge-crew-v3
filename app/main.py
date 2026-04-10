@@ -1898,14 +1898,12 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
     async with httpx.AsyncClient(timeout=15) as client:
         for key in keys:
             try:
-                # Soccer gets BTTS market; all sports get h2h, spreads, totals
-                mkts = "h2h,spreads,totals,btts" if sport_upper == "SOCCER" else "h2h,spreads,totals"
                 resp = await client.get(
                     f"{ODDS_API_BASE}/{key}/odds/",
                     params={
                         "apiKey": ODDS_API_KEY,
                         "regions": "us,us2",
-                        "markets": mkts,
+                        "markets": "h2h,spreads,totals",
                         "oddsFormat": "american",
                     },
                 )
@@ -1914,6 +1912,7 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                     logger.info(f"[ODDS API] {key}: {len(events)} events")
                     for event in events:
                         game = _parse_event(event, sport_upper)
+                        game["_sport_key"] = key  # needed for event-level BTTS fetch
                         if game["status"] in ("completed", "live"):
                             continue  # Only show upcoming — no live or finished
                         # Only tonight's games — filter out anything more than 18 hours away
@@ -1947,6 +1946,56 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         if len(deduped) != len(all_games):
             logger.info(f"[DEDUPE] {sport.lower()}: {len(all_games)} -> {len(deduped)} games after dedupe")
         all_games = deduped
+
+    # Soccer: fetch BTTS odds per event via event-level endpoint
+    if sport_upper == "SOCCER" and all_games:
+        async def _fetch_btts(game):
+            odds_api_id = game.get("oddsApiId", "")
+            sport_key = game.get("_sport_key", "")
+            if not odds_api_id or not sport_key:
+                return
+            try:
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get(
+                        f"{ODDS_API_BASE}/{sport_key}/events/{odds_api_id}/odds",
+                        params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                                "markets": "btts", "oddsFormat": "american"},
+                    )
+                if r.status_code != 200:
+                    return
+                data = r.json()
+                for bk in (data.get("bookmakers") or []):
+                    if bk.get("key") in PREFERRED_BOOKS:
+                        for mkt in bk.get("markets", []):
+                            if mkt.get("key") == "btts":
+                                for o in mkt.get("outcomes", []):
+                                    if o["name"] == "Yes":
+                                        game["odds"]["bttsYes"] = o.get("price")
+                                    elif o["name"] == "No":
+                                        game["odds"]["bttsNo"] = o.get("price")
+                        if game["odds"].get("bttsYes") is not None:
+                            return
+                # Fallback: use any bookmaker
+                for bk in (data.get("bookmakers") or []):
+                    for mkt in bk.get("markets", []):
+                        if mkt.get("key") == "btts":
+                            for o in mkt.get("outcomes", []):
+                                if o["name"] == "Yes" and game["odds"].get("bttsYes") is None:
+                                    game["odds"]["bttsYes"] = o.get("price")
+                                elif o["name"] == "No" and game["odds"].get("bttsNo") is None:
+                                    game["odds"]["bttsNo"] = o.get("price")
+            except Exception as e:
+                logger.debug(f"[BTTS] {game.get('homeTeam')}: {e}")
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*[_fetch_btts(g) for g in all_games], return_exceptions=True),
+                timeout=20,
+            )
+            btts_count = sum(1 for g in all_games if g.get("odds", {}).get("bttsYes") is not None)
+            logger.info(f"[BTTS] Fetched BTTS for {btts_count}/{len(all_games)} soccer games")
+        except asyncio.TimeoutError:
+            logger.warning("[BTTS] Timeout fetching BTTS odds — continuing without")
 
     # Determine odds_key for soccer league routing
     odds_key = ""
