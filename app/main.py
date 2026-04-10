@@ -556,8 +556,11 @@ def _parse_event(event: dict, sport_label: str) -> dict:
     # Arbitrage detection across all bookmakers
     arb = _detect_arbitrage(event)
 
+    # Frontend convention: odds.spread = AWAY team's line.
+    # API returns home team's spread, so negate it.
+    away_spread = -spread if spread else 0
     odds = {
-        "spread": spread or 0, "total": total or 0,
+        "spread": away_spread, "total": total or 0,
         "mlHome": ml_home or 0, "mlAway": ml_away or 0,
         "spreadPriceHome": spread_price_home or -110,
         "spreadPriceAway": spread_price_away or -110,
@@ -584,7 +587,7 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         "odds": odds,
         "bookmaker": bookmaker_used,
         "arbitrage": arb,
-        "shifts": _get_line_movement(event["id"], spread or 0, ml_home or 0),
+        "shifts": _get_line_movement(event["id"], away_spread, ml_home or 0),
     }
 
 
