@@ -505,29 +505,37 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         markets = {m["key"]: m["outcomes"] for m in bk.get("markets", [])}
         if not markets:
             continue
-        bookmaker_used = book_key
-        for o in markets.get("h2h", []):
-            if o["name"] == event["home_team"]: ml_home = o.get("price")
-            elif o["name"] == event["away_team"]: ml_away = o.get("price")
-            elif o["name"] == "Draw": draw_price = o.get("price")
-        spread_price_home = spread_price_away = None
-        for o in markets.get("spreads", []):
-            if o["name"] == event["home_team"]:
-                spread = o.get("point")
-                spread_price_home = o.get("price")
-            elif o["name"] == event["away_team"]:
-                spread_price_away = o.get("price")
-        for o in markets.get("totals", []):
-            if o["name"] == "Over":
-                total = o.get("point")
-                over_price = o.get("price")
-            elif o["name"] == "Under":
-                under_price = o.get("price")
+        if not bookmaker_used:
+            bookmaker_used = book_key
+        # Only take h2h from first book that has it
+        if ml_home is None:
+            for o in markets.get("h2h", []):
+                if o["name"] == event["home_team"]: ml_home = o.get("price")
+                elif o["name"] == event["away_team"]: ml_away = o.get("price")
+                elif o["name"] == "Draw": draw_price = o.get("price")
+        # Take spread from first book that has it
+        if spread is None:
+            for o in markets.get("spreads", []):
+                if o["name"] == event["home_team"]:
+                    spread = o.get("point")
+                    spread_price_home = o.get("price")
+                elif o["name"] == event["away_team"]:
+                    spread_price_away = o.get("price")
+        # Take totals from first book that has it
+        if total is None:
+            for o in markets.get("totals", []):
+                if o["name"] == "Over":
+                    total = o.get("point")
+                    over_price = o.get("price")
+                elif o["name"] == "Under":
+                    under_price = o.get("price")
         # BTTS (Both Teams To Score) — soccer-specific market
-        for o in markets.get("btts", []):
-            if o["name"] == "Yes": btts_yes = o.get("price")
-            elif o["name"] == "No": btts_no = o.get("price")
-        if ml_home is not None:
+        if btts_yes is None:
+            for o in markets.get("btts", []):
+                if o["name"] == "Yes": btts_yes = o.get("price")
+                elif o["name"] == "No": btts_no = o.get("price")
+        # Stop once we have all core markets
+        if ml_home is not None and total is not None:
             break
 
     commence = event.get("commence_time", "")
