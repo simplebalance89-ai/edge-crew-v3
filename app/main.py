@@ -749,6 +749,9 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     total = odds.get("total", 0)
     ml_h = odds.get("mlHome", 0)
     ml_a = odds.get("mlAway", 0)
+    draw = odds.get("draw")
+    btts_yes = odds.get("bttsYes")
+    btts_no = odds.get("bttsNo")
     # Guardrail: distinguish "we have injury data and nobody is OUT" from
     # "we have NO injury data at all" so models stop hallucinating names.
     inj_present = isinstance(inj, dict) and ("home" in inj or "away" in inj)
@@ -1042,6 +1045,12 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         league = game.get("league") or game.get("league_name") or ""
         if league:
             soccer_block += f"COMPETITION: {league} | "
+        if draw not in (None, 0):
+            soccer_block += f"ML 3-WAY: {away} {ml_a:+d} / Draw {draw:+d} / {home} {ml_h:+d} | "
+        if btts_yes is not None or btts_no is not None:
+            by = f"{int(btts_yes):+d}" if isinstance(btts_yes, (int, float)) else "?"
+            bn = f"{int(btts_no):+d}" if isinstance(btts_no, (int, float)) else "?"
+            soccer_block += f"BTTS: Yes {by} / No {bn} | "
 
     # Sport-appropriate example reasoning so the prompt example doesn't leak
     # baseball language ("pitching edge") into NBA grading. This was a real
@@ -1055,8 +1064,22 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         "MLB":   '{"grade": 7.2, "pick": "Home", "reasoning": "ace starter and lineup vs hand edge"}',
         "NFL":   '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
         "NCAAF": '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
-        "SOCCER":'{"grade": 7.2, "pick": "Home", "reasoning": "home form and key starter availability"}',
+        "SOCCER":'{"grade": 7.2, "pick": "BTTS_Yes", "reasoning": "both attacks are in form and defensive absences raise both-side scoring probability"}',
     }.get(sport, '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form"}')
+
+    if sport == "SOCCER":
+        schema = (
+            '{"grade": <0-10 number>, '
+            '"pick": "Home" or "Away" or "Draw" or "Over" or "Under" or "BTTS_Yes" or "BTTS_No", '
+            '"reasoning": "one short sentence naming the strongest market edge"}'
+        )
+        market_rule = (
+            "For soccer, evaluate market edge across 1X2 (Home/Away/Draw), totals (Over/Under), "
+            "and BTTS (Yes/No) when odds are present, then pick the single best edge."
+        )
+    else:
+        schema = '{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}'
+        market_rule = "Pick side only (Home or Away)."
 
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
@@ -1069,9 +1092,10 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{soccer_block}"
         f"{injury_block}"
         f"engine composite: {our_score:.1f}/10. "
+        f"{market_rule} "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
-        f'{{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}}. '
+        f"{schema}. "
         f'EXAMPLE OUTPUT: {sport_example} '
         f"Now output ONLY the JSON object, starting with {{ :"
     )
@@ -1282,14 +1306,23 @@ async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[lis
         if not res:
             continue
         score = round(res["grade"], 1)
-        team = home if str(res.get("pick", "")).lower().startswith("h") else away
+        pick_raw = str(res.get("pick", "")).strip()
+        pick_l = pick_raw.lower()
+        if pick_l.startswith("h"):
+            pick_label = home
+        elif pick_l.startswith("a"):
+            pick_label = away
+        elif pick_l in ("draw", "over", "under", "btts_yes", "btts_no"):
+            pick_label = pick_raw
+        else:
+            pick_label = pick_raw or away
         out.append({
             "model": disp,
             "grade": _score_to_grade_local(score),
             "score": score,
             "confidence": min(92, int(50 + score * 4)),
             "thesis": res.get("reasoning", ""),
-            "pick": team,
+            "pick": pick_label,
             "key_factors": [],
             "source": "real",
         })
@@ -2161,7 +2194,9 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         # rather than crash the slate.
         all_games = [g for g in all_games if isinstance(g, dict)]
     except asyncio.TimeoutError:
-        logger.warning(f"[FETCH+GRADE] HARD TIMEOUT (>{grade_timeout}s) for {sport_lower} — returning whatever finished")
+        logger.warning(
+            f"[FETCH+GRADE] HARD TIMEOUT (>{grade_timeout}s) for {sport.lower()} — returning whatever finished"
+        )
         # Return whatever tasks completed before the timeout instead of
         # dropping the entire slate. gather() results are lost on timeout,
         # so fall back to any games that were already updated in-place by
