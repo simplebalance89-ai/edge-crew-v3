@@ -645,6 +645,24 @@ REAL_AI_MODELS = [
 ]
 
 
+def _active_real_models_for_sport(sport_upper: str) -> list[dict]:
+    """Sport-aware model roster.
+    Soccer slates can be large, so we trim the roster to reduce provider
+    throttling/timeouts while keeping diversified model opinions."""
+    if sport_upper == "SOCCER":
+        keep = {
+            "Grok 4.1",
+            "Grok 3",
+            "DeepSeek V3.2 Spec",
+            "GPT-4.1",
+            "GPT-5 Mini",
+            "Gemini 2.5 Flash",
+            "Perplexity Sonar",
+        }
+        return [m for m in REAL_AI_MODELS if m.get("display") in keep]
+    return REAL_AI_MODELS
+
+
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 
@@ -1272,16 +1290,21 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     }
 
 
-async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[list]:
+async def _real_ai_models_for_game(
+    game: dict,
+    our_score: float,
+    model_cfgs: Optional[list[dict]] = None,
+) -> Optional[list]:
     """Call all 7 Azure models in parallel for one game. Returns list of model
     dicts (may be partial — some entries may be missing if they failed)."""
     if not AZURE_AI_KEY and not AZURE_GCE_KEY:
         return None
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
+    active_models = model_cfgs or REAL_AI_MODELS
     tasks = [
         _call_azure_model(cfg, _build_realai_prompt(game, our_score, cfg["persona"]))
-        for cfg in REAL_AI_MODELS
+        for cfg in active_models
     ]
     # Hard ceiling on the whole batch — even if one reasoning model hangs,
     # the analyze endpoint never blocks longer than this per game. 280s gives
@@ -1296,9 +1319,9 @@ async def _real_ai_models_for_game(game: dict, our_score: float) -> Optional[lis
         )
     except asyncio.TimeoutError:
         logger.warning("[REAL-AI BATCH] hard 280s ceiling hit — returning whatever finished")
-        results = [TimeoutError("batch ceiling exceeded") for _ in REAL_AI_MODELS]
+        results = [TimeoutError("batch ceiling exceeded") for _ in active_models]
     out = []
-    for cfg, res in zip(REAL_AI_MODELS, results):
+    for cfg, res in zip(active_models, results):
         disp = cfg["display"]
         if isinstance(res, Exception):
             logger.warning(f"[REAL-AI EXC] {disp}: {res}")
@@ -2775,6 +2798,7 @@ async def analyze_games(request: AnalyzeRequest):
 
 async def _analyze_games_impl(request: AnalyzeRequest):
     sport_lower = request.sport.lower()
+    sport_upper = sport_lower.upper()
 
     # Get cached games — match the same cache key format as /api/games
     cache_key = f"{sport_lower}:games:"
@@ -2802,18 +2826,29 @@ async def _analyze_games_impl(request: AnalyzeRequest):
     # Call AI crowdsource for all games
     logger.info(f"[ANALYZE] Deep analysis for {sport_lower}: {len(games)} games (real Azure AI={'on' if AZURE_AI_KEY else 'OFF — fallback'})")
 
-    # Try REAL Azure AI Foundry calls in parallel per game (7 models each)
-    real_ai_tasks = [
-        _real_ai_models_for_game(g, (g.get("ourGrade") or {}).get("score", 5.0))
-        for g in games
-    ]
+    # Try REAL Azure AI Foundry calls with bounded cross-game concurrency.
+    # Unbounded fan-out on soccer slates causes provider throttling and model
+    # timeouts, which shows up as many FAIL cards in AI Process.
+    active_models = _active_real_models_for_sport(sport_upper)
+    game_concurrency = 2 if sport_upper == "SOCCER" else 4
+    sem = asyncio.Semaphore(game_concurrency)
+
+    async def _run_real_ai(game: dict):
+        async with sem:
+            return await _real_ai_models_for_game(
+                game,
+                (game.get("ourGrade") or {}).get("score", 5.0),
+                model_cfgs=active_models,
+            )
+
+    real_ai_tasks = [_run_real_ai(g) for g in games]
     real_ai_results = await asyncio.gather(*real_ai_tasks, return_exceptions=True)
 
     # Enrich each game with per-model grades + gatekeeper.
     # Per-model fallback: for each display name we expect, if real AI returned
     # it keep it; otherwise backfill from the deterministic math personality
     # with the same display name so the UI always shows a full slate.
-    expected_displays = [cfg["display"] for cfg in REAL_AI_MODELS]
+    expected_displays = [cfg["display"] for cfg in active_models]
 
     real_ok_total = 0
     real_fail_total = 0
