@@ -723,6 +723,122 @@ def score_starting_pitcher(game: dict, side: str) -> tuple:
     return _clamp(5 + margin / 3), f"{_SP_PROXY_NOTE_PREFIX} ({our_name or 'TBD'} vs {opp_name or 'TBD'}) — proxy from L5 margin {margin:+.1f}"
 
 
+# Modern MLB add-ons: starter depth and pitcher-vs-lineup archetype.
+def score_starter_depth(game: dict, side: str) -> tuple:
+    """Modern MLB starter depth signal.
+
+    Lower emphasis on name/tier; higher emphasis on inning capacity and
+    command (BB/9) so bullpen exposure is modeled directly.
+    """
+    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {}) or {}
+    opp_side = "away" if side == "home" else "home"
+    opp_sp = game.get(f"{opp_side}_profile", {}).get("starting_pitcher", {}) or {}
+
+    def _depth_score(p: dict) -> float:
+        ip_raw = p.get("ip")
+        if ip_raw is None:
+            return 5.0
+        try:
+            ip = float(ip_raw)
+        except (TypeError, ValueError):
+            return 5.0
+        score = 5.0
+        if ip >= 100:
+            score += 2.0
+        elif ip >= 60:
+            score += 1.25
+        elif ip >= 30:
+            score += 0.5
+        elif ip < 20:
+            score -= 0.75
+
+        k9_raw = p.get("k9")
+        bb9_raw = p.get("bb9")
+        try:
+            if k9_raw is not None and float(k9_raw) >= 9.5:
+                score += 0.5
+        except (TypeError, ValueError):
+            pass
+        try:
+            bb9 = float(bb9_raw) if bb9_raw is not None else None
+            if bb9 is not None:
+                if bb9 <= 2.2:
+                    score += 0.6
+                elif bb9 >= 3.6:
+                    score -= 0.8
+        except (TypeError, ValueError):
+            pass
+        return score
+
+    ours = _depth_score(sp)
+    opp = _depth_score(opp_sp)
+    score = _clamp(5.0 + (ours - opp) * 0.8)
+    return score, f"starter depth {ours:.1f} vs {opp:.1f}"
+
+
+def score_pitcher_hitter_archetype(game: dict, side: str) -> tuple:
+    """Pitcher archetype vs opposing lineup archetype.
+
+    True pitch-mix (FB/CB/SL usage) is not available in current ingest.
+    Proxy with:
+    - Pitcher shape: K/9 + BB/9 (power/contact/wild)
+    - Opp lineup shape vs hand: AVG + HR + OPS (contact/power)
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    opp_side = "away" if side == "home" else "home"
+    opp_profile = game.get(f"{opp_side}_profile", {}) or {}
+
+    sp = profile.get("starting_pitcher", {}) or {}
+    opp_splits = opp_profile.get("lineup_vs_hand") or {}
+    k9 = sp.get("k9")
+    bb9 = sp.get("bb9")
+    avg = opp_splits.get("avg_vs_hand")
+    hr = opp_splits.get("hr_vs_hand")
+    ops = opp_splits.get("ops_vs_hand")
+    if k9 is None or avg is None or hr is None:
+        return 5.0, "no pitcher-vs-lineup archetype data"
+
+    try:
+        k9f = float(k9)
+        bb9f = float(bb9) if bb9 is not None else 2.9
+        avgf = float(avg)
+        hri = int(hr)
+        opsf = float(ops) if ops is not None else 0.720
+    except (TypeError, ValueError):
+        return 5.0, "no pitcher-vs-lineup archetype data"
+
+    if k9f >= 9.5:
+        p_type = "power"
+    elif k9f <= 7.2:
+        p_type = "contact"
+    else:
+        p_type = "balanced"
+
+    if hri >= 40 or (opsf >= 0.760 and avgf < 0.250):
+        l_type = "power"
+    elif avgf >= 0.260 and hri <= 30:
+        l_type = "contact"
+    else:
+        l_type = "balanced"
+
+    score = 5.0
+    if p_type == "power" and l_type == "power":
+        score += 1.0
+    elif p_type == "contact" and l_type == "power":
+        score -= 1.1
+    elif p_type == "power" and l_type == "contact":
+        score += 0.4
+    elif p_type == "contact" and l_type == "contact":
+        score += 0.2
+
+    if bb9f <= 2.2:
+        score += 0.4
+    elif bb9f >= 3.6:
+        score -= 0.7
+
+    return _clamp(score), f"{p_type} arm (K9 {k9f:.1f}, BB9 {bb9f:.1f}) vs {l_type} lineup (AVG {avgf:.3f}, HR {hri})"
+
+
 # Hardcoded elite/good NHL goalies — fallback when SV% data not available.
 # Names lowercased for matching; check by last name.
 ELITE_NHL_GOALIES = {
@@ -1217,7 +1333,8 @@ SPORT_VARIABLES = {
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
     },
     "MLB": {
-        "starting_pitcher": 10, "bullpen": 8, "lineup_vs_hand": 7, "star_player": 8,
+        "starting_pitcher": 6, "starter_depth": 9, "bullpen": 11,
+        "lineup_vs_hand": 9, "pitcher_hitter_archetype": 8, "star_player": 7,
         "off_ranking": 7, "def_ranking": 7,
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "umpire": 4,
@@ -1346,6 +1463,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_starting_pitcher(game, pick_side)
             if note.startswith(_SP_PROXY_NOTE_PREFIX):
                 available = False
+        elif var_name == "starter_depth":
+            score, note = score_starter_depth(game, pick_side)
+            if "no " in note.lower():
+                available = False
         elif var_name == "goalie":
             score, note = score_starting_goalie(game, pick_side)
             if note == "No goalie data":
@@ -1363,6 +1484,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "lineup_vs_hand":
             score, note = score_lineup_vs_hand(game, pick_side)
             if note == "no lineup vs hand splits":
+                available = False
+        elif var_name == "pitcher_hitter_archetype":
+            score, note = score_pitcher_hitter_archetype(game, pick_side)
+            if "no pitcher-vs-lineup archetype data" in note:
                 available = False
         elif var_name == "umpire":
             score, note = score_umpire(game, pick_side)
@@ -1460,7 +1585,9 @@ PROFILE_WEIGHTS = {
         "off_ranking": 1.2, "def_ranking": 1.2, "form": 1.0, "home_away": 1.0,
         "star_player": 1.1, "rest": 1.0, "ats": 0.9, "h2h": 0.8,
         "motivation": 0.8, "depth": 0.7, "line_movement": 0.6,
-        "pace": 0.7, "road_trip": 0.6, "starting_pitcher": 1.3, "congestion": 1.2,
+        "pace": 0.7, "road_trip": 0.6, "starting_pitcher": 0.9, "starter_depth": 1.2,
+        "bullpen": 1.25, "lineup_vs_hand": 1.15, "pitcher_hitter_archetype": 1.15,
+        "congestion": 1.2,
         "goalie": 1.3,
     },
     "edge": {
@@ -1469,7 +1596,9 @@ PROFILE_WEIGHTS = {
         "form": 1.0, "depth": 1.0, "line_movement": 0.9,
         "off_ranking": 0.7, "def_ranking": 0.7, "star_player": 0.8,
         "ats": 0.8, "h2h": 0.7, "pace": 0.5,
-        "starting_pitcher": 0.8, "congestion": 1.4,
+        "starting_pitcher": 0.7, "starter_depth": 1.1,
+        "bullpen": 1.35, "lineup_vs_hand": 1.1, "pitcher_hitter_archetype": 1.1,
+        "congestion": 1.4,
         "goalie": 1.0,
     },
     "renzo": {
@@ -1478,7 +1607,9 @@ PROFILE_WEIGHTS = {
         "line_movement": 1.0, "h2h": 1.0,
         "home_away": 0.8, "rest": 0.7, "star_player": 0.7,
         "motivation": 0.5, "depth": 0.5, "road_trip": 0.5,
-        "pace": 0.4, "starting_pitcher": 1.2, "congestion": 0.8,
+        "pace": 0.4, "starting_pitcher": 0.85, "starter_depth": 1.2,
+        "bullpen": 1.3, "lineup_vs_hand": 1.2, "pitcher_hitter_archetype": 1.2,
+        "congestion": 0.8,
         "goalie": 1.3,
     },
 }
