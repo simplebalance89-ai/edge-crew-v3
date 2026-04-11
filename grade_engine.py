@@ -1614,14 +1614,42 @@ PROFILE_WEIGHTS = {
     },
 }
 
+# MLB-only new-age matrices distilled from the strongest (A/A-) round-table
+# responses: center on run value, contact quality, and pitcher-lab style edges.
+MLB_NEW_AGE_PROFILE_WEIGHTS = {
+    "runvalue": {
+        "off_ranking": 1.35, "lineup_vs_hand": 1.35, "def_ranking": 1.15,
+        "bullpen": 1.35, "starter_depth": 1.20, "starting_pitcher": 0.75,
+        "pitcher_hitter_archetype": 1.10, "park_factor": 1.00, "umpire": 0.80,
+        "form": 0.95, "line_movement": 0.95, "ats": 0.85,
+    },
+    "statcast": {
+        "lineup_vs_hand": 1.45, "pitcher_hitter_archetype": 1.35,
+        "off_ranking": 1.20, "bullpen": 1.20, "starter_depth": 1.10,
+        "starting_pitcher": 0.70, "park_factor": 1.10, "umpire": 0.90,
+        "form": 0.90, "line_movement": 0.85, "ats": 0.75,
+    },
+    "pitchlab": {
+        "bullpen": 1.45, "starter_depth": 1.30, "pitcher_hitter_archetype": 1.25,
+        "starting_pitcher": 0.80, "def_ranking": 1.10, "lineup_vs_hand": 1.10,
+        "off_ranking": 0.95, "park_factor": 0.95, "umpire": 1.00,
+        "form": 0.85, "line_movement": 0.80, "ats": 0.70,
+    },
+}
+
 
 def grade_profiles(game: dict, pick_side: str) -> dict:
     """Run all 3 grader profiles on a game. Returns {name: {grade, score, ...}}"""
     base = grade_game(game, pick_side)
     base_vars = base.get("variables", {})
     profiles = {}
+    sport = (game.get("sport") or "").upper()
 
-    for profile_name, multipliers in PROFILE_WEIGHTS.items():
+    profiles_to_use = dict(PROFILE_WEIGHTS)
+    if sport == "MLB":
+        profiles_to_use.update(MLB_NEW_AGE_PROFILE_WEIGHTS)
+
+    for profile_name, multipliers in profiles_to_use.items():
         # Re-weight the base variables
         total_w = 0
         total_s = 0
@@ -1661,7 +1689,7 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
     other_base = grade_game(game, other_side)
     other_vars = other_base.get("variables", {})
 
-    for profile_name, multipliers in PROFILE_WEIGHTS.items():
+    for profile_name, multipliers in profiles_to_use.items():
         total_w = 0
         total_s = 0
         for var_name, var_data in other_vars.items():
