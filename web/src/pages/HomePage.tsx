@@ -58,11 +58,25 @@ export default function HomePage() {
           return (gradeRank[cg] || 0) >= gradeRank['B+']
         })
       : games
-    const scoreOf = (g: any): number => {
+    const consensusRankOf = (g: any): number => {
+      const cg = (g?.convergence?.consensusGrade || '-').toString().toUpperCase()
+      return gradeRank[cg] || 0
+    }
+    const consensusScoreOf = (g: any): number => {
+      const s = g?.convergence?.consensusScore
+      return typeof s === 'number' && s > 0 ? s : -Infinity
+    }
+    const engineScoreOf = (g: any): number => {
       const s = g?.ourGrade?.score ?? g?.grade?.score ?? g?.score
       return typeof s === 'number' && s > 0 ? s : -Infinity
     }
-    return [...filtered].sort((a, b) => scoreOf(b) - scoreOf(a))
+    return [...filtered].sort((a, b) => {
+      const rankDelta = consensusRankOf(b) - consensusRankOf(a)
+      if (rankDelta !== 0) return rankDelta
+      const consDelta = consensusScoreOf(b) - consensusScoreOf(a)
+      if (consDelta !== 0) return consDelta
+      return engineScoreOf(b) - engineScoreOf(a)
+    })
   }, [games, isChinnyTab])
 
   // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
