@@ -597,6 +597,8 @@ def _parse_event(event: dict, sport_label: str) -> dict:
 # Sweden Central key kept as fallback but gce is the primary path.
 AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDEN_KEY", "")
 AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
+AZURE_AI_PETERWILSON_KEY = os.environ.get("AZURE_AI_PETERWILSON_KEY", "")
+AZURE_NC_KEY = os.environ.get("AZURE_NC_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 
@@ -611,6 +613,11 @@ AZURE_HOSTS = {
         "key": AZURE_AI_KEY,
         "format": "openai_v1",
     },
+    "ai_peterwilson": {
+        "url_template": "https://ai-peterwilson7092ai011379814834.cognitiveservices.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
+        "key": AZURE_AI_PETERWILSON_KEY,
+        "format": "aoai_classic",
+    },
     "gemini": {
         "url_template": "https://generativelanguage.googleapis.com/v1beta/models/{deployment}:generateContent",
         "key": GEMINI_API_KEY,
@@ -623,55 +630,149 @@ AZURE_HOSTS = {
     },
 }
 
-# 10 confirmed-working models, all hosted at gce-personal-resource (probed 2026-04-07).
-# token_param: "max_completion_tokens" required for gpt-5+ and o-series; "max_tokens" for everything else.
+# Expanded roster — 19 models across 5 hosts (gce / sweden / ai_peterwilson / gemini / perplexity).
+# Kimi K2 Thinking is intentionally NOT in this roster — it lives as the post-convergence
+# GATEKEEPER (Stage 5 of the Edge Crew v3 pipeline) via the Moonshot direct API.
+# token_param: "max_completion_tokens" required for gpt-5+ / o-series / grok reasoning; "max_tokens" otherwise.
 REAL_AI_MODELS = [
+    # ── Azure Model Router (mandatory on every sport panel) ─────────────────
+    {"display": "Azure Model Router","deployment": "model-router",                           "host": "gce", "persona": "Azure auto-routes to the best model for the task — consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+
+    # ── Grok family ─────────────────────────────────────────────────────────
+    {"display": "Grok 4.20 Reasoning","deployment": "grok-4-20-reasoning",                   "host": "sweden", "persona": "newest xAI reasoning model, bleeding edge",  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
+    {"display": "Grok 4 Fast",       "deployment": "grok-4-fast-reasoning",                 "host": "gce", "persona": "prior-gen Grok 4 reasoning, variance vs 4.1","token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+
+    # ── DeepSeek family ─────────────────────────────────────────────────────
     {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 180},
     {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
-    # Kimi K2 Thinking removed from the main batch â€” Azure-hosted version was
-    # consistently the slowest model in the slate (240s timeout, often hit it)
-    # and dragged the whole batch ceiling up. It now lives only as the
-    # post-convergence gatekeeper, where Moonshot's direct API (set
-    # MOONSHOT_API_KEY env) gives it a fast, reliable path.
+    {"display": "DeepSeek V3.1",     "deployment": "DeepSeek-V3-1",                         "host": "gce", "persona": "prior-gen DeepSeek V3, variance vs V3.2",    "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
+
+    # ── Microsoft Phi (chain-of-thought specialists) ────────────────────────
     {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
+
+    # ── OpenAI / GPT family ─────────────────────────────────────────────────
     {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
-    {"display": "o4-mini",           "deployment": "o4-mini",                               "host": "gce", "persona": "OpenAI reasoning model, careful logic",      "token_param": "max_completion_tokens", "max_tokens": 12000, "timeout": 240},
+    {"display": "GPT-5.2 Chat",      "deployment": "gpt-52-instant",                        "host": "gce", "persona": "latest GPT-5.2 chat, deep strategic framing","token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+    {"display": "GPT-5.4 Nano",      "deployment": "gpt-5.4-nano",                          "host": "ai_peterwilson", "persona": "newest GPT-5 family, fastest variant",  "token_param": "max_completion_tokens", "max_tokens": 2000,  "timeout": 60},
+
+    # ── Meta Llama family ───────────────────────────────────────────────────
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 120},
+
+    # ── Mistral (European perspective) ──────────────────────────────────────
+    {"display": "Mistral Large 3",   "deployment": "Mistral-Large-3",                       "host": "ai_peterwilson", "persona": "European flagship, different training bias",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+
+    # ── Outside-family diversity (non-Azure) ────────────────────────────────
+    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher — often catches line movement", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 120},
     {"display": "Perplexity Sonar",  "deployment": "sonar",                                  "host": "perplexity","persona": "real-time web research, contrarian to consensus", "token_param": "max_tokens", "max_tokens": 2000, "timeout": 90},
 ]
 
 
 def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> list[dict]:
-    """Sport-aware model roster.
-    Soccer slates can be large, so we trim the roster to reduce provider
-    throttling/timeouts while keeping diversified model opinions."""
-    if fast_mode:
-        # Global fast roster for slate-level Analyze All.
-        keep_fast = {
-            "Grok 3",
-            "DeepSeek V3.2 Spec",
-            "GPT-4.1",
-            "GPT-5 Mini",
-            "Perplexity Sonar",
-        }
-        return [m for m in REAL_AI_MODELS if m.get("display") in keep_fast]
+    """Sport-aware model roster — 8 models per sport panel, Azure Model Router
+    mandatory on every panel.
 
-    if sport_upper == "SOCCER":
-        # Soccer-specific stable roster. These models have shown the best
-        # reliability/latency tradeoff in production soccer analyze runs.
+    Rationale: different sports reward different model strengths. MLB rewards
+    dense stats + line-movement sniffing; NHL rewards contrarian pace/goalie
+    reads; combat rewards fighter-profile + line-value against heavy chalk;
+    soccer markets are thin and reward research + broad pattern matching.
+    Same 19 models across every sport wastes tokens, latency, and dilutes
+    signal. Each sport panel is 8 models = 1 router + 7 specialists.
+
+    Kimi K2 Thinking is intentionally NOT here — it is the post-convergence
+    gatekeeper (Stage 5), hit via Moonshot direct API after the panel votes.
+    """
+    if fast_mode:
+        # Global fast roster for slate-level Analyze All — 6 models, no router.
         keep = {
             "Grok 3",
             "DeepSeek V3.2 Spec",
             "GPT-4.1",
             "GPT-5 Mini",
+            "Gemini 2.5 Flash",
             "Perplexity Sonar",
         }
-        return [m for m in REAL_AI_MODELS if m.get("display") in keep]
-    return REAL_AI_MODELS
+    elif sport_upper == "MLB":
+        # Stats-heavy: historical numbers, bullpen depth, lineup vs hand.
+        # Gemini 2.5 Flash specifically caught the Cardinals 2026-04-11 line
+        # movement. Phi-4 is the chain-of-thought anchor. DeepSeek R1 + V3.1
+        # give variance on data mass. GPT-4.1 + GPT-5.2 Chat two-pronged GPT.
+        keep = {
+            "Azure Model Router",
+            "Grok 4.1",
+            "DeepSeek R1",
+            "DeepSeek V3.1",
+            "Phi-4 Reasoning",
+            "GPT-4.1",
+            "GPT-5.2 Chat",
+            "Gemini 2.5 Flash",
+        }
+    elif sport_upper == "NHL":
+        # Pace / goalie / matchup volatility. Two Grok generations (4.20 bleeding
+        # edge from Sweden + 4 Fast as variance). DeepSeek R1 heavy math.
+        # Phi-4 thin-edge reasoning. Llama-4 open pattern matcher. GPT-5 Mini
+        # quick consensus. Gemini Flash as outside-family sanity check.
+        keep = {
+            "Azure Model Router",
+            "Grok 4.20 Reasoning",
+            "Grok 4 Fast",
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-5 Mini",
+            "Llama-4 Maverick",
+            "Gemini 2.5 Flash",
+        }
+    elif sport_upper in ("MMA", "BOXING"):
+        # Combat: fighter records, style, line-value against heavy chalk.
+        # Three Groks for contrarian depth (4.20 newest, 4.1 trap reader,
+        # 3 old-bias). DeepSeek R1 for record math. Phi-4 for skill-gap CoT.
+        # GPT-4.1 balanced keel. Mistral Large 3 for European-trained
+        # perspective outside the US-centric cluster.
+        keep = {
+            "Azure Model Router",
+            "Grok 4.20 Reasoning",
+            "Grok 4.1",
+            "Grok 3",
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-4.1",
+            "Mistral Large 3",
+        }
+    elif sport_upper == "SOCCER":
+        # Thin markets, broad fixtures, large slates (MLS + EPL + La Liga
+        # + Serie A etc). Research-first (Perplexity) + two DeepSeek variants
+        # for data variance + Mistral Large 3 for European-league edge
+        # + GPT double coverage.
+        keep = {
+            "Azure Model Router",
+            "Grok 3",
+            "DeepSeek V3.2 Spec",
+            "DeepSeek V3.1",
+            "GPT-4.1",
+            "GPT-5 Mini",
+            "Mistral Large 3",
+            "Perplexity Sonar",
+        }
+    elif sport_upper in ("NFL", "NBA", "WNBA", "NCAAF", "NCAAB"):
+        # Default team-sport panel until we have settled data to tune these
+        # individually. Broad cross-family diversity. GPT-5.4 Nano as the
+        # bleeding-edge fast voice.
+        keep = {
+            "Azure Model Router",
+            "Grok 4.1",
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-4.1",
+            "GPT-5.4 Nano",
+            "Llama-4 Maverick",
+            "Gemini 2.5 Flash",
+        }
+    else:
+        # Unknown sport → fall back to full roster rather than dropping picks
+        return REAL_AI_MODELS
+    return [m for m in REAL_AI_MODELS if m.get("display") in keep]
 
 
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
