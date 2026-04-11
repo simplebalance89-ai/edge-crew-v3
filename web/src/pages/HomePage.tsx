@@ -7,6 +7,7 @@ import type { Sport } from '@/types'
 import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
+const CHINNY_TAB = 'fuck_chinny'
 
 type MlbMode = 'games' | 'nrfi'
 type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls' | 'bundesliga' | 'ligue_1' | 'ucl' | 'europa' | 'brazil' | 'liga_mx'
@@ -31,26 +32,38 @@ export default function HomePage() {
   const [soccerLeague, setSoccerLeague] = useState<SoccerLeague>('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+  const [specialTab, setSpecialTab] = useState<'none' | typeof CHINNY_TAB>('none')
   const queryClient = useQueryClient()
 
-  const apiMode = selectedSport === 'mlb' ? mlbMode : undefined
-  const apiLeague = selectedSport === 'soccer' ? soccerLeague || undefined : undefined
+  const isChinnyTab = specialTab === CHINNY_TAB
+  const effectiveSport: Sport = isChinnyTab ? 'soccer' : selectedSport
+  const apiMode = effectiveSport === 'mlb' ? mlbMode : undefined
+  const apiLeague = effectiveSport === 'soccer' && !isChinnyTab ? soccerLeague || undefined : undefined
 
   // Fetch games
   const { data: games, isLoading, error } = useQuery({
-    queryKey: ['games', selectedSport, apiMode, apiLeague],
-    queryFn: () => getGames(selectedSport, apiMode, apiLeague),
+    queryKey: ['games', effectiveSport, apiMode, apiLeague, specialTab],
+    queryFn: () => getGames(effectiveSport, apiMode, apiLeague),
   })
 
   // Sort games by engine grade score desc; ungraded to the bottom
   const sortedGames = useMemo(() => {
     if (!Array.isArray(games)) return games
+    const gradeRank: Record<string, number> = {
+      'A+': 10, A: 9, 'A-': 8, 'B+': 7, B: 6, 'B-': 5, 'C+': 4, C: 3, D: 2, F: 1, '-': 0,
+    }
+    const filtered = isChinnyTab
+      ? games.filter((g: any) => {
+          const cg = (g?.convergence?.consensusGrade || '').toString().toUpperCase()
+          return (gradeRank[cg] || 0) >= gradeRank['B+']
+        })
+      : games
     const scoreOf = (g: any): number => {
       const s = g?.ourGrade?.score ?? g?.grade?.score ?? g?.score
       return typeof s === 'number' && s > 0 ? s : -Infinity
     }
-    return [...games].sort((a, b) => scoreOf(b) - scoreOf(a))
-  }, [games])
+    return [...filtered].sort((a, b) => scoreOf(b) - scoreOf(a))
+  }, [games, isChinnyTab])
 
   // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
   const handleAnalyzeAll = async () => {
@@ -59,10 +72,13 @@ export default function HomePage() {
     setAnalyzeError(null)
 
     try {
-      const enriched = await analyzeGames(selectedSport)
+      const enriched = await analyzeGames(
+        effectiveSport,
+        isChinnyTab ? { fast: true } : (effectiveSport === 'soccer' ? { league: apiLeague, fast: true } : undefined)
+      )
       // Update the query cache with enriched games so cards re-render
       if (Array.isArray(enriched)) {
-        queryClient.setQueryData(['games', selectedSport, apiMode, apiLeague], enriched)
+        queryClient.setQueryData(['games', effectiveSport, apiMode, apiLeague, specialTab], enriched)
       }
     } catch (e) {
       console.error('Analysis failed:', e)
@@ -99,9 +115,12 @@ export default function HomePage() {
         {SPORTS.map((sport) => (
           <button
             key={sport}
-            onClick={() => setSelectedSport(sport)}
+            onClick={() => {
+              setSpecialTab('none')
+              setSelectedSport(sport)
+            }}
             className={`px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider whitespace-nowrap transition-all ${
-              selectedSport === sport
+              !isChinnyTab && selectedSport === sport
                 ? 'bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] text-black'
                 : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
             }`}
@@ -109,6 +128,19 @@ export default function HomePage() {
             {SPORT_LABELS[sport]}
           </button>
         ))}
+        <button
+          onClick={() => {
+            setSelectedSport('soccer')
+            setSpecialTab(CHINNY_TAB)
+          }}
+          className={`px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider whitespace-nowrap transition-all ${
+            isChinnyTab
+              ? 'bg-gradient-to-r from-[#00E5FF] to-[#FF2D78] text-black'
+              : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
+          }`}
+        >
+          FUCK Chinny
+        </button>
       </div>
 
       {/* MLB Mode Toggle */}
@@ -131,7 +163,7 @@ export default function HomePage() {
       )}
 
       {/* Soccer League Filter */}
-      {selectedSport === 'soccer' && (
+      {selectedSport === 'soccer' && !isChinnyTab && (
         <div className="flex gap-2 mb-4">
           {SOCCER_LEAGUES.map((lg) => (
             <button
@@ -153,7 +185,7 @@ export default function HomePage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-black text-[#E8E8EC]">{SPORT_LABELS[selectedSport]} Games</h1>
-          <p className="text-[#6E6E80] text-sm">{games?.length || 0} games on slate</p>
+          <p className="text-[#6E6E80] text-sm">{sortedGames?.length || 0} games on slate</p>
         </div>
         <button
           onClick={handleAnalyzeAll}
@@ -177,7 +209,7 @@ export default function HomePage() {
       {/* Analysis status */}
       {analyzing && (
         <div className="mb-4 p-3 bg-[#00E5FF]/5 border border-[#00E5FF]/20 rounded-lg text-sm text-[#00E5FF]">
-          Running 10 real Azure AI models (Grok 4.1, Grok 3, DeepSeek R1, DeepSeek V3.2 Spec, Kimi K2 Thinking, Phi-4 Reasoning, GPT-4.1, GPT-5 Mini, o4-mini, Llama-4 Maverick) on {games?.length || 0} games... This may take 30-60 seconds.
+          Running AI analysis on {sortedGames?.length || 0} games...
         </div>
       )}
       {analyzeError && (

@@ -33,8 +33,8 @@ export const gradeGame = (data: GradeRequest) =>
   api.post<ConvergenceResult>('/api/grade', data).then(r => r.data);
 
 // Deep AI analysis (crowdsource + gatekeeper)
-export const analyzeGames = (sport: string) =>
-  api.post<Game[]>('/api/analyze', { sport }).then(r => r.data);
+export const analyzeGames = (sport: string, opts?: { league?: string; fast?: boolean }) =>
+  api.post<Game[]>('/api/analyze', { sport, ...(opts?.league ? { league: opts.league } : {}), ...(typeof opts?.fast === 'boolean' ? { fast: opts.fast } : {}) }).then(r => r.data);
 
 // Single-game deep analysis — same backend, filtered to one game by id.
 // Returns a 1-element array of the enriched game.
