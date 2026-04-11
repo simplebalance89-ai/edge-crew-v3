@@ -8,7 +8,8 @@ import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
 const CHINNY_TAB = 'fuck_chinny'
-const CHINNY_AUDIO_URL = (import.meta as any).env?.VITE_CHINNY_TAB_AUDIO_URL as string | undefined
+const CHINNY_AUDIO_URL =
+  ((import.meta as any).env?.VITE_CHINNY_TAB_AUDIO_URL as string | undefined) || '/audio/chinny-theme.mp3'
 
 type MlbMode = 'games' | 'nrfi'
 type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls' | 'bundesliga' | 'ligue_1' | 'ucl' | 'europa' | 'brazil' | 'liga_mx'
