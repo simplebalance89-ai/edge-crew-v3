@@ -882,6 +882,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     # KNOWN_ACE_PITCHERS, plus real ERA/WHIP/K9 when MLB Stats API populated
     # them, plus weather + plate umpire from StatsAPI gameData.
     pitcher_block = ""
+    mlb_priority_block = ""
     if sport == "MLB":
         h_sp_dict = hp.get("starting_pitcher") or {}
         a_sp_dict = ap.get("starting_pitcher") or {}
@@ -985,6 +986,15 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
                 f"LINEUP VS HAND â€” {away}: {_lvh_str(a_lvh)} | "
                 f"{home}: {_lvh_str(h_lvh)} | "
             )
+        mlb_priority_block = (
+            "MLB EDGE PRIORITY: "
+            "1) bullpen quality/fatigue, "
+            "2) starter depth + command (IP/K9/BB9), "
+            "3) lineup-vs-hand + pitcher/lineup archetype fit, "
+            "4) park/weather/umpire, "
+            "5) starter-name narrative LAST. "
+            "Do not anchor on pitcher name alone. | "
+        )
 
     # NHL-specific: starting goalies + tier label + SV% when ESPN provides it.
     # data_fetch._fetch_nhl_starting_goalies now populates starting_goalie on
@@ -1079,7 +1089,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         "WNBA":  '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
         "NCAAB": '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
         "NHL":   '{"grade": 7.2, "pick": "Home", "reasoning": "elite goalie edge and rest advantage"}',
-        "MLB":   '{"grade": 7.2, "pick": "Home", "reasoning": "ace starter and lineup vs hand edge"}',
+        "MLB":   '{"grade": 7.2, "pick": "Home", "reasoning": "bullpen freshness and lineup-vs-hand edge outweigh starter-name narrative"}',
         "NFL":   '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
         "NCAAF": '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
         "SOCCER":'{"grade": 7.2, "pick": "BTTS_Yes", "reasoning": "both attacks are in form and defensive absences raise both-side scoring probability"}',
@@ -1095,6 +1105,16 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
             "For soccer, evaluate market edge across 1X2 (Home/Away/Draw), totals (Over/Under), "
             "and BTTS (Yes/No) when odds are present, then pick the single best edge."
         )
+    elif sport == "MLB":
+        schema = (
+            '{"grade": <0-10 number>, '
+            '"pick": "Home" or "Away" or "Over" or "Under", '
+            '"reasoning": "one short sentence naming the strongest edge in the selected market"}'
+        )
+        market_rule = (
+            "For MLB, evaluate edge across side (Home/Away) and total (Over/Under). "
+            "Prioritize bullpen/depth/archetype signals over starter-name narratives."
+        )
     else:
         schema = '{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}'
         market_rule = "Pick side only (Home or Away)."
@@ -1106,6 +1126,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{form_block}"
         f"{nba_block}"
         f"{pitcher_block}"
+        f"{mlb_priority_block}"
         f"{goalie_block}"
         f"{soccer_block}"
         f"{injury_block}"
