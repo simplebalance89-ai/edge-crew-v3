@@ -649,6 +649,17 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
     """Sport-aware model roster.
     Soccer slates can be large, so we trim the roster to reduce provider
     throttling/timeouts while keeping diversified model opinions."""
+    if fast_mode:
+        # Global fast roster for slate-level Analyze All.
+        keep_fast = {
+            "Grok 3",
+            "DeepSeek V3.2 Spec",
+            "GPT-4.1",
+            "GPT-5 Mini",
+            "Perplexity Sonar",
+        }
+        return [m for m in REAL_AI_MODELS if m.get("display") in keep_fast]
+
     if sport_upper == "SOCCER":
         # Soccer-specific stable roster. These models have shown the best
         # reliability/latency tradeoff in production soccer analyze runs.
@@ -2826,7 +2837,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
     league_keys = [x.strip() for x in league_raw.split(",") if x.strip()]
     league_key = ",".join(league_keys)
     fast_mode = request.fast if request.fast is not None else (
-        sport_upper == "SOCCER" and request.game_id is None
+        request.game_id is None
     )
 
     # Get cached games — match the same cache key format as /api/games,
