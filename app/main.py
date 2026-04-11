@@ -759,6 +759,7 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
     sport = (game.get("sport") or "").upper()
+    analysis_mode = str(game.get("_analysis_mode") or "games").lower()
     odds = game.get("odds", {}) or {}
     hp = game.get("home_profile", {}) or {}
     ap = game.get("away_profile", {}) or {}
@@ -1104,6 +1105,17 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         market_rule = (
             "For soccer, evaluate market edge across 1X2 (Home/Away/Draw), totals (Over/Under), "
             "and BTTS (Yes/No) when odds are present, then pick the single best edge."
+        )
+    elif sport == "MLB" and analysis_mode == "nrfi":
+        schema = (
+            '{"grade": <0-10 number>, '
+            '"pick": "NRFI" or "YRFI" or "SKIP", '
+            '"reasoning": "one short sentence naming the strongest first-inning edge"}'
+        )
+        market_rule = (
+            "For MLB NRFI mode, evaluate only first-inning run environment and output NRFI/YRFI/SKIP. "
+            "Center on starter first-inning quality + command, top-of-order offense vs hand/pitch mix, "
+            "park/weather/umpire, then market total as a weak tie-breaker."
         )
     elif sport == "MLB":
         schema = (
@@ -1895,7 +1907,10 @@ from grade_engine import (  # noqa: E402
 
 
 def _evaluate_nrfi(game: dict) -> dict:
-    """Evaluate NRFI (No Run First Inning) probability â€” pitcher quality is primary driver."""
+    """Evaluate NRFI/YRFI with a first-inning-specific MLB matrix.
+
+    Kept separate from full-game MLB engine logic by design.
+    """
     odds = game.get("odds", {})
     spread = abs(odds.get("spread", 0))
     total = odds.get("total", 0)
@@ -1910,64 +1925,119 @@ def _evaluate_nrfi(game: dict) -> dict:
 
     h_tier = _pitcher_tier(h_sp_dict)
     a_tier = _pitcher_tier(a_sp_dict)
-    pitcher_score = _TIER_VALUES[h_tier] + _TIER_VALUES[a_tier]
-
+    pitcher_raw = _TIER_VALUES[h_tier] + _TIER_VALUES[a_tier]
     reasons = []
-    # Pitcher reasoning â€” primary driver
-    if h_tier != "unknown" or a_tier != "unknown":
-        h_label = f"{h_sp.split()[-1]} ({h_tier})" if h_tier != "unknown" else f"{h_sp.split()[-1] if h_sp != 'TBD' else 'TBD'} (unknown)"
-        a_label = f"{a_sp.split()[-1]} ({a_tier})" if a_tier != "unknown" else f"{a_sp.split()[-1] if a_sp != 'TBD' else 'TBD'} (unknown)"
-        if pitcher_score >= 4.5:
-            reasons.append(f"{a_label} vs {h_label} â€” elite pitching duel")
-        elif pitcher_score >= 2.5:
-            reasons.append(f"{a_label} vs {h_label} â€” strong NRFI lean")
-        elif pitcher_score <= -2:
-            reasons.append(f"{a_label} vs {h_label} â€” YRFI risk")
-        else:
-            reasons.append(f"{a_label} vs {h_label}")
+
+    # 1) Pitchers (40%) â€” anchor
+    pitcher_component = pitcher_raw * 0.40
+    h_last = h_sp.split()[-1] if h_sp and h_sp != "TBD" else "TBD"
+    a_last = a_sp.split()[-1] if a_sp and a_sp != "TBD" else "TBD"
+    reasons.append(f"{a_last} ({a_tier}) vs {h_last} ({h_tier})")
+
+    # 2) Top-of-order offense proxy (25%)
+    # Use lineup-vs-hand OPS when available, otherwise L5 scoring.
+    h_lvh = hp.get("lineup_vs_hand") or {}
+    a_lvh = ap.get("lineup_vs_hand") or {}
+    h_ops = h_lvh.get("ops_vs_hand")
+    a_ops = a_lvh.get("ops_vs_hand")
+    offense_signal = 0.0
+    if isinstance(h_ops, (int, float)) and isinstance(a_ops, (int, float)):
+        avg_ops = (float(h_ops) + float(a_ops)) / 2.0
+        if avg_ops >= 0.790:
+            offense_signal -= 1.5
+            reasons.append(f"lineup-vs-hand OPS elevated ({avg_ops:.3f})")
+        elif avg_ops <= 0.700:
+            offense_signal += 1.25
+            reasons.append(f"lineup-vs-hand OPS suppressed ({avg_ops:.3f})")
     else:
-        reasons.append("Two unknown arms â€” NRFI uncertain")
+        h_l5 = hp.get("ppg_L5")
+        a_l5 = ap.get("ppg_L5")
+        if isinstance(h_l5, (int, float)) and isinstance(a_l5, (int, float)):
+            avg_l5 = (float(h_l5) + float(a_l5)) / 2.0
+            if avg_l5 >= 5.2:
+                offense_signal -= 1.0
+                reasons.append(f"L5 offenses hot ({avg_l5:.1f} RPG)")
+            elif avg_l5 <= 3.8:
+                offense_signal += 0.9
+                reasons.append(f"L5 offenses cold ({avg_l5:.1f} RPG)")
+    offense_component = offense_signal * 0.25
 
-    # Secondary signals (halved weights vs old logic)
-    nrfi_score = pitcher_score  # primary driver
-
-    if total > 0:
-        if total < 8.0:
-            nrfi_score += 1.0
-            reasons.append(f"Sub-8 total ({total:.1f}) â€” pitcher's duel")
-        elif total < 8.5:
-            nrfi_score += 0.5
-        elif total > 9.5:
-            nrfi_score -= 1.0
-            reasons.append(f"High total ({total:.1f}) â€” offense expected")
-
+    # 3) Park + weather (15%)
+    env_signal = 0.0
     if home in HITTER_FRIENDLY_PARKS:
-        nrfi_score -= 1.0
+        env_signal -= 1.0
         reasons.append(f"{home} hitter-friendly park")
     else:
-        nrfi_score += 0.5
+        env_signal += 0.35
+    wx = game.get("weather") or {}
+    temp = wx.get("temp")
+    if isinstance(temp, (int, float)):
+        if temp >= 85:
+            env_signal -= 0.6
+        elif temp <= 55:
+            env_signal += 0.35
+    wind = str(wx.get("wind") or "").lower()
+    if "out" in wind:
+        env_signal -= 0.5
+    elif "in" in wind:
+        env_signal += 0.35
+    env_component = env_signal * 0.15
 
-    if spread < 1.5:
-        nrfi_score += 0.5
-    elif spread > 3:
-        nrfi_score -= 0.5
+    # 4) Umpire zone tendency (10%)
+    ump_signal = 0.0
+    ump = game.get("umpire") or {}
+    ump_name = ump.get("name")
+    if ump_name:
+        try:
+            from grade_engine import UMPIRE_TENDENCIES as _UT
+            tend = _UT.get(ump_name)
+        except Exception:
+            tend = None
+        if tend:
+            k_pct = float(tend.get("k_pct", 0))
+            if k_pct >= 23.0:
+                ump_signal += 0.7
+                reasons.append(f"high-K plate ump ({ump_name})")
+            elif k_pct <= 22.0:
+                ump_signal -= 0.5
+                reasons.append(f"contact ump ({ump_name})")
+    ump_component = ump_signal * 0.10
 
-    # Verdict thresholds (pitcher_score alone of 3.0+ = clear NRFI lean)
-    if nrfi_score >= 3.5:
+    # 5) Market context (10%) â€” weak tie-breaker
+    market_signal = 0.0
+    if isinstance(total, (int, float)) and total > 0:
+        if total < 8.0:
+            market_signal += 1.0
+            reasons.append(f"sub-8 total ({total:.1f})")
+        elif total < 8.5:
+            market_signal += 0.5
+        elif total > 9.5:
+            market_signal -= 1.0
+            reasons.append(f"high total ({total:.1f})")
+    if isinstance(spread, (int, float)):
+        if spread < 1.5:
+            market_signal += 0.4
+        elif spread > 3:
+            market_signal -= 0.3
+    market_component = market_signal * 0.10
+
+    nrfi_score = pitcher_component + offense_component + env_component + ump_component + market_component
+
+    if nrfi_score >= 1.05:
         verdict = "NRFI"
-        confidence = int(min(88, 62 + nrfi_score * 4))
-    elif nrfi_score <= -1.5:
+        confidence = int(min(89, 60 + nrfi_score * 16))
+    elif nrfi_score <= -0.70:
         verdict = "YRFI"
-        confidence = int(min(85, 60 + abs(nrfi_score) * 5))
+        confidence = int(min(87, 58 + abs(nrfi_score) * 20))
     else:
         verdict = "SKIP"
         confidence = 45
 
-    # Without pitcher data, cap confidence
+    # Without pitcher data, cap confidence.
     if h_tier == "unknown" and a_tier == "unknown" and verdict != "SKIP":
         confidence = min(confidence, 55)
 
-    reason = ". ".join(reasons[:3])
+    reason = ". ".join(reasons[:4])
     return {"verdict": verdict, "confidence": confidence, "reason": reason}
 
 
@@ -2538,6 +2608,7 @@ class AnalyzeRequest(BaseModel):
     sport: str
     game_id: Optional[str] = None  # Optional: analyze a single game by id
     league: Optional[str] = None
+    mode: Optional[str] = None
     fast: Optional[bool] = None
 
 
@@ -2822,6 +2893,7 @@ async def analyze_games(request: AnalyzeRequest):
 async def _analyze_games_impl(request: AnalyzeRequest):
     sport_lower = request.sport.lower()
     sport_upper = sport_lower.upper()
+    mode = (request.mode or "games").lower()
     league_raw = (request.league or "").strip().lower()
     league_keys = [x.strip() for x in league_raw.split(",") if x.strip()]
     league_key = ",".join(league_keys)
@@ -2831,7 +2903,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
 
     # Get cached games — match the same cache key format as /api/games,
     # including league scoping for soccer.
-    cache_key = f"{sport_lower}:games:{league_key}"
+    cache_key = f"{sport_lower}:{mode}:{league_key}"
     games = []
     if sport_upper == "SOCCER" and league_keys:
         by_id = {}
@@ -2841,7 +2913,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
             lk_cache_key = f"{sport_lower}:games:{lk}"
             cached = _cache.get(lk_cache_key)
             if not cached or not cached.get("data"):
-                fetched = await _fetch_and_grade(sport_lower, league=lk)
+                fetched = await _fetch_and_grade(sport_lower, mode=mode, league=lk)
                 if fetched:
                     _cache[lk_cache_key] = {"data": fetched, "fetched_at": datetime.now(timezone.utc)}
                 src = fetched or []
@@ -2857,7 +2929,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
     else:
         cached = _cache.get(cache_key)
         if not cached or not cached.get("data"):
-            games = await _fetch_and_grade(sport_lower, league=league_key)
+            games = await _fetch_and_grade(sport_lower, mode=mode, league=league_key)
             if games:
                 _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
         else:
@@ -2891,6 +2963,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
 
     async def _run_real_ai(game: dict):
         async with sem:
+            game["_analysis_mode"] = mode
             return await _real_ai_models_for_game(
                 game,
                 (game.get("ourGrade") or {}).get("score", 5.0),
