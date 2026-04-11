@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { TwoLaneCard } from '@/components/TwoLaneCard'
@@ -8,6 +8,7 @@ import { SPORT_LABELS } from '@/types'
 
 const SPORTS: Sport[] = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
 const CHINNY_TAB = 'fuck_chinny'
+const CHINNY_AUDIO_URL = (import.meta as any).env?.VITE_CHINNY_TAB_AUDIO_URL as string | undefined
 
 type MlbMode = 'games' | 'nrfi'
 type SoccerLeague = '' | 'epl' | 'la_liga' | 'serie_a' | 'mls' | 'bundesliga' | 'ligue_1' | 'ucl' | 'europa' | 'brazil' | 'liga_mx'
@@ -33,6 +34,7 @@ export default function HomePage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const [specialTab, setSpecialTab] = useState<'none' | typeof CHINNY_TAB>('none')
+  const chinnyAudioRef = useRef<HTMLAudioElement | null>(null)
   const queryClient = useQueryClient()
 
   const isChinnyTab = specialTab === CHINNY_TAB
@@ -78,6 +80,31 @@ export default function HomePage() {
       return engineScoreOf(b) - engineScoreOf(a)
     })
   }, [games, isChinnyTab])
+
+  useEffect(() => {
+    if (!CHINNY_AUDIO_URL) return
+    if (isChinnyTab) {
+      try {
+        if (!chinnyAudioRef.current) {
+          const audio = new Audio(CHINNY_AUDIO_URL)
+          audio.preload = 'auto'
+          audio.volume = 0.85
+          chinnyAudioRef.current = audio
+        }
+        const p = chinnyAudioRef.current.play()
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            // Autoplay can be blocked by browser policy until user gesture.
+          })
+        }
+      } catch {
+        // Keep UI functional even if audio setup fails.
+      }
+    } else if (chinnyAudioRef.current) {
+      chinnyAudioRef.current.pause()
+      chinnyAudioRef.current.currentTime = 0
+    }
+  }, [isChinnyTab])
 
   // Deep AI analysis — calls /api/analyze which runs crowdsource + gatekeeper
   const handleAnalyzeAll = async () => {
@@ -153,7 +180,7 @@ export default function HomePage() {
               : 'bg-[#0E0E14] text-[#6E6E80] border border-[#1A1A28] hover:border-[#00E5FF]/30 hover:text-white'
           }`}
         >
-          FUCK Chinny
+          👶 FUCK Chinny
         </button>
       </div>
 
