@@ -654,6 +654,7 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
         # reliability/latency tradeoff in production soccer analyze runs.
         keep = {
             "Grok 3",
+            "DeepSeek V3.2 Spec",
             "GPT-4.1",
             "GPT-5 Mini",
             "Perplexity Sonar",
