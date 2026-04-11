@@ -470,11 +470,7 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
                 btn.textContent = 'Analyzing...';
                 btn.disabled = true;
                 try {
-                  await analyzeGame(
-                    (game.sport || '').toLowerCase(),
-                    game.id,
-                    (game.sport || '').toUpperCase() === 'MLB' && game.nrfi ? { mode: 'nrfi' } : undefined
-                  );
+                  await analyzeGame((game.sport || '').toLowerCase(), game.id);
                   window.location.reload();
                 } catch (err) {
                   btn.textContent = 'Failed';
