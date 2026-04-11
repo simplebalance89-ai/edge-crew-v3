@@ -262,16 +262,25 @@ export default function HomePage() {
 
       {/* Games List with Two-Lane Cards */}
       <div className="space-y-4">
-        {sortedGames?.map((game) => (
-          <Link key={game.id} to={`/game/${game.id}`} className="block">
-            <TwoLaneCard
-              game={game}
-              ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
-              aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
-              convergence={game.convergence || {status: 'ALIGNED', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
-            />
-          </Link>
-        ))}
+        {(!sortedGames || sortedGames.length === 0) ? (
+          <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-8 text-center">
+            <div className="text-sm font-bold text-white/70 mb-1">No games on this slate right now.</div>
+            <div className="text-xs text-white/40">
+              Try another sport/tab, or wait for odds feed refresh.
+            </div>
+          </div>
+        ) : (
+          sortedGames.map((game) => (
+            <Link key={game.id} to={`/game/${game.id}`} className="block">
+              <TwoLaneCard
+                game={game}
+                ourGrade={game.ourGrade || {grade: '-', score: 0, confidence: 0, thesis: ''}}
+                aiGrade={game.aiGrade || {grade: '-', score: 0, confidence: 0, model: 'AI'}}
+                convergence={game.convergence || {status: 'ALIGNED', consensusScore: 0, consensusGrade: '-', delta: 0, variance: 0}}
+              />
+            </Link>
+          ))
+        )}
       </div>
     </div>
   )
