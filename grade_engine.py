@@ -1741,6 +1741,290 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
     return profiles
 
 
+# ─── MMA / Combat Sports Grading ──────────────────────────────────────────────
+#
+# Combat sports don't have team profiles, rest days, bullpens, etc. — they have
+# fighter records, reach/stance/style, and a moneyline. So the combat grader
+# runs its own path: it reads odds + optional fighter dicts (populated by
+# services/mma_fighter.py) and returns the SAME shape as grade_both_sides so
+# the downstream /api/analyze and frontend don't have to special-case it.
+
+
+def _mma_record_score(fighter: dict | None) -> tuple[float, str]:
+    """Score a fighter's career record on a 0-10 scale. Wins% + volume."""
+    if not fighter or fighter.get("wins") is None:
+        return 5.0, "no record data"
+    wins = int(fighter.get("wins") or 0)
+    losses = int(fighter.get("losses") or 0)
+    total = wins + losses
+    if total < 3:
+        return 5.0, f"{wins}-{losses} (rookie, insufficient sample)"
+    win_pct = wins / total
+    # Shape: 50% = 5.0, 70% = 7.0, 85%+ = 8.5+, 100% = 9.5
+    score = 2.0 + win_pct * 7.5
+    # Volume bonus — veterans with 15+ fights edge up
+    if total >= 20:
+        score += 0.5
+    elif total >= 15:
+        score += 0.3
+    score = max(3.0, min(9.5, score))
+    return round(score, 1), f"{wins}-{losses} ({win_pct:.0%})"
+
+
+def _mma_moneyline_score(ml_home: int, ml_away: int) -> tuple[float, str, int]:
+    """Score the competitiveness of the matchup by ML gap. Returns (score, note, gap)."""
+    if not ml_home or not ml_away:
+        return 5.0, "no ML data", 0
+    gap = abs(ml_home - ml_away)
+    if gap < 80:
+        return 8.0, f"coin-flip (gap {gap})", gap
+    if gap < 150:
+        return 7.3, f"competitive (gap {gap})", gap
+    if gap < 250:
+        return 6.5, f"clear favorite (gap {gap})", gap
+    if gap < 400:
+        return 5.5, f"one-sided (gap {gap})", gap
+    return 4.5, f"mismatch (gap {gap})", gap
+
+
+def _mma_line_value_score(ml_home: int, ml_away: int, side: str) -> tuple[float, str]:
+    """Score the line-value on picking a given side. Dogs with plus money
+    are higher-value spots than favorites grinding out juice."""
+    if not ml_home or not ml_away:
+        return 5.0, "no ML"
+    side_ml = ml_home if side == "home" else ml_away
+    if side_ml > 200:
+        return 7.5, f"plus-money dog ({side_ml:+d}, upside)"
+    if side_ml > 100:
+        return 6.8, f"live dog ({side_ml:+d})"
+    if side_ml > -150:
+        return 6.2, f"near pick'em ({side_ml:+d})"
+    if side_ml > -250:
+        return 5.5, f"moderate chalk ({side_ml:+d})"
+    return 4.5, f"heavy chalk ({side_ml:+d})"
+
+
+def _mma_style_score(fighter: dict | None, opp: dict | None) -> tuple[float, str]:
+    """Very coarse style scoring from stance / weight class. Until fight-by-
+    fight striking + TD data is in the profile, this is a placeholder that
+    just returns a neutral score when nothing is known — NOT a fake signal."""
+    if not fighter:
+        return 5.0, "no style data"
+    stance = (fighter.get("stance") or "").lower()
+    opp_stance = ((opp or {}).get("stance") or "").lower()
+    if not stance:
+        return 5.0, "no stance data"
+    # Southpaw vs orthodox is a known real edge for the southpaw in MMA.
+    if stance == "southpaw" and opp_stance == "orthodox":
+        return 6.3, "southpaw vs orthodox (slight edge)"
+    if stance == "orthodox" and opp_stance == "southpaw":
+        return 4.7, "orthodox vs southpaw (slight disadvantage)"
+    return 5.5, f"stance: {stance}"
+
+
+def _grade_mma_side(game: dict, side: str) -> dict:
+    """Grade one fighter (home or away). Mirrors grade_game() return shape."""
+    odds = game.get("odds", {}) or {}
+    ml_home = int(odds.get("mlHome") or 0)
+    ml_away = int(odds.get("mlAway") or 0)
+
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+    fighter = home_f if side == "home" else away_f
+    opp = away_f if side == "home" else home_f
+
+    record_s, record_n = _mma_record_score(fighter)
+    opp_record_s, _ = _mma_record_score(opp)
+    ml_s, ml_n, ml_gap = _mma_moneyline_score(ml_home, ml_away)
+    line_s, line_n = _mma_line_value_score(ml_home, ml_away, side)
+    style_s, style_n = _mma_style_score(fighter, opp)
+
+    # Favorite bonus: if this side IS the ML favorite, their "form" variable
+    # gets a nudge because the market is usually right on UFC ML.
+    side_ml = ml_home if side == "home" else ml_away
+    other_ml = ml_away if side == "home" else ml_home
+    is_fav = side_ml and other_ml and side_ml < other_ml
+    form_s = round(min(9.5, record_s + (0.5 if is_fav else -0.3)), 1) if record_s else 5.0
+    form_n = f"{record_n}{' (favorite)' if is_fav else ''}"
+
+    # Record vs opponent — delta in win %
+    matchup_s = 5.0
+    matchup_n = "insufficient data"
+    if record_s > 5.0 and opp_record_s > 5.0:
+        delta = record_s - opp_record_s
+        matchup_s = round(max(3.0, min(9.0, 5.0 + delta * 0.8)), 1)
+        matchup_n = f"record delta {delta:+.1f}"
+
+    # Variables table matches the team-sport shape so downstream code reading
+    # game["ourGrade"]["variables"] doesn't blow up.
+    variables = {
+        "form":         {"score": form_s,    "weight": 9, "weighted": round(form_s * 9, 1),    "note": form_n,    "available": record_s != 5.0},
+        "off_ranking":  {"score": matchup_s, "weight": 8, "weighted": round(matchup_s * 8, 1), "note": matchup_n, "available": matchup_s != 5.0},
+        "def_ranking":  {"score": matchup_s, "weight": 8, "weighted": round(matchup_s * 8, 1), "note": matchup_n, "available": matchup_s != 5.0},
+        "moneyline_gap":{"score": ml_s,      "weight": 7, "weighted": round(ml_s * 7, 1),      "note": ml_n,      "available": ml_gap != 0},
+        "line_value":   {"score": line_s,    "weight": 7, "weighted": round(line_s * 7, 1),    "note": line_n,    "available": bool(side_ml)},
+        "style":        {"score": style_s,   "weight": 5, "weighted": round(style_s * 5, 1),   "note": style_n,   "available": style_s != 5.0},
+    }
+
+    active = {k: v for k, v in variables.items() if v.get("available", True)}
+    total_weighted = sum(v["weighted"] for v in active.values())
+    max_possible = sum(v["weight"] * 10 for v in active.values())
+    composite = round(total_weighted / max_possible * 10, 2) if max_possible > 0 else 5.0
+
+    # Small chain: favorite with strong record + competitive line = high conviction
+    chain_bonus = 0.0
+    chains_fired: list[str] = []
+    if is_fav and record_s >= 7.0 and ml_gap and ml_gap < 250:
+        chain_bonus += 0.4
+        chains_fired.append("favorite_sharp_record")
+    if line_s >= 7.0 and record_s >= 6.5:
+        chain_bonus += 0.3
+        chains_fired.append("live_dog_with_record")
+    chain_bonus = max(-1.0, min(1.0, chain_bonus))
+
+    final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+    grade = score_to_grade(final)
+
+    return {
+        "grade": grade,
+        "score": final,
+        "composite": composite,
+        "chain_bonus": chain_bonus,
+        "chains_fired": chains_fired,
+        "sizing": score_to_sizing(final),
+        "confidence": min(95, max(40, int(55 + (final - 5) * 8))),
+        "variables": variables,
+        "pick_side": side,
+    }
+
+
+# Three MMA grader profiles — each re-weights the same variables differently.
+# Mirrors how PROFILE_WEIGHTS works for team sports.
+MMA_PROFILE_WEIGHTS = {
+    "odds_sharp": {
+        # Market-first. Trusts ML gap + line value over record.
+        "moneyline_gap": 1.5, "line_value": 1.4, "form": 0.9,
+        "off_ranking": 0.7, "def_ranking": 0.7, "style": 0.5,
+    },
+    "form_scout": {
+        # Record/form first. Downweights line value.
+        "form": 1.6, "off_ranking": 1.2, "def_ranking": 1.2,
+        "moneyline_gap": 0.8, "line_value": 0.6, "style": 0.7,
+    },
+    "finisher": {
+        # Style + stance matchup first. For coin-flip fights where market
+        # pricing is weak.
+        "style": 1.5, "form": 1.1, "moneyline_gap": 1.0,
+        "off_ranking": 0.9, "def_ranking": 0.9, "line_value": 0.9,
+    },
+}
+
+
+def _mma_profiles(game: dict, pick_side: str) -> dict:
+    """Run all 3 MMA grader profiles on a fight. Returns same shape as
+    grade_profiles() — {name: {grade, final, composite, sizing, chains_fired,
+    pick_side, picks, margin}} plus a 'crew' blend."""
+    base = _grade_mma_side(game, pick_side)
+    base_vars = base.get("variables", {})
+    other_side = "away" if pick_side == "home" else "home"
+    other_base = _grade_mma_side(game, other_side)
+    other_vars = other_base.get("variables", {})
+
+    profiles: dict = {}
+    for name, multipliers in MMA_PROFILE_WEIGHTS.items():
+        # Pick-side composite
+        tw, ts = 0.0, 0.0
+        for var_name, var_data in base_vars.items():
+            if not var_data.get("available", True):
+                continue
+            mult = multipliers.get(var_name, 1.0)
+            w = var_data["weight"] * mult
+            tw += w * 10
+            ts += var_data["score"] * w
+        composite = round(ts / tw * 10, 2) if tw > 0 else 5.0
+        final = round(max(1.0, min(10.0, composite + base.get("chain_bonus", 0))), 2)
+
+        # Other-side composite (so the profile can pick a side)
+        otw, ots = 0.0, 0.0
+        for var_name, var_data in other_vars.items():
+            if not var_data.get("available", True):
+                continue
+            mult = multipliers.get(var_name, 1.0)
+            w = var_data["weight"] * mult
+            otw += w * 10
+            ots += var_data["score"] * w
+        other_composite = round(ots / otw * 10, 2) if otw > 0 else 5.0
+        other_final = round(max(1.0, min(10.0, other_composite + other_base.get("chain_bonus", 0))), 2)
+
+        picks = pick_side if final >= other_final else other_side
+        profiles[name] = {
+            "grade": score_to_grade(final),
+            "final": final,
+            "composite": composite,
+            "sizing": score_to_sizing(final),
+            "chains_fired": base.get("chains_fired", []),
+            "pick_side": pick_side,
+            "picks": picks,
+            "margin": round(final - other_final, 2),
+        }
+
+    # Crew blend — equal-weighted for MMA since we only have 3 profiles
+    if len(profiles) >= 3:
+        blend_weights = {name: 1.0 / len(profiles) for name in profiles}
+        crew_final = round(sum(profiles[n]["final"] * blend_weights[n] for n in profiles), 2)
+        crew_final = round(max(1.0, min(10.0, crew_final)), 2)
+        side_votes: dict = {}
+        for name in profiles:
+            s = profiles[name].get("picks", pick_side)
+            side_votes[s] = side_votes.get(s, 0) + 1
+        crew_pick = max(side_votes, key=side_votes.get)
+        profiles["crew"] = {
+            "grade": score_to_grade(crew_final),
+            "final": crew_final,
+            "composite": crew_final,
+            "sizing": score_to_sizing(crew_final),
+            "chains_fired": [],
+            "picks": crew_pick,
+            "margin": round(crew_final - 5.0, 2),
+            "blend": {k: round(v, 2) for k, v in blend_weights.items()},
+        }
+    return profiles
+
+
+def grade_mma_fight(game: dict) -> dict:
+    """Top-level MMA/Boxing grader. Shape matches grade_both_sides() so the
+    /api/analyze caller can use the same unpacking path for every sport.
+
+    Inputs (on the game dict):
+      - odds.mlHome / odds.mlAway  (required for any real signal)
+      - home_fighter / away_fighter  (optional; populated by
+        services/mma_fighter.py — record, stance, weight class)
+      - homeTeam / awayTeam (fighter names)
+
+    Output:
+      {home, away, best, profiles}  — exactly like grade_both_sides
+    """
+    home = _grade_mma_side(game, "home")
+    away = _grade_mma_side(game, "away")
+    if home["score"] >= away["score"]:
+        best = dict(home)
+        best["pick_team"] = game.get("homeTeam") or game.get("home_team", "Home Fighter")
+        pick_side = "home"
+    else:
+        best = dict(away)
+        best["pick_team"] = game.get("awayTeam") or game.get("away_team", "Away Fighter")
+        pick_side = "away"
+
+    profiles = _mma_profiles(game, pick_side)
+
+    return {
+        "home": home,
+        "away": away,
+        "best": best,
+        "profiles": profiles,
+    }
+
+
 # ─── Expected Value Calculator ────────────────────────────────────────────────
 
 

@@ -29,6 +29,8 @@ class Sport(StrEnum):
     NHL = "nhl"
     WNBA = "wnba"
     SOCCER = "soccer"
+    MMA = "mma"
+    BOXING = "boxing"
 
 
 class EventType(StrEnum):
