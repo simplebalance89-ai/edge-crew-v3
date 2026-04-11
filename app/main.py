@@ -618,6 +618,13 @@ AZURE_HOSTS = {
         "key": AZURE_AI_PETERWILSON_KEY,
         "format": "aoai_classic",
     },
+    "north_central": {
+        # peter-mnji0acb-northcentralus Azure AI Foundry. Uses the openai/v1
+        # shape (model name in body) — same dispatch as the Sweden host.
+        "url": "https://peter-mnji0acb-northcentralus.services.ai.azure.com/openai/v1/chat/completions",
+        "key": AZURE_NC_KEY,
+        "format": "openai_v1",
+    },
     "gemini": {
         "url_template": "https://generativelanguage.googleapis.com/v1beta/models/{deployment}:generateContent",
         "key": GEMINI_API_KEY,
@@ -660,9 +667,13 @@ REAL_AI_MODELS = [
 
     # ── Meta Llama family ───────────────────────────────────────────────────
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "Llama-4 Scout",     "deployment": "Llama-4-Scout-17B-16E-Instruct",        "host": "gce", "persona": "lightweight Llama 4, fast first-read scout", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
 
     # ── Mistral (European perspective) ──────────────────────────────────────
     {"display": "Mistral Large 3",   "deployment": "Mistral-Large-3",                       "host": "ai_peterwilson", "persona": "European flagship, different training bias",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+
+    # ── Kimi on Azure (panel-side, separate from Moonshot gatekeeper) ───────
+    {"display": "Kimi K2.5 (Azure)", "deployment": "FW-Kimi-K2.5",                          "host": "north_central", "persona": "scout profiler — asks who benefits and who eats the cost",  "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 180},
 
     # ── Outside-family diversity (non-Azure) ────────────────────────────────
     {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher — often catches line movement", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 120},
@@ -712,7 +723,8 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
     elif sport_upper == "NHL":
         # Pace / goalie / matchup volatility. Two Grok generations (4.20 bleeding
         # edge from Sweden + 4 Fast as variance). DeepSeek R1 heavy math.
-        # Phi-4 thin-edge reasoning. Llama-4 open pattern matcher. GPT-5 Mini
+        # Phi-4 thin-edge reasoning. Llama-4 Scout as a fast first-read on pace
+        # (Scout > Maverick for hockey because hockey is faster). GPT-5 Mini
         # quick consensus. Gemini Flash as outside-family sanity check.
         keep = {
             "Azure Model Router",
@@ -721,15 +733,16 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
             "DeepSeek R1",
             "Phi-4 Reasoning",
             "GPT-5 Mini",
-            "Llama-4 Maverick",
+            "Llama-4 Scout",
             "Gemini 2.5 Flash",
         }
     elif sport_upper in ("MMA", "BOXING"):
         # Combat: fighter records, style, line-value against heavy chalk.
         # Three Groks for contrarian depth (4.20 newest, 4.1 trap reader,
         # 3 old-bias). DeepSeek R1 for record math. Phi-4 for skill-gap CoT.
-        # GPT-4.1 balanced keel. Mistral Large 3 for European-trained
-        # perspective outside the US-centric cluster.
+        # GPT-4.1 balanced keel. Kimi K2.5 (Azure) as scout profiler —
+        # specifically asks "who benefits and who eats the cost" which is
+        # exactly the right question for MMA line value.
         keep = {
             "Azure Model Router",
             "Grok 4.20 Reasoning",
@@ -738,7 +751,7 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
             "DeepSeek R1",
             "Phi-4 Reasoning",
             "GPT-4.1",
-            "Mistral Large 3",
+            "Kimi K2.5 (Azure)",
         }
     elif sport_upper == "SOCCER":
         # Thin markets, broad fixtures, large slates (MLS + EPL + La Liga
@@ -757,16 +770,17 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
         }
     elif sport_upper in ("NFL", "NBA", "WNBA", "NCAAF", "NCAAB"):
         # Default team-sport panel until we have settled data to tune these
-        # individually. Broad cross-family diversity. GPT-5.4 Nano as the
-        # bleeding-edge fast voice.
+        # individually. Broad cross-family diversity. Two Llamas (Maverick
+        # heavyweight + Scout lightweight) for open-source variance. Gemini
+        # Flash as outside-family sanity check. GPT-5.4 Nano as bleeding-edge.
         keep = {
             "Azure Model Router",
             "Grok 4.1",
             "DeepSeek R1",
             "Phi-4 Reasoning",
             "GPT-4.1",
-            "GPT-5.4 Nano",
             "Llama-4 Maverick",
+            "Llama-4 Scout",
             "Gemini 2.5 Flash",
         }
     else:
