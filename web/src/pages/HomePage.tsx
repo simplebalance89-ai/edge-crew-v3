@@ -116,7 +116,13 @@ export default function HomePage() {
     try {
       const enriched = await analyzeGames(
         effectiveSport,
-        isChinnyTab ? { fast: false } : (effectiveSport === 'soccer' ? { league: apiLeague, fast: true } : undefined)
+        isChinnyTab
+          ? { fast: false }
+          : (
+            effectiveSport === 'soccer'
+              ? { league: apiLeague, fast: true }
+              : (effectiveSport === 'mlb' ? { mode: apiMode } : undefined)
+          )
       )
       // Update the query cache with enriched games so cards re-render
       if (Array.isArray(enriched)) {
