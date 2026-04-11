@@ -649,22 +649,13 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
     """Sport-aware model roster.
     Soccer slates can be large, so we trim the roster to reduce provider
     throttling/timeouts while keeping diversified model opinions."""
-    if sport_upper == "SOCCER" and fast_mode:
-        keep = {
-            "Grok 3",
-            "DeepSeek V3.2 Spec",
-            "GPT-4.1",
-            "Gemini 2.5 Flash",
-        }
-        return [m for m in REAL_AI_MODELS if m.get("display") in keep]
     if sport_upper == "SOCCER":
+        # Soccer-specific stable roster. These models have shown the best
+        # reliability/latency tradeoff in production soccer analyze runs.
         keep = {
-            "Grok 4.1",
             "Grok 3",
-            "DeepSeek V3.2 Spec",
             "GPT-4.1",
             "GPT-5 Mini",
-            "Gemini 2.5 Flash",
             "Perplexity Sonar",
         }
         return [m for m in REAL_AI_MODELS if m.get("display") in keep]
