@@ -766,10 +766,85 @@ def _format_injuries(inj_list: list) -> str:
     return "; ".join(out) if out else "none currently affecting the line"
 
 
+def _build_combat_prompt(game: dict, our_score: float, personality: str, sport: str) -> str:
+    """MMA/Boxing prompt — fighter records + ML gap only. No team form,
+    no injuries, no spreads. Just combat context and a two-outcome schema."""
+    home = game.get("homeTeam", "Fighter A")
+    away = game.get("awayTeam", "Fighter B")
+    odds = game.get("odds", {}) or {}
+    ml_h = int(odds.get("mlHome") or 0)
+    ml_a = int(odds.get("mlAway") or 0)
+    ml_gap = abs(ml_h - ml_a) if ml_h and ml_a else 0
+
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+
+    def _f_line(name: str, f: dict) -> str:
+        if not f or f.get("wins") is None:
+            return f"{name}: record unknown"
+        rec = f.get("record") or f"{f.get('wins')}-{f.get('losses')}" + (f"-{f.get('draws')}" if f.get("draws") else "")
+        extras = []
+        if f.get("weight_class"):
+            extras.append(str(f["weight_class"]))
+        if f.get("stance"):
+            extras.append(f"{f['stance']} stance")
+        extra_str = f" ({', '.join(extras)})" if extras else ""
+        return f"{name}: {rec}{extra_str}"
+
+    if ml_h and ml_a and ml_h < ml_a:
+        fav, fav_ml = home, ml_h
+        dog, dog_ml = away, ml_a
+    elif ml_h and ml_a:
+        fav, fav_ml = away, ml_a
+        dog, dog_ml = home, ml_h
+    else:
+        fav, fav_ml, dog, dog_ml = home, -150, away, 130
+
+    if ml_gap < 100:
+        framing = "Coin-flip fight — market has no strong lean."
+    elif ml_gap < 200:
+        framing = "Competitive bout — favorite favored but live dog."
+    elif ml_gap < 350:
+        framing = "Clear favorite — market confident."
+    else:
+        framing = "Heavy chalk — mismatch on paper."
+
+    sport_label = "fight" if sport == "MMA" else "bout"
+    schema = (
+        '{"grade": <0-10 number>, '
+        '"pick": "Home" or "Away", '
+        '"reasoning": "one short sentence naming the key edge (record gap, stance matchup, line value)"}'
+    )
+    sport_example = (
+        '{"grade": 7.2, "pick": "Home", "reasoning": "stronger record and live-dog price give better EV than the favorite\'s juice"}'
+    )
+
+    return (
+        f"{sport} {sport_label.upper()}: {away} @ {home}. "
+        f"ML: {away} {ml_a:+d} / {home} {ml_h:+d} (gap {ml_gap}). "
+        f"FIGHTERS: {_f_line(home, home_f)} | {_f_line(away, away_f)} | "
+        f"FAVORITE: {fav} ({fav_ml:+d}) vs {dog} ({dog_ml:+d}). "
+        f"FRAMING: {framing} "
+        f"engine composite: {our_score:.1f}/10. "
+        f"DO NOT invent records or fight history not listed above. "
+        f"Pick side only (Home or Away) based on ML value, record gap, and stance matchup. "
+        f"As a sharp combat-sports bettor ({personality}), output ONLY a single JSON object on one line, "
+        f"no thinking, no prose, no code fences. Schema: {schema}. "
+        f"EXAMPLE OUTPUT: {sport_example} "
+        f"Now output ONLY the JSON object, starting with {{ :"
+    )
+
+
 def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     home = game.get("homeTeam", "Home")
     away = game.get("awayTeam", "Away")
     sport = (game.get("sport") or "").upper()
+
+    # Combat sports take a completely different path — no team profiles,
+    # no injuries, no spreads, just fighter records + ML.
+    if sport in ("MMA", "BOXING"):
+        return _build_combat_prompt(game, our_score, personality, sport)
+
     odds = game.get("odds", {}) or {}
     hp = game.get("home_profile", {}) or {}
     ap = game.get("away_profile", {}) or {}
@@ -1600,66 +1675,104 @@ def _score_to_grade_local(score: float) -> str:
 
 
 def _grade_combat_from_odds(odds: dict, game: dict, sport: str) -> dict:
-    """Grade MMA/Boxing fights from moneyline data only (no ESPN team data)."""
-    ml_home = odds.get("mlHome", 0)
-    ml_away = odds.get("mlAway", 0)
-    spread = abs(odds.get("spread", 0))
+    """Grade MMA/Boxing fights. Now routes through the real combat grader in
+    grade_engine.grade_mma_fight(), which runs 3 profiles (odds_sharp,
+    form_scout, finisher) + a crew blend â€” matching the multi-profile shape
+    team sports already produce.
+    """
+    from grade_engine import grade_mma_fight
+
+    ml_home = int(odds.get("mlHome") or 0)
+    ml_away = int(odds.get("mlAway") or 0)
     fighter_a = game.get("homeTeam", "Fighter A")
     fighter_b = game.get("awayTeam", "Fighter B")
+    ml_diff = abs(ml_home - ml_away) if ml_home and ml_away else 0
 
-    ml_diff = abs(ml_home - ml_away) if ml_home and ml_away else 200
+    # Make sure the engine sees a sport key; _fetch_and_grade already sets it
+    # to sport_label upstream, but fall back defensively.
+    engine_game = dict(game)
+    engine_game.setdefault("sport", sport)
 
-    # Competitive fights = better edge opportunities
-    if ml_diff < 80:
-        score = 8.0
-        thesis = f"Coin-flip fight: {fighter_a} vs {fighter_b} separated by only {ml_diff} ML pts. Maximum edge potential â€” line value exists on both sides."
-    elif ml_diff < 150:
-        score = 7.5
-        thesis = f"Competitive bout: {fighter_a} vs {fighter_b} (ML gap {ml_diff}). Tight line suggests sharp money is split â€” look for style matchup edge."
-    elif ml_diff < 250:
-        score = 6.5
-        thesis = f"Clear favorite emerging: ML gap {ml_diff} between {fighter_a} and {fighter_b}. Moderate edge â€” favorite is justified but line may be slightly inflated."
-    elif ml_diff < 400:
-        score = 5.5
-        thesis = f"One-sided: ML gap {ml_diff}. {fighter_a if ml_home < ml_away else fighter_b} heavily favored. Spread value is thin â€” better as ML play or pass."
+    try:
+        result = grade_mma_fight(engine_game)
+    except Exception as e:
+        logger.warning(f"[MMA_ENGINE] fallback for {fighter_a} vs {fighter_b}: {e}")
+        # Minimal fallback so the slate never crashes on combat sports.
+        fallback_score = 5.5
+        return {
+            "grade": _score_to_grade_local(fallback_score),
+            "score": fallback_score,
+            "confidence": 50,
+            "thesis": f"Combat fallback: ML gap {ml_diff} â€” engine error",
+            "keyFactors": [f"ML: {fighter_a} {ml_home:+d} / {fighter_b} {ml_away:+d}" if ml_home and ml_away else "No ML data"],
+            "profiles": {},
+            "pick_side": "home",
+            "pick_team": fighter_a,
+            "variables": {},
+        }
+
+    best = result["best"]
+    profiles = result.get("profiles", {})
+    pick_side = best.get("pick_side", "home")
+    pick_team = best.get("pick_team", fighter_a if pick_side == "home" else fighter_b)
+
+    # Build a human thesis from engine output
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+    pick_fighter = home_f if pick_side == "home" else away_f
+    opp_fighter = away_f if pick_side == "home" else home_f
+    pick_record = (pick_fighter.get("record") if pick_fighter else None) or "record unknown"
+    opp_record = (opp_fighter.get("record") if opp_fighter else None) or "record unknown"
+
+    chains = best.get("chains_fired", [])
+    chain_txt = f" | chains: {', '.join(chains)}" if chains else ""
+
+    if ml_diff and ml_diff < 150:
+        framing = f"Competitive {sport} bout (ML gap {ml_diff})"
+    elif ml_diff and ml_diff < 300:
+        framing = f"Clear favorite (ML gap {ml_diff})"
+    elif ml_diff:
+        framing = f"Heavy chalk (ML gap {ml_diff})"
     else:
-        score = 4.5
-        thesis = f"Massive mismatch: ML gap {ml_diff}. Heavy favorite offers no spread value. Only play is dog ML at plus money if you see an upset angle."
+        framing = f"{sport} matchup"
 
-    # Spread context bonus for combat sports (if spread exists)
-    if spread and spread < 3:
-        score += 0.3
+    thesis = (
+        f"{framing} â€” engine likes {pick_team} ({pick_record}) over "
+        f"{opp_fighter.get('name', fighter_b if pick_side == 'home' else fighter_a) if opp_fighter else (fighter_b if pick_side == 'home' else fighter_a)} "
+        f"({opp_record}). {len(chains)} chain(s) fired{chain_txt}."
+    )
 
-    score = max(3.0, min(9.5, round(score, 1)))
-    grade = _score_to_grade_local(score)
-    conf = min(90, max(40, int(55 + (score - 5) * 8)))
+    # Key factors pulled from the engine's variable notes
+    vars_dict = best.get("variables", {})
+    key_factors = []
+    for var_name in ("form", "moneyline_gap", "line_value", "style"):
+        v = vars_dict.get(var_name)
+        if v and v.get("available") and v.get("note"):
+            key_factors.append(f"{var_name.replace('_', ' ')}: {v['note']}")
+    key_factors = key_factors[:5] or [f"ML gap: {ml_diff}"]
 
-    fav = fighter_a if (ml_home and ml_away and ml_home < ml_away) else fighter_b
-    dog = fighter_b if fav == fighter_a else fighter_a
-
-    # Combat has no team-data side grading â€” the engine pick IS the favorite
-    # by ML. Encode that explicitly so downstream _compute_pick reads the
-    # same field name as the team-sport path instead of falling back to the
-    # spread-favorite shortcut.
-    fav_side = "home" if fav == fighter_a else "away"
+    # Map engine variables to the {score, name, available} shape the frontend
+    # variable panel expects.
+    frontend_vars = {
+        k: {
+            "score": v["score"],
+            "name": k.replace("_", " ").title(),
+            "available": v.get("available", True),
+            "note": v.get("note", ""),
+        }
+        for k, v in vars_dict.items()
+    }
 
     return {
-        "grade": grade,
-        "score": score,
-        "confidence": conf,
+        "grade": best["grade"],
+        "score": best["score"],
+        "confidence": best["confidence"],
         "thesis": thesis,
-        "keyFactors": [
-            f"ML: {fighter_a} {ml_home:+d} / {fighter_b} {ml_away:+d}" if ml_home and ml_away else "No ML data",
-            f"ML gap: {ml_diff} pts",
-            f"Favorite: {fav}",
-        ],
-        "profiles": {},
-        "pick_side": fav_side,
-        "pick_team": fav,
-        "variables": {
-            "moneyline_gap": {"score": round(max(1, 10 - ml_diff / 50), 1), "name": "Moneyline Gap", "available": True},
-            "line_value": {"score": score, "name": "Line Value", "available": True},
-        },
+        "keyFactors": key_factors,
+        "profiles": profiles,
+        "pick_side": pick_side,
+        "pick_team": pick_team,
+        "variables": frontend_vars,
     }
 
 
