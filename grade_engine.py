@@ -190,7 +190,31 @@ def score_star_player(game: dict, side: str) -> tuple:
             ppg = inj.get("ppg", 0)
             disc = 0.5 if inj.get("freshness") in ("ESTABLISHED", "SEASON") else 1.0
             our_impact += (3 if ppg >= 20 else 2 if ppg >= 12 else 0.5) * disc
-    return _clamp(5 + opp_impact - our_impact), f"Injury diff: +{opp_impact:.1f} -{our_impact:.1f}"
+
+    opp_out_count = sum(1 for inj in opp_inj if inj.get("status") in ("OUT", "DOUBTFUL"))
+    if opp_out_count >= 5:
+        opp_impact = max(opp_impact, 8.0)
+    elif opp_out_count >= 4:
+        opp_impact = max(opp_impact, 6.0)
+    elif opp_out_count >= 3:
+        opp_impact = max(opp_impact, 4.0)
+
+    own_out_count = sum(1 for inj in our_inj if inj.get("status") in ("OUT", "DOUBTFUL"))
+    if own_out_count >= 5:
+        own_penalty = -4.0
+    elif own_out_count >= 4:
+        own_penalty = -3.0
+    elif own_out_count >= 3:
+        own_penalty = -2.0
+    else:
+        own_penalty = 0
+
+    note = f"Injury diff: +{opp_impact:.1f} -{our_impact:.1f}"
+    if opp_out_count >= 3:
+        note += f" | OPP rest({opp_out_count} out)"
+    if own_out_count >= 3:
+        note += f" | OWN rest({own_out_count} out)"
+    return _clamp(5 + opp_impact - our_impact + own_penalty), note
 
 
 def score_depth_injuries(game: dict, side: str) -> tuple:
@@ -2410,16 +2434,14 @@ SPORT_VARIABLES = {
         "recruiting": 7, "coaching_change": 6,
     },
     "MMA": {
-        "form": 9, "off_ranking": 8, "def_ranking": 8, "star_player": 7,
-        "reach_advantage": 7, "motivation": 7, "finish_rate": 6, "ground_game": 6,
-        "h2h": 6, "ats": 6, "camp_quality": 5, "rest": 5,
-        "home_away": 3, "depth": 3,
+        "form": 9, "reach_advantage": 8, "star_player": 7,
+        "motivation": 7, "finish_rate": 7, "rest": 5, "h2h": 5,
+        "line_movement": 5,
     },
     "BOXING": {
-        "form": 9, "off_ranking": 9, "def_ranking": 8, "reach_advantage": 8,
-        "star_player": 7, "motivation": 7, "h2h": 7, "stance_matchup": 6,
-        "activity": 6, "ats": 6, "finish_rate": 5, "rest": 4,
-        "home_away": 2, "depth": 2,
+        "form": 9, "reach_advantage": 8, "star_player": 7,
+        "motivation": 7, "stance_matchup": 6, "finish_rate": 6,
+        "rest": 5, "h2h": 5, "line_movement": 5,
     },
 }
 
