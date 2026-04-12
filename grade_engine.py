@@ -234,6 +234,108 @@ def score_road_trip(profile: dict) -> tuple:
     return 5, "Neutral"
 
 
+def score_pp_pct(profile: dict) -> tuple:
+    pp = profile.get("pp_pct")
+    if pp is None:
+        return 5, "no PP data"
+    if pp >= 25:
+        return 9, f"PP {pp:.1f}%"
+    if pp >= 22:
+        return 7, f"PP {pp:.1f}%"
+    if pp >= 20:
+        return 5, f"PP {pp:.1f}%"
+    if pp >= 18:
+        return 3, f"PP {pp:.1f}%"
+    return 2, f"PP {pp:.1f}% (weak)"
+
+
+def score_pk_pct(profile: dict) -> tuple:
+    pk = profile.get("pk_pct")
+    if pk is None:
+        return 5, "no PK data"
+    if pk >= 84:
+        return 9, f"PK {pk:.1f}%"
+    if pk >= 80:
+        return 7, f"PK {pk:.1f}%"
+    if pk >= 78:
+        return 5, f"PK {pk:.1f}%"
+    if pk >= 75:
+        return 3, f"PK {pk:.1f}%"
+    return 2, f"PK {pk:.1f}% (weak)"
+
+
+def score_goalie_workload(game: dict, side: str) -> tuple:
+    profile = game.get(f"{side}_profile", {}) or {}
+    g = profile.get("starting_goalie") or {}
+    our_sv = _normalize_sv_pct(g.get("sv_pct") or g.get("SV%") or g.get("svp"))
+    if our_sv is None:
+        return 5, "No goalie workload data"
+    if our_sv >= 0.925:
+        return _clamp(3), f"SV% {our_sv:.3f} — fresh/elite"
+    elif our_sv >= 0.915:
+        return _clamp(4), f"SV% {our_sv:.3f} — manageable"
+    elif our_sv >= 0.905:
+        return _clamp(6), f"SV% {our_sv:.3f} — moderate load"
+    elif our_sv >= 0.900:
+        return _clamp(7), f"SV% {our_sv:.3f} — heavy"
+    else:
+        return _clamp(8), f"SV% {our_sv:.3f} — overworked/struggling"
+
+
+def score_b2b_flag(profile: dict) -> tuple:
+    rest = profile.get("rest_days")
+    if rest is None:
+        return 5, "No rest data"
+    if rest <= 1:
+        return _clamp(9), f"B2B — {rest}d rest"
+    elif rest == 2:
+        return _clamp(5), f"{rest}d rest — normal"
+    else:
+        return _clamp(2), f"{rest}d rest — well rested"
+
+
+def score_shot_quality(profile: dict, opp: dict) -> tuple:
+    pace = profile.get("nhl_pace") or {}
+    opp_pace = opp.get("nhl_pace") or {}
+    sf = pace.get("shots_for_per_game")
+    sa = opp_pace.get("shots_against_per_game")
+    if sf is None or sa is None:
+        return 5, "No shot quality data"
+    diff = sf - sa
+    if diff >= 5:
+        score = 8.5
+    elif diff >= 3:
+        score = 7.0
+    elif diff >= 1:
+        score = 6.0
+    elif diff >= -1:
+        score = 5.0
+    elif diff >= -3:
+        score = 4.0
+    else:
+        score = 2.5
+    return _clamp(score), f"SF/g {sf:.1f} vs OPP SA/g {sa:.1f} (Δ{diff:+.1f})"
+
+
+def score_travel_fatigue(profile: dict, game: dict, side: str) -> tuple:
+    road = profile.get("road_trip_len", 0)
+    rest = profile.get("rest_days")
+    is_home = (side == "home")
+    if rest is None:
+        rest = 3
+    if is_home and rest >= 2:
+        return _clamp(2), f"Home + {rest}d rest — fresh"
+    elif is_home:
+        return _clamp(4), f"Home + {rest}d rest"
+    if road >= 5 and rest <= 1:
+        return _clamp(8), f"Road trip {road}g + {rest}d rest — heavy fatigue"
+    elif road >= 3 and rest <= 1:
+        return _clamp(7), f"Road trip {road}g + {rest}d rest — fatigued"
+    elif road >= 3:
+        return _clamp(5), f"Road trip {road}g + {rest}d rest"
+    return _clamp(4), f"Road {road}g + {rest}d rest — manageable"
+
+
 def score_pace_matchup(profile: dict, opp: dict, sport: str) -> tuple:
     our = profile.get("pace_L5", 0)
     their = opp.get("pace_L5", 0)
@@ -356,6 +458,113 @@ def score_bench_diff(game: dict, side: str) -> tuple:
     diff = float(us) - float(them)
     score = 5.0 + (diff / 5.0)
     return _clamp(score), f"bench L5: us {us} / them {them} ({diff:+.1f})"
+
+
+# ─── NBA Extended Variables ──────────────────────────────────────────────────
+
+def score_three_pt_rate(profile: dict, opp: dict) -> tuple:
+    ppg = profile.get("ppg_L5", 0)
+    pace = profile.get("pace_L5", 0)
+    if not ppg:
+        return 5, "no PPG data"
+    if ppg >= 120 and pace:
+        score = 9
+    elif ppg >= 115 and pace:
+        score = 8
+    elif ppg >= 115:
+        score = 7.5
+    elif ppg >= 110:
+        score = 6.5
+    elif ppg >= 105:
+        score = 5.5
+    else:
+        score = 4
+    opp_def = opp.get("opp_ppg_L5", 0)
+    if opp_def and opp_def >= 115:
+        score += 0.5
+    elif opp_def and opp_def <= 105:
+        score -= 0.5
+    return _clamp(score), f"PPG proxy: {ppg} | pace: {pace}"
+
+
+def score_b2b_fatigue(profile: dict, opp: dict) -> tuple:
+    rest = profile.get("rest_days")
+    if rest is None:
+        return 5, "no rest data"
+    if rest <= 0:
+        score = 9
+        label = "B2B zero rest"
+    elif rest == 1:
+        score = 8
+        label = "B2B 1-day rest"
+    elif rest == 2:
+        score = 5
+        label = "2 days rest"
+    else:
+        score = 2
+        label = f"{rest}+ days rest"
+    opp_rest = opp.get("rest_days")
+    if opp_rest is not None and opp_rest >= 3 and rest <= 1:
+        score += 0.5
+        label += " vs rested opp"
+    return _clamp(score), label
+
+
+def score_travel_distance(profile: dict, game: dict, pick_side: str) -> tuple:
+    if pick_side == "home":
+        return _clamp(1), "Home game"
+    road_len = profile.get("road_trip_len", 0)
+    if road_len >= 5:
+        score = 9
+    elif road_len >= 4:
+        score = 8
+    elif road_len >= 3:
+        score = 6.5
+    elif road_len >= 2:
+        score = 5
+    else:
+        score = 3
+    return _clamp(score), f"Road trip game {road_len}"
+
+
+def score_altitude(game: dict, pick_side: str) -> tuple:
+    home_name = (game.get("home_team") or game.get("home", "")).lower()
+    home_profile = game.get("home_profile", {})
+    if home_profile:
+        home_name_alt = home_profile.get("team", "").lower()
+        if home_name_alt:
+            home_name = home_name + " " + home_name_alt
+    is_denver = "nuggets" in home_name or "denver" in home_name or "avalanche" in home_name
+    if not is_denver:
+        return _clamp(5), "No altitude factor"
+    if pick_side == "home":
+        return _clamp(2), "Home altitude advantage (Denver)"
+    return _clamp(8), "Visiting Denver altitude penalty"
+
+
+def score_referee_pace(game: dict) -> tuple:
+    return 5, "no referee data"
+
+
+def score_turnover_rate(profile: dict, opp: dict) -> tuple:
+    opp_ppg_allowed = opp.get("opp_ppg_L5", 0)
+    our_def = profile.get("opp_ppg_L5", 0)
+    if not opp_ppg_allowed and not our_def:
+        return 5, "no defensive data"
+    target = opp_ppg_allowed if opp_ppg_allowed else our_def
+    if target <= 100:
+        score = 9
+    elif target <= 105:
+        score = 8
+    elif target <= 108:
+        score = 7
+    elif target <= 112:
+        score = 5.5
+    elif target <= 115:
+        score = 4
+    else:
+        score = 3
+    return _clamp(score), f"OPP allows L5: {opp_ppg_allowed} | our def: {our_def}"
 
 
 # ─── Sport-Specific Variables ──────────────────────────────────────────────────
@@ -839,6 +1048,287 @@ def score_pitcher_hitter_archetype(game: dict, side: str) -> tuple:
     return _clamp(score), f"{p_type} arm (K9 {k9f:.1f}, BB9 {bb9f:.1f}) vs {l_type} lineup (AVG {avgf:.3f}, HR {hri})"
 
 
+def score_lineup_dna(game: dict, side: str) -> tuple:
+    """Classify lineup as POWER, CONTACT, or BALANCED using batting splits.
+
+    POWER = high HR count + high OPS but lower AVG (swing big, miss big).
+    CONTACT = low K proxy (high AVG) + moderate OPS.
+    BALANCED = everything else.
+    Returns (score, note). POWER=8, CONTACT=3, BALANCED=5.
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    splits = profile.get("lineup_vs_hand") or {}
+    if not splits:
+        return 5.0, "no lineup DNA data"
+
+    ops = splits.get("ops_vs_hand")
+    avg = splits.get("avg_vs_hand")
+    hr = splits.get("hr_vs_hand")
+    if ops is None and avg is None:
+        return 5.0, "no lineup DNA data"
+
+    try:
+        ops_f = float(ops) if ops is not None else 0.720
+        avg_f = float(avg) if avg is not None else 0.250
+        hr_i = int(hr) if hr is not None else 0
+    except (TypeError, ValueError):
+        return 5.0, "no lineup DNA data"
+
+    if hr_i >= 35 or (ops_f >= 0.770 and avg_f < 0.255):
+        return _clamp(8.0), f"POWER lineup (OPS {ops_f:.3f}, AVG {avg_f:.3f}, HR {hr_i})"
+    if avg_f >= 0.265 and ops_f < 0.740 and hr_i <= 25:
+        return _clamp(3.0), f"CONTACT lineup (OPS {ops_f:.3f}, AVG {avg_f:.3f}, HR {hr_i})"
+    return _clamp(5.0), f"BALANCED lineup (OPS {ops_f:.3f}, AVG {avg_f:.3f}, HR {hr_i})"
+
+
+def score_pitcher_profile(game: dict, side: str) -> tuple:
+    """Is the starter a deep-starter (6+ IP regularly) or short-stint?
+
+    Uses starter's season IP to estimate average depth per start.
+    Deep starter (avg IP/start >= 6) = 8, committee (<= 4.5) = 3, average = 5.
+    Returns (score, note).
+    """
+    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {}) or {}
+    ip_raw = sp.get("ip")
+    if ip_raw is None:
+        return 5.0, "no pitcher profile data"
+
+    try:
+        ip = float(ip_raw)
+    except (TypeError, ValueError):
+        return 5.0, "no pitcher profile data"
+
+    if ip < 10:
+        return 5.0, f"pitcher profile: too few IP ({ip})"
+
+    era_raw = sp.get("era")
+    try:
+        era = float(era_raw) if era_raw is not None else None
+    except (TypeError, ValueError):
+        era = None
+
+    games_est = max(1, ip / 5.5)
+    avg_depth = ip / games_est
+
+    if avg_depth >= 6.0:
+        score = 8.0
+        label = "deep starter"
+    elif avg_depth <= 4.5:
+        score = 3.0
+        label = "short stint"
+    else:
+        score = 5.0
+        label = "average depth"
+
+    if era is not None and era <= 3.00 and ip >= 30:
+        score += 0.5
+    elif era is not None and era >= 5.00:
+        score -= 0.5
+
+    note = f"{label} ({ip} IP"
+    if era is not None:
+        note += f", ERA {era:.2f}"
+    note += ")"
+    return _clamp(score), note
+
+
+def score_bullpen_fatigue(game: dict, side: str) -> tuple:
+    """Score bullpen fatigue from recent usage. Reads profile.bullpen L7 data.
+
+    Heavy usage (high tired arms + high L7 IP) = low score (fatigued).
+    Fresh bullpen = high score (advantage).
+    Returns (score, note).
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    bp = profile.get("bullpen") or {}
+    if not bp or "bullpen_era_L7" not in bp:
+        return 5.0, "no bullpen fatigue data"
+
+    era_l7 = bp.get("bullpen_era_L7", 4.00)
+    tired = bp.get("bullpen_tired_arms", 0)
+    ip_l7 = bp.get("bullpen_ip_L7", 0)
+    season_era = bp.get("team_era_season")
+
+    score = 5.0
+    if tired >= 4:
+        score = 2.5
+    elif tired >= 3:
+        score = 3.5
+    elif tired >= 2:
+        score = 4.0
+    elif tired <= 0:
+        score = 7.0
+    else:
+        score = 5.5
+
+    if era_l7 > 5.00:
+        score -= 1.0
+    elif era_l7 > 4.50:
+        score -= 0.5
+    elif era_l7 < 3.00:
+        score += 1.0
+    elif era_l7 < 3.50:
+        score += 0.5
+
+    if season_era and era_l7 > season_era + 1.0:
+        score -= 0.5
+
+    note = f"bullpen fatigue: {tired} tired arm{'s' if tired != 1 else ''}, ERA L7 {era_l7}"
+    if ip_l7:
+        note += f", {ip_l7} IP L7"
+    return _clamp(score), note
+
+
+def score_weather_factor(game: dict, side: str) -> tuple:
+    """Score weather impact on offense. Wind blowing out + warm = high (8-9).
+    Cold + wind blowing in = low (2-3). Moderate/dome = neutral 5.
+
+    Reads game.weather dict from StatsAPI. Returns (score, note).
+    """
+    wx = game.get("weather") or {}
+    if not wx:
+        return 5.0, "no weather data"
+
+    temp_raw = wx.get("temp")
+    wind_raw = wx.get("wind", "") or ""
+    condition = wx.get("condition", "") or ""
+
+    try:
+        temp = int(temp_raw) if temp_raw is not None else None
+    except (TypeError, ValueError):
+        temp = None
+
+    wind_lower = wind_raw.lower()
+    wind_out = "out" in wind_lower
+    wind_in = " in" in wind_lower or wind_lower.startswith("in ")
+
+    wind_mph = 0
+    for part in wind_lower.replace(",", " ").split():
+        try:
+            wind_mph = int(part)
+            break
+        except ValueError:
+            continue
+
+    score = 5.0
+
+    if temp is not None:
+        if temp >= 85:
+            score += 1.0
+        elif temp >= 75:
+            score += 0.5
+        elif temp <= 45:
+            score -= 1.5
+        elif temp <= 55:
+            score -= 0.5
+
+    if wind_out and wind_mph >= 10:
+        score += 1.5
+    elif wind_out and wind_mph >= 5:
+        score += 0.75
+    elif wind_in and wind_mph >= 10:
+        score -= 1.5
+    elif wind_in and wind_mph >= 5:
+        score -= 0.75
+
+    if "dome" in condition.lower() or "roof closed" in condition.lower():
+        score = 5.0
+
+    parts = []
+    if temp is not None:
+        parts.append(f"{temp}F")
+    if wind_raw:
+        parts.append(wind_raw)
+    if condition:
+        parts.append(condition)
+    note = "weather: " + ", ".join(parts) if parts else "weather: unknown conditions"
+    return _clamp(score), note
+
+
+def score_gb_fb_ratio(game: dict, side: str) -> tuple:
+    """Ground ball vs fly ball tendency proxy using pitcher K/9.
+
+    High K/9 pitchers tend to be fly ball types (more whiffs = fewer GB).
+    Low K/9 pitchers tend to be ground ball types (weak contact).
+    GB-heavy (low K/9) = 8, FB-heavy (high K/9) = 3, neutral = 5.
+    Returns (score, note).
+    """
+    sp = game.get(f"{side}_profile", {}).get("starting_pitcher", {}) or {}
+    k9_raw = sp.get("k9")
+    if k9_raw is None:
+        return 5.0, "no GB/FB data"
+
+    try:
+        k9 = float(k9_raw)
+    except (TypeError, ValueError):
+        return 5.0, "no GB/FB data"
+
+    bb9_raw = sp.get("bb9")
+    try:
+        bb9 = float(bb9_raw) if bb9_raw is not None else 3.0
+    except (TypeError, ValueError):
+        bb9 = 3.0
+
+    if k9 <= 6.5:
+        score = 8.0
+        label = "GB-heavy"
+    elif k9 <= 7.5:
+        score = 6.5
+        label = "GB-leaning"
+    elif k9 >= 10.0:
+        score = 3.0
+        label = "FB-heavy"
+    elif k9 >= 8.5:
+        score = 4.0
+        label = "FB-leaning"
+    else:
+        score = 5.0
+        label = "neutral"
+
+    if bb9 <= 2.2:
+        score += 0.3
+    elif bb9 >= 3.6:
+        score -= 0.3
+
+    return _clamp(score), f"{label} (K/9 {k9:.1f}, BB/9 {bb9:.1f})"
+
+
+def score_plate_discipline(game: dict, side: str) -> tuple:
+    """Score team plate discipline using batting profile data.
+
+    High OPS + high AVG = disciplined approach (work counts, see pitches).
+    Low AVG + high K proxy (low AVG with low OPS) = undisciplined.
+    Returns (score, note).
+    """
+    profile = game.get(f"{side}_profile", {}) or {}
+    splits = profile.get("lineup_vs_hand") or {}
+    if not splits:
+        return 5.0, "no plate discipline data"
+
+    ops = splits.get("ops_vs_hand")
+    avg = splits.get("avg_vs_hand")
+    if ops is None and avg is None:
+        return 5.0, "no plate discipline data"
+
+    try:
+        ops_f = float(ops) if ops is not None else 0.720
+        avg_f = float(avg) if avg is not None else 0.250
+    except (TypeError, ValueError):
+        return 5.0, "no plate discipline data"
+
+    disc_score = (ops_f - 0.720) * 30 + (avg_f - 0.250) * 40
+    score = 5.0 + disc_score
+
+    if ops_f >= 0.780 and avg_f >= 0.260:
+        label = "disciplined"
+    elif ops_f <= 0.680 or avg_f <= 0.230:
+        label = "undisciplined"
+    else:
+        label = "average discipline"
+
+    return _clamp(score), f"{label} (OPS {ops_f:.3f}, AVG {avg_f:.3f})"
+
+
 # Hardcoded elite/good NHL goalies — fallback when SV% data not available.
 # Names lowercased for matching; check by last name.
 ELITE_NHL_GOALIES = {
@@ -1209,7 +1699,7 @@ def _apply_spread_amplifier(composite: float, variables: dict) -> float:
     return round(composite, 2)
 
 
-# ─── Chain System (30 chains) ──────────────────────────────────────────────────
+# ─── Chain System (30+ chains) ─────────────────────────────────────────────────
 
 CHAINS = {
     # Positive chains (+bonus)
@@ -1236,15 +1726,76 @@ CHAINS = {
     "FADE_THE_STREAK":   {"bonus": -0.5, "sports": None},
     # Sport-specific
     "GOALIE_EDGE":       {"bonus": 0.7, "sports": ["NHL"]},
-    "ACE_DOMINATION":    {"bonus": 0.8, "sports": ["MLB"]},
-    "COORS_OVER":        {"bonus": 0.7, "sports": ["MLB"]},
-    "PITCHING_DUEL":     {"bonus": 0.5, "sports": ["MLB"]},
+    "GOALIE_WORKLOAD_WALL": {"bonus": -0.7, "sports": ["NHL"]},
+    "SPECIAL_TEAMS_EDGE": {"bonus": 0.7, "sports": ["NHL"]},
+    "B2B_BLEED":         {"bonus": -0.7, "sports": ["NHL"]},
+    "SHOT_QUALITY_SURGE": {"bonus": 0.6, "sports": ["NHL"]},
+    "BACKUP_MISMATCH":   {"bonus": 0.6, "sports": ["NHL"]},
+    "SPECIAL_TEAMS_VOID": {"bonus": -0.6, "sports": ["NHL"]},
+    "ALTITUDE_ICE":      {"bonus": -0.5, "sports": ["NHL"]},
+    "BULLPEN_LOCKDOWN":  {"bonus": 0.8, "sports": ["MLB"]},
+    "BULLPEN_FATIGUE_CASCADE": {"bonus": -0.7, "sports": ["MLB"]},
+    "POWER_FLYBALL_OVER": {"bonus": 0.7, "sports": ["MLB"]},
+    "CONTACT_PRESSURE":  {"bonus": 0.5, "sports": ["MLB"]},
+    "GROUNDBALL_DUEL":   {"bonus": -0.6, "sports": ["MLB"]},
+    "COORS_ACTUAL":      {"bonus": 0.9, "sports": ["MLB"]},
+    "ACE_ISOLATION_TRAP": {"bonus": -0.6, "sports": ["MLB"]},
+    "PLATOON_EXPLOIT":   {"bonus": 0.6, "sports": ["MLB"]},
+    "FIVE_AND_DIVE":     {"bonus": 0.5, "sports": ["MLB"]},
+    "WEATHER_WIND_BOOST": {"bonus": 0.6, "sports": ["MLB"]},
     "CONGESTION_FADE":   {"bonus": 0.8, "sports": ["SOCCER"]},
     "CLASS_GAP":         {"bonus": 0.7, "sports": ["SOCCER"]},
     "FORTRESS_HOME":     {"bonus": 0.6, "sports": ["SOCCER"]},
     "TOURIST_TRAP":      {"bonus": -0.6, "sports": ["SOCCER"]},
     "DERBY_CHAOS":       {"bonus": 0.5, "sports": ["SOCCER"]},
+    "KEEPER_WALL":       {"bonus": 0.6, "sports": ["SOCCER"]},
+    "ROTATION_RISK":     {"bonus": -0.6, "sports": ["SOCCER"]},
+    "XG_REGRESSION":     {"bonus": 0.5, "sports": ["SOCCER"]},
+    "SET_PIECE_THREAT":  {"bonus": 0.4, "sports": ["SOCCER"]},
+    "EUROPEAN_HANGOVER": {"bonus": -0.5, "sports": ["SOCCER"]},
+    "LEAGUE_FORTRESS":   {"bonus": 0.5, "sports": ["SOCCER"]},
+    "AWAY_DAY_FADE":     {"bonus": -0.5, "sports": ["SOCCER"]},
     "BLUE_BLOOD_TRAP":   {"bonus": -0.5, "sports": ["NCAAB"]},
+    "MARCH_MADNESS_UPSET": {"bonus": -0.6, "sports": ["NCAAB"]},
+    "TEMPO_TRAP":        {"bonus": 0.5, "sports": ["NCAAB"]},
+    "CONFERENCE_MISMATCH": {"bonus": 0.6, "sports": ["NCAAB"]},
+    "HOME_COURT_CAULDRON": {"bonus": 0.5, "sports": ["NCAAB"]},
+    "DEPTH_DRAIN":       {"bonus": -0.5, "sports": ["NCAAB"]},
+    "TOURNAMENT_PEDIGREE": {"bonus": 0.4, "sports": ["NCAAB"]},
+    "THREE_POINT_STORM": {"bonus": 0.7, "sports": ["NBA"]},
+    "B2B_CORPSE":        {"bonus": -0.8, "sports": ["NBA"]},
+    "ALTITUDE_BLEED":    {"bonus": -0.6, "sports": ["NBA"]},
+    "PACE_MISMATCH":     {"bonus": 0.6, "sports": ["NBA"]},
+    "LOAD_MANAGEMENT_ARB": {"bonus": 0.5, "sports": ["NBA"]},
+    "CLUTCH_LOCK":       {"bonus": 0.5, "sports": ["NBA"]},
+    "TURNOVER_PRESSURE": {"bonus": 0.5, "sports": ["NBA"]},
+    "REF_PACE_BOOST":    {"bonus": 0.4, "sports": ["NBA"]},
+    "WEATHER_FADE":      {"bonus": -0.7, "sports": ["NFL"]},
+    "DOME_TEAM_FREEZE":  {"bonus": -0.6, "sports": ["NFL"]},
+    "DIVISIONAL_DOGFIGHT": {"bonus": 0.5, "sports": ["NFL"]},
+    "TURNOVER_MACHINE":  {"bonus": 0.7, "sports": ["NFL"]},
+    "RED_ZONE_HAMMER":   {"bonus": 0.6, "sports": ["NFL"]},
+    "PRIMETIME_LETDOWN": {"bonus": -0.5, "sports": ["NFL"]},
+    "QB_WEATHER_EDGE":   {"bonus": 0.6, "sports": ["NFL"]},
+    "GROUND_AND_POUND":  {"bonus": 0.5, "sports": ["NFL"]},
+    "COACHING_MISMATCH": {"bonus": 0.5, "sports": ["NFL"]},
+    "SCHEDULE_TRAP":     {"bonus": -0.6, "sports": ["NFL"]},
+    "RECRUITING_GAP":    {"bonus": 0.7, "sports": ["NCAAF"]},
+    "HOME_FORTRESS_CFB": {"bonus": 0.6, "sports": ["NCAAF"]},
+    "COACHING_CHAOS":    {"bonus": -0.6, "sports": ["NCAAF"]},
+    "RIVALRY_UPSET":     {"bonus": 0.5, "sports": ["NCAAF"]},
+    "PORTAL_FLUX":       {"bonus": -0.5, "sports": ["NCAAF"]},
+    # MMA chains
+    "REACH_STRIKER":     {"bonus": 0.6, "sports": ["MMA"]},
+    "GRAPPLER_TRAP":     {"bonus": 0.5, "sports": ["MMA"]},
+    "CAMP_EDGE":         {"bonus": 0.4, "sports": ["MMA"]},
+    "FINISH_THREAT":     {"bonus": 0.5, "sports": ["MMA"]},
+    "RING_RUST":         {"bonus": -0.5, "sports": ["MMA"]},
+    # Boxing chains
+    "REACH_KING":        {"bonus": 0.7, "sports": ["BOXING"]},
+    "SOUTHPAW_ANGLE":    {"bonus": 0.5, "sports": ["BOXING"]},
+    "RING_RUST_BOX":     {"bonus": -0.6, "sports": ["BOXING"]},
+    "KO_ARTIST":         {"bonus": 0.5, "sports": ["BOXING"]},
 }
 
 CHAIN_CAP = 2.0
@@ -1296,13 +1847,73 @@ def check_chain(name: str, v: dict) -> bool:
     elif name == "FADE_THE_STREAK":
         return g("form") >= 9 and g("home_away", 10) <= 4 and g("rest", 10) <= 4
     elif name == "GOALIE_EDGE":
-        return g("star_player") >= 8 and g("def_ranking") >= 7 and g("rest") >= 7
-    elif name == "ACE_DOMINATION":
-        return g("starting_pitcher") >= 9 and g("off_ranking") >= 7
-    elif name == "COORS_OVER":
-        return g("park_factor") >= 8 and g("off_ranking") >= 7
-    elif name == "PITCHING_DUEL":
-        return g("starting_pitcher") >= 8 and g("def_ranking") >= 7
+        return g("goalie") >= 8 and g("def_ranking") >= 7 and g("rest") >= 6
+    elif name == "GOALIE_WORKLOAD_WALL":
+        if g("goalie") >= 9:
+            return False
+        return g("goalie_workload") >= 8 and g("rest", 10) <= 4
+    elif name == "SPECIAL_TEAMS_EDGE":
+        if g("form", 10) <= 3:
+            return False
+        return g("pp_pct") >= 8 and g("pk_pct") >= 7
+    elif name == "B2B_BLEED":
+        if g("home_away") >= 7:
+            return False
+        return g("b2b_flag") >= 8 and g("travel_fatigue") >= 7
+    elif name == "SHOT_QUALITY_SURGE":
+        if g("goalie", 10) <= 4:
+            return False
+        return g("shot_quality") >= 8 and g("off_ranking") >= 7
+    elif name == "BACKUP_MISMATCH":
+        if g("form", 10) <= 3:
+            return False
+        return g("goalie") >= 7 and g("goalie_workload", 10) <= 3
+    elif name == "SPECIAL_TEAMS_VOID":
+        if g("off_ranking") >= 8:
+            return False
+        return g("pp_pct", 10) <= 3 and g("pk_pct", 10) <= 3
+    elif name == "ALTITUDE_ICE":
+        if g("form") >= 8:
+            return False
+        return g("travel_fatigue") >= 7 and g("b2b_flag") >= 6 and g("home_away", 10) <= 4
+    elif name == "BULLPEN_LOCKDOWN":
+        return g("bullpen") >= 8 and g("starter_depth") <= 5 and g("pitcher_profile") <= 5
+    elif name == "BULLPEN_FATIGUE_CASCADE":
+        if g("off_ranking") >= 8:
+            return False
+        return g("bullpen_fatigue") >= 8 and g("starter_depth") <= 5
+    elif name == "POWER_FLYBALL_OVER":
+        if g("bullpen") >= 8:
+            return False
+        return g("lineup_dna") >= 8 and g("gb_fb_ratio") <= 3 and g("park_factor") >= 6
+    elif name == "CONTACT_PRESSURE":
+        if g("def_ranking") >= 8:
+            return False
+        return g("lineup_dna") <= 3 and g("plate_discipline") >= 7 and g("pitcher_hitter_archetype") <= 4
+    elif name == "GROUNDBALL_DUEL":
+        if g("bullpen_fatigue") >= 7:
+            return False
+        return g("gb_fb_ratio") >= 8 and g("def_ranking") >= 7 and g("park_factor") <= 5
+    elif name == "COORS_ACTUAL":
+        if g("weather_factor") <= 3:
+            return False
+        return g("park_factor") >= 9 and (g("lineup_dna") >= 7 or g("gb_fb_ratio") <= 3) and g("bullpen") <= 6
+    elif name == "ACE_ISOLATION_TRAP":
+        if g("off_ranking") >= 8:
+            return False
+        return g("starting_pitcher") >= 8 and g("bullpen") <= 4 and g("def_ranking") <= 5
+    elif name == "PLATOON_EXPLOIT":
+        if g("starter_depth") >= 8:
+            return False
+        return g("lineup_vs_hand") >= 9 and g("pitcher_hitter_archetype") <= 4
+    elif name == "FIVE_AND_DIVE":
+        if g("park_factor") <= 3:
+            return False
+        return g("starter_depth") <= 4 and g("bullpen") <= 5 and g("off_ranking") >= 6
+    elif name == "WEATHER_WIND_BOOST":
+        if g("gb_fb_ratio") >= 7:
+            return False
+        return g("weather_factor") >= 8 and g("lineup_dna") >= 7 and g("park_factor") >= 6
     elif name == "CONGESTION_FADE":
         return g("congestion") >= 8 and g("rest") >= 7
     elif name == "CLASS_GAP":
@@ -1313,9 +1924,436 @@ def check_chain(name: str, v: dict) -> bool:
         return g("home_away", 10) <= 4 and g("congestion", 10) <= 3
     elif name == "DERBY_CHAOS":
         return g("h2h") >= 7 and g("form") >= 6 and g("motivation") >= 6
+    elif name == "KEEPER_WALL":
+        if g("congestion") >= 8:
+            return False
+        return g("goalkeeper") >= 8 and g("def_ranking") >= 7 and g("form") >= 6
+    elif name == "ROTATION_RISK":
+        if g("depth") >= 7:
+            return False
+        return g("squad_rotation") >= 8 and g("congestion") >= 7 and g("motivation", 10) <= 5
+    elif name == "XG_REGRESSION":
+        if g("star_player", 10) <= 3:
+            return False
+        return g("xg_diff") >= 8 and g("form", 10) <= 5
+    elif name == "SET_PIECE_THREAT":
+        if g("home_away", 10) <= 3:
+            return False
+        return g("set_piece") >= 8 and g("off_ranking") >= 6
+    elif name == "EUROPEAN_HANGOVER":
+        if g("home_away") >= 7:
+            return False
+        return g("congestion") >= 8 and g("squad_rotation", 10) <= 3 and g("rest", 10) <= 3
+    elif name == "LEAGUE_FORTRESS":
+        if g("star_player", 10) <= 3:
+            return False
+        return g("league_home_boost") >= 8 and g("home_away") >= 8 and g("form") >= 6
+    elif name == "AWAY_DAY_FADE":
+        if g("form") >= 9:
+            return False
+        return g("home_away", 10) <= 3 and g("league_home_boost") >= 7 and g("congestion") >= 6
     elif name == "BLUE_BLOOD_TRAP":
         return g("line_movement") >= 8 and g("off_ranking", 10) <= 5
+    elif name == "MARCH_MADNESS_UPSET":
+        if g("off_ranking") <= 3:
+            return False
+        return g("conference_strength") >= 7 and g("motivation") >= 8 and g("line_movement") >= 7
+    elif name == "TEMPO_TRAP":
+        if g("def_ranking") <= 3:
+            return False
+        return g("pace") >= 8 and g("tempo_real") >= 7 and g("off_ranking") >= 7
+    elif name == "CONFERENCE_MISMATCH":
+        if g("form") <= 3:
+            return False
+        return g("conference_strength") >= 8 and g("off_ranking") >= 7 and g("def_ranking") >= 7
+    elif name == "HOME_COURT_CAULDRON":
+        if g("star_player") <= 3:
+            return False
+        return g("home_away") >= 8 and g("form") >= 7 and g("motivation") >= 7
+    elif name == "DEPTH_DRAIN":
+        if g("form") >= 8:
+            return False
+        return g("depth", 10) <= 3 and g("pace") >= 7
+    elif name == "TOURNAMENT_PEDIGREE":
+        if g("conference_strength") <= 3:
+            return False
+        return g("tournament_exp") >= 8 and g("form") >= 6 and g("motivation") >= 7
+    elif name == "THREE_POINT_STORM":
+        if g("def_ranking", 10) <= 3:
+            return False
+        return g("three_pt_rate") >= 8 and g("off_ranking") >= 7 and g("pace") >= 7
+    elif name == "B2B_CORPSE":
+        if g("rest") >= 7:
+            return False
+        return g("b2b_fatigue") >= 8 and g("travel_distance") >= 7
+    elif name == "ALTITUDE_BLEED":
+        if g("form") >= 8:
+            return False
+        return g("altitude") >= 8 and g("travel_distance") >= 7 and g("b2b_fatigue") >= 6
+    elif name == "PACE_MISMATCH":
+        if g("def_ranking", 10) <= 3:
+            return False
+        return g("pace") >= 8 and g("off_ranking") >= 7 and g("quarter_pace") >= 7
+    elif name == "LOAD_MANAGEMENT_ARB":
+        if g("form", 10) <= 3:
+            return False
+        return g("star_player", 10) <= 4 and g("bench_diff") >= 7 and g("line_movement") >= 7
+    elif name == "CLUTCH_LOCK":
+        if g("star_player", 10) <= 4:
+            return False
+        return g("late_game_strength") >= 8 and g("def_ranking") >= 7 and g("form") >= 7
+    elif name == "TURNOVER_PRESSURE":
+        if g("off_ranking", 10) <= 4:
+            return False
+        return g("turnover_rate") >= 8 and g("def_ranking") >= 7
+    elif name == "REF_PACE_BOOST":
+        if g("def_ranking") >= 8:
+            return False
+        return g("referee_pace") >= 8 and g("pace") >= 7 and g("off_ranking") >= 7
+    elif name == "WEATHER_FADE":
+        if g("def_ranking") >= 8:
+            return False
+        return g("weather") <= 3 and g("home_away") <= 4 and g("form") <= 5
+    elif name == "DOME_TEAM_FREEZE":
+        if g("form") >= 8:
+            return False
+        return g("weather") <= 3 and g("home_away") <= 4 and g("pace") >= 7
+    elif name == "DIVISIONAL_DOGFIGHT":
+        if g("star_player") <= 3:
+            return False
+        return g("divisional") >= 7 and g("motivation") >= 7 and g("home_away") >= 6
+    elif name == "TURNOVER_MACHINE":
+        if g("off_ranking") <= 3:
+            return False
+        return g("turnover_diff") >= 8 and g("def_ranking") >= 7
+    elif name == "RED_ZONE_HAMMER":
+        if g("turnover_diff") <= 3:
+            return False
+        return g("red_zone") >= 8 and g("off_ranking") >= 7
+    elif name == "PRIMETIME_LETDOWN":
+        if g("star_player") >= 8:
+            return False
+        return g("motivation") <= 4 and g("form") <= 4 and g("home_away") <= 4
+    elif name == "QB_WEATHER_EDGE":
+        if g("off_ranking") <= 4:
+            return False
+        return g("weather") <= 4 and g("star_player") >= 8 and g("rest") >= 6
+    elif name == "GROUND_AND_POUND":
+        if g("off_ranking") <= 3:
+            return False
+        return g("pace") <= 4 and g("def_ranking") >= 7 and g("rest") >= 6
+    elif name == "COACHING_MISMATCH":
+        if g("star_player") <= 3:
+            return False
+        return g("coaching") >= 8 and g("motivation") >= 6
+    elif name == "SCHEDULE_TRAP":
+        if g("form") >= 8:
+            return False
+        return g("rest") <= 3 and g("home_away") <= 4 and g("motivation") <= 4
+    elif name == "RECRUITING_GAP":
+        if g("coaching_change") >= 7:
+            return False
+        return g("recruiting") >= 8 and g("off_ranking") >= 7
+    elif name == "HOME_FORTRESS_CFB":
+        if g("star_player") <= 3:
+            return False
+        return g("home_away") >= 8 and g("motivation") >= 7 and g("form") >= 6
+    elif name == "COACHING_CHAOS":
+        if g("recruiting") >= 8:
+            return False
+        return g("coaching_change") >= 8 and g("form", 10) <= 4
+    elif name == "RIVALRY_UPSET":
+        if g("off_ranking") <= 3:
+            return False
+        return g("h2h") >= 7 and g("motivation") >= 8 and g("home_away") >= 6
+    elif name == "PORTAL_FLUX":
+        if g("recruiting") >= 7:
+            return False
+        return g("depth", 10) <= 4 and g("coaching_change") >= 6
+    # MMA chains
+    elif name == "REACH_STRIKER":
+        if g("ground_game") <= 3:
+            return False
+        return g("reach_advantage") >= 8 and g("off_ranking") >= 7
+    elif name == "GRAPPLER_TRAP":
+        if g("reach_advantage") <= 3:
+            return False
+        return g("ground_game") >= 8 and g("def_ranking") >= 7 and g("finish_rate") >= 6
+    elif name == "CAMP_EDGE":
+        if g("star_player") <= 3:
+            return False
+        return g("camp_quality") >= 8 and g("form") >= 7
+    elif name == "FINISH_THREAT":
+        if g("def_ranking") <= 3:
+            return False
+        return g("finish_rate") >= 8 and g("off_ranking") >= 7
+    elif name == "RING_RUST":
+        if g("camp_quality") >= 8:
+            return False
+        return g("rest") >= 8 and g("form", 10) <= 4
+    # Boxing chains
+    elif name == "REACH_KING":
+        if g("form") <= 3:
+            return False
+        return g("reach_advantage") >= 8 and g("off_ranking") >= 7
+    elif name == "SOUTHPAW_ANGLE":
+        if g("reach_advantage") <= 3:
+            return False
+        return g("stance_matchup") >= 8 and g("form") >= 6
+    elif name == "RING_RUST_BOX":
+        if g("form") >= 7:
+            return False
+        return g("activity", 10) <= 3 and g("rest") >= 8
+    elif name == "KO_ARTIST":
+        if g("def_ranking") <= 3:
+            return False
+        return g("finish_rate") >= 8 and g("off_ranking") >= 8
     return False
+
+
+# ─── NFL Scoring Functions ────────────────────────────────────────────────────
+
+def score_weather(game: dict) -> tuple:
+    wx = game.get("weather") or {}
+    if not wx:
+        return 5, "no weather data"
+    condition = (wx.get("condition") or "").lower()
+    if "dome" in condition:
+        return 7, "Dome game"
+    temp = wx.get("temp")
+    wind_raw = wx.get("wind") or ""
+    wind_mph = 0
+    if isinstance(wind_raw, (int, float)):
+        wind_mph = float(wind_raw)
+    elif isinstance(wind_raw, str):
+        parts = wind_raw.replace("mph", "").strip().split()
+        for p in parts:
+            try:
+                wind_mph = float(p)
+                break
+            except ValueError:
+                continue
+    if temp is not None:
+        try:
+            temp = float(temp)
+        except (TypeError, ValueError):
+            temp = None
+    if temp is not None and temp < 32 and wind_mph > 15:
+        return 2, f"HARSH: {temp:.0f}F, wind {wind_mph:.0f}mph"
+    if temp is not None and temp < 32:
+        return 3, f"Cold: {temp:.0f}F, wind {wind_mph:.0f}mph"
+    if wind_mph > 15:
+        return 4, f"Windy: {wind_mph:.0f}mph, {temp or '?'}F"
+    if temp is not None and temp >= 60:
+        return 8, f"Warm/calm: {temp:.0f}F, wind {wind_mph:.0f}mph"
+    return 6, f"Moderate: {temp or '?'}F, wind {wind_mph:.0f}mph"
+
+
+def score_turnover_diff(profile: dict) -> tuple:
+    td = profile.get("turnover_diff")
+    if td is None:
+        return 5, "no turnover data"
+    if td >= 10:
+        s = 9
+    elif td >= 5:
+        s = 7
+    elif td >= 0:
+        s = 5
+    elif td >= -5:
+        s = 3
+    else:
+        s = 2
+    return _clamp(s), f"TO diff {td:+d}"
+
+
+def score_red_zone(profile: dict) -> tuple:
+    pct = profile.get("red_zone_pct")
+    if pct is None:
+        return 5, "no red zone data"
+    if pct >= 65:
+        s = 9
+    elif pct >= 55:
+        s = 7
+    elif pct >= 50:
+        s = 5
+    else:
+        s = 3
+    return _clamp(s), f"RZ scoring {pct:.1f}%"
+
+
+def score_divisional(game: dict, pick_side: str) -> tuple:
+    return 5, "no divisional data"
+
+
+def score_coaching(profile: dict) -> tuple:
+    return 5, "no coaching data"
+
+
+# ─── Soccer Scoring Functions ─────────────────────────────────────────────────
+
+def score_goalkeeper(game: dict, pick_side: str) -> tuple:
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    keeper_name = profile.get("goalkeeper") or profile.get("keeper") or ""
+    if not keeper_name:
+        return 5, "no goalkeeper data"
+    tier = _soccer_keeper_tier(keeper_name)
+    tier_map = {"ELITE": 9, "GOOD": 7}
+    score = tier_map.get(tier, 5)
+    note = f"{keeper_name}: {tier or 'unknown'}"
+    return _clamp(score), note
+
+
+def score_xg_diff(profile: dict) -> tuple:
+    return 5, "no xG data"
+
+
+LEAGUE_HOME_BOOST_MAP = {
+    "soccer_turkey_super_league": 8,
+    "soccer_mexico_ligamx": 8,
+    "soccer_brazil_campeonato": 8,
+    "soccer_epl": 5,
+    "soccer_england_league1": 5,
+    "soccer_germany_bundesliga": 5,
+    "soccer_germany_bundesliga2": 5,
+    "soccer_usa_mls": 4,
+    "soccer_spain_la_liga": 6,
+    "soccer_italy_serie_a": 6,
+    "soccer_france_ligue_one": 5,
+}
+
+
+def score_squad_rotation(game: dict, pick_side: str) -> tuple:
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    congestion = profile.get("matches_in_10d") or profile.get("congestion_10d")
+    if congestion is None:
+        return 5, "no congestion data for rotation"
+    congestion = int(congestion)
+    if congestion >= 3:
+        return 8, f"HIGH rotation risk: {congestion} matches in 10d"
+    elif congestion == 2:
+        return 6, f"Moderate rotation: {congestion} matches in 10d"
+    elif congestion <= 1:
+        return 2, f"LOW rotation risk: {congestion} matches in 10d"
+    return 5, f"{congestion} matches in 10d"
+
+
+def score_league_home_boost(game: dict, pick_side: str) -> tuple:
+    league = (game.get("odds_key") or game.get("league") or "").lower()
+    boost = LEAGUE_HOME_BOOST_MAP.get(league)
+    if boost is not None:
+        is_home = (pick_side == "home")
+        if is_home:
+            return _clamp(boost), f"League home boost: {league} ({boost})"
+        else:
+            inv = 10 - boost
+            return _clamp(inv), f"League home boost (away): {league} ({inv})"
+    return 5, f"no league home boost for {league}"
+
+
+def score_set_piece(profile: dict) -> tuple:
+    return 5, "no set piece data"
+
+
+# ─── NCAAB Scoring Functions ──────────────────────────────────────────────────
+
+def score_conference_strength(profile: dict) -> tuple:
+    return 5, "no conference data"
+
+
+def score_tournament_exp(profile: dict) -> tuple:
+    return 5, "no tournament data"
+
+
+def score_tempo_real(profile: dict, opp: dict, sport: str) -> tuple:
+    if profile.get("pace_L5"):
+        return score_pace_matchup(profile, opp, sport)
+    return 5, "no tempo data"
+
+
+# ─── NCAAF Scoring Functions ──────────────────────────────────────────────────
+
+def score_recruiting(profile: dict) -> tuple:
+    return 5, "no recruiting data"
+
+
+def score_coaching_change(profile: dict) -> tuple:
+    return 5, "no coaching data"
+
+
+# ─── MMA / Boxing Scoring Functions ───────────────────────────────────────────
+
+def score_reach_advantage(game: dict, pick_side: str) -> tuple:
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+    fighter = home_f if pick_side == "home" else away_f
+    opp = away_f if pick_side == "home" else home_f
+    f_reach = fighter.get("reach_inches")
+    o_reach = opp.get("reach_inches")
+    if f_reach is None or o_reach is None:
+        return 5, "no reach data"
+    try:
+        diff = float(f_reach) - float(o_reach)
+    except (TypeError, ValueError):
+        return 5, "no reach data"
+    if diff >= 4:
+        return 9, f"reach +{diff:.0f}in (big advantage)"
+    elif diff >= 2:
+        return 7, f"reach +{diff:.0f}in (advantage)"
+    elif diff > -2:
+        return 5, f"reach {diff:+.0f}in (neutral)"
+    elif diff > -4:
+        return 3, f"reach {diff:+.0f}in (disadvantage)"
+    return 2, f"reach {diff:+.0f}in (big disadvantage)"
+
+
+def score_finish_rate(game: dict, pick_side: str) -> tuple:
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+    fighter = home_f if pick_side == "home" else away_f
+    if not fighter:
+        return 5, "no fighter data"
+    ko_pct = fighter.get("ko_pct")
+    if ko_pct is None:
+        return 5, "no KO% data"
+    try:
+        ko_pct = float(ko_pct)
+    except (TypeError, ValueError):
+        return 5, "no KO% data"
+    if ko_pct >= 70:
+        return 9, f"KO%: {ko_pct:.0f}% (elite finisher)"
+    elif ko_pct >= 50:
+        return 7, f"KO%: {ko_pct:.0f}% (good finisher)"
+    elif ko_pct >= 30:
+        return 5, f"KO%: {ko_pct:.0f}% (average)"
+    return 3, f"KO%: {ko_pct:.0f}% (decision fighter)"
+
+
+def score_ground_game(game: dict, pick_side: str) -> tuple:
+    return 5, "no ground game data"
+
+
+def score_camp_quality(game: dict, pick_side: str) -> tuple:
+    return 5, "no camp data"
+
+
+def score_stance_matchup(game: dict, pick_side: str) -> tuple:
+    home_f = game.get("home_fighter") or {}
+    away_f = game.get("away_fighter") or {}
+    fighter = home_f if pick_side == "home" else away_f
+    opp = away_f if pick_side == "home" else home_f
+    stance = (fighter.get("stance") or "").lower()
+    opp_stance = (opp.get("stance") or "").lower()
+    if not stance or not opp_stance:
+        return 5, "no stance data"
+    if stance == "southpaw" and opp_stance == "orthodox":
+        return 8, "Southpaw vs Orthodox (advantage)"
+    if stance == "orthodox" and opp_stance == "southpaw":
+        return 3, "Orthodox vs Southpaw (disadvantage)"
+    return 5, f"{stance} vs {opp_stance} (neutral)"
+
+
+def score_activity(game: dict, pick_side: str) -> tuple:
+    return 5, "no activity data"
 
 
 # ─── Variable Config Per Sport ─────────────────────────────────────────────────
@@ -1326,16 +2364,22 @@ SPORT_VARIABLES = {
         "pace": 7, "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
         "late_game_strength": 7, "quarter_pace": 6, "bench_diff": 6,
+        "three_pt_rate": 8, "b2b_fatigue": 8, "travel_distance": 6,
+        "altitude": 7, "referee_pace": 5, "turnover_rate": 6,
     },
     "NHL": {
         "goalie": 9, "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
         "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+        "pp_pct": 7, "pk_pct": 7, "goalie_workload": 8, "b2b_flag": 7,
+        "shot_quality": 6, "travel_fatigue": 5,
     },
     "MLB": {
         "starting_pitcher": 6, "starter_depth": 9, "bullpen": 11,
         "lineup_vs_hand": 9, "pitcher_hitter_archetype": 8, "star_player": 7,
         "off_ranking": 7, "def_ranking": 7,
+        "lineup_dna": 8, "pitcher_profile": 7, "bullpen_fatigue": 8,
+        "weather_factor": 5, "gb_fb_ratio": 6, "plate_discipline": 7,
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "umpire": 4,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
@@ -1344,26 +2388,38 @@ SPORT_VARIABLES = {
         "congestion": 6, "form": 8, "star_player": 8, "off_ranking": 9,
         "def_ranking": 9, "home_away": 7, "rest": 4, "h2h": 6,
         "motivation": 6, "ats": 6, "line_movement": 6, "depth": 4,
+        "goalkeeper": 8, "xg_diff": 7, "squad_rotation": 6,
+        "league_home_boost": 5, "set_piece": 5,
     },
     "NCAAB": {
         "off_ranking": 9, "def_ranking": 9, "star_player": 9, "line_movement": 9,
-        "pace": 8, "ats": 8, "form": 7, "h2h": 6,
-        "home_away": 6, "depth": 7, "motivation": 6, "rest": 5,
+        "pace": 8, "ats": 8, "conference_strength": 8, "form": 7, "tempo_real": 7,
+        "h2h": 6, "home_away": 6, "depth": 7, "motivation": 6, "tournament_exp": 6,
+        "rest": 5,
     },
     "NFL": {
         "off_ranking": 9, "def_ranking": 9, "star_player": 8, "form": 8,
-        "home_away": 7, "rest": 7, "h2h": 6, "ats": 7,
-        "line_movement": 6, "motivation": 6, "depth": 5,
+        "home_away": 7, "rest": 7, "pace": 7, "weather": 7, "turnover_diff": 7,
+        "h2h": 6, "ats": 7, "red_zone": 6, "divisional": 6,
+        "line_movement": 6, "motivation": 6, "depth": 5, "coaching": 5,
+    },
+    "NCAAF": {
+        "off_ranking": 9, "def_ranking": 9, "star_player": 8, "form": 8,
+        "home_away": 8, "rest": 6, "h2h": 5, "ats": 7,
+        "line_movement": 7, "motivation": 7, "depth": 5, "pace": 7,
+        "recruiting": 7, "coaching_change": 6,
     },
     "MMA": {
         "form": 9, "off_ranking": 8, "def_ranking": 8, "star_player": 7,
-        "motivation": 7, "h2h": 6, "ats": 6, "home_away": 3,
-        "rest": 5, "depth": 3,
+        "reach_advantage": 7, "motivation": 7, "finish_rate": 6, "ground_game": 6,
+        "h2h": 6, "ats": 6, "camp_quality": 5, "rest": 5,
+        "home_away": 3, "depth": 3,
     },
     "BOXING": {
-        "form": 9, "off_ranking": 9, "def_ranking": 8, "star_player": 7,
-        "motivation": 7, "h2h": 7, "ats": 6, "home_away": 2,
-        "rest": 4, "depth": 2,
+        "form": 9, "off_ranking": 9, "def_ranking": 8, "reach_advantage": 8,
+        "star_player": 7, "motivation": 7, "h2h": 7, "stance_matchup": 6,
+        "activity": 6, "ats": 6, "finish_rate": 5, "rest": 4,
+        "home_away": 2, "depth": 2,
     },
 }
 
@@ -1411,6 +2467,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "off_ranking":
             score, note = score_off_ranking(profile, opp, sport)
+            if score == 5 and "No" in note:
+                available = False
             # NHL: record-laundered ppg is not a real offense signal —
             # standings points diverge sharply from goal differential.
             if sport in ("NHL", "SOCCER") and profile.get("ppg_synthetic"):
@@ -1418,6 +2476,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 note = f"{note} (synthetic from record)"
         elif var_name == "def_ranking":
             score, note = score_def_ranking(profile, opp, sport)
+            if score == 5 and "No" in note:
+                available = False
             if sport in ("NHL", "SOCCER") and profile.get("ppg_synthetic"):
                 available = False
                 note = f"{note} (synthetic from record)"
@@ -1429,6 +2489,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "home_away":
             score, note = score_home_away(game, pick_side)
+            if "?" in note:
+                available = False
         elif var_name == "h2h":
             if has_h2h:
                 score, note = score_h2h(profile)
@@ -1437,6 +2499,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "ats":
             score, note = score_ats_trend(profile)
+            if profile.get("avg_margin_L10") is None:
+                available = False
         elif var_name == "line_movement":
             if has_shifts:
                 score, note = score_line_movement(game)
@@ -1445,6 +2509,8 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 available = False
         elif var_name == "road_trip":
             score, note = score_road_trip(profile)
+            if note == "Neutral" and "road_trip_len" not in profile and "home_stand_len" not in profile:
+                available = False
         elif var_name == "depth":
             if has_injuries:
                 score, note = score_depth_injuries(game, pick_side)
@@ -1505,6 +2571,152 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_bench_diff(game, pick_side)
             if note == "no bench data":
                 available = False
+        elif var_name == "pp_pct":
+            score, note = score_pp_pct(profile)
+            if note == "no PP data":
+                available = False
+        elif var_name == "pk_pct":
+            score, note = score_pk_pct(profile)
+            if note == "no PK data":
+                available = False
+        elif var_name == "goalie_workload":
+            score, note = score_goalie_workload(game, pick_side)
+            if note == "No goalie workload data":
+                available = False
+        elif var_name == "b2b_flag":
+            score, note = score_b2b_flag(profile)
+            if note == "No rest data":
+                available = False
+        elif var_name == "shot_quality":
+            score, note = score_shot_quality(profile, opp)
+            if note == "No shot quality data":
+                available = False
+        elif var_name == "travel_fatigue":
+            score, note = score_travel_fatigue(profile, game, pick_side)
+        elif var_name == "three_pt_rate":
+            score, note = score_three_pt_rate(profile, opp)
+            if note == "no PPG data":
+                available = False
+        elif var_name == "b2b_fatigue":
+            score, note = score_b2b_fatigue(profile, opp)
+            if note == "no rest data":
+                available = False
+        elif var_name == "travel_distance":
+            score, note = score_travel_distance(profile, game, pick_side)
+        elif var_name == "altitude":
+            score, note = score_altitude(game, pick_side)
+        elif var_name == "referee_pace":
+            score, note = score_referee_pace(game)
+            available = False
+        elif var_name == "turnover_rate":
+            score, note = score_turnover_rate(profile, opp)
+            if note == "no defensive data":
+                available = False
+        elif var_name == "lineup_dna":
+            score, note = score_lineup_dna(game, pick_side)
+            if note == "no lineup DNA data":
+                available = False
+        elif var_name == "pitcher_profile":
+            score, note = score_pitcher_profile(game, pick_side)
+            if "no pitcher profile data" in note:
+                available = False
+        elif var_name == "bullpen_fatigue":
+            score, note = score_bullpen_fatigue(game, pick_side)
+            if note == "no bullpen fatigue data":
+                available = False
+        elif var_name == "weather_factor":
+            score, note = score_weather_factor(game, pick_side)
+            if note == "no weather data":
+                available = False
+        elif var_name == "gb_fb_ratio":
+            score, note = score_gb_fb_ratio(game, pick_side)
+            if note == "no GB/FB data":
+                available = False
+        elif var_name == "plate_discipline":
+            score, note = score_plate_discipline(game, pick_side)
+            if note == "no plate discipline data":
+                available = False
+        # ── NFL new variables ──
+        elif var_name == "weather":
+            wx = game.get("weather") or {}
+            if wx:
+                score, note = score_weather(game)
+            else:
+                score, note = 5, "no weather data"
+                available = False
+        elif var_name == "turnover_diff":
+            score, note = score_turnover_diff(profile)
+            if profile.get("turnover_diff") is None:
+                available = False
+        elif var_name == "red_zone":
+            score, note = score_red_zone(profile)
+            if profile.get("red_zone_pct") is None:
+                available = False
+        elif var_name == "divisional":
+            score, note = score_divisional(game, pick_side)
+            available = False
+        elif var_name == "coaching":
+            score, note = score_coaching(profile)
+            available = False
+        # ── Soccer new variables ──
+        elif var_name == "goalkeeper":
+            score, note = score_goalkeeper(game, pick_side)
+            if "no goalkeeper data" in note:
+                available = False
+        elif var_name == "xg_diff":
+            score, note = score_xg_diff(profile)
+            available = False
+        elif var_name == "squad_rotation":
+            score, note = score_squad_rotation(game, pick_side)
+            if "no congestion data" in note:
+                available = False
+        elif var_name == "league_home_boost":
+            score, note = score_league_home_boost(game, pick_side)
+            if "no league home boost" in note:
+                available = False
+        elif var_name == "set_piece":
+            score, note = score_set_piece(profile)
+            available = False
+        # ── NCAAB new variables ──
+        elif var_name == "conference_strength":
+            score, note = score_conference_strength(profile)
+            available = False
+        elif var_name == "tournament_exp":
+            score, note = score_tournament_exp(profile)
+            available = False
+        elif var_name == "tempo_real":
+            score, note = score_tempo_real(profile, opp, sport)
+            if note == "no tempo data":
+                available = False
+        # ── NCAAF new variables ──
+        elif var_name == "recruiting":
+            score, note = score_recruiting(profile)
+            available = False
+        elif var_name == "coaching_change":
+            score, note = score_coaching_change(profile)
+            available = False
+        # ── MMA / Boxing new variables ──
+        elif var_name == "reach_advantage":
+            score, note = score_reach_advantage(game, pick_side)
+            if note == "no reach data":
+                available = False
+        elif var_name == "finish_rate":
+            score, note = score_finish_rate(game, pick_side)
+            if "no fighter data" in note or "no KO% data" in note:
+                available = False
+        elif var_name == "ground_game":
+            score, note = score_ground_game(game, pick_side)
+            available = False
+        elif var_name == "camp_quality":
+            score, note = score_camp_quality(game, pick_side)
+            available = False
+        elif var_name == "stance_matchup":
+            score, note = score_stance_matchup(game, pick_side)
+            if note == "no stance data":
+                available = False
+        elif var_name == "activity":
+            score, note = score_activity(game, pick_side)
+            available = False
         else:
             score, note = 5, f"{var_name}: no data"
             available = False
@@ -1526,14 +2738,22 @@ def grade_game(game: dict, pick_side: str) -> dict:
 
     # Chains
     v_scores = {k: var["score"] for k, var in variables.items()}
+
+    # Data gate: require minimum real variables before chains can fire
+    available_count = sum(1 for v in variables.values() if v.get("available", True))
+    total_count = len(variables)
+    data_coverage = available_count / total_count if total_count > 0 else 0
+    chains_blocked = data_coverage < 0.5
+
     chains_fired = []
     chain_bonus = 0.0
-    for chain_name, cfg in CHAINS.items():
-        if cfg["sports"] and sport not in cfg["sports"]:
-            continue
-        if check_chain(chain_name, v_scores):
-            chain_bonus += cfg["bonus"]
-            chains_fired.append(chain_name)
+    if not chains_blocked:
+        for chain_name, cfg in CHAINS.items():
+            if cfg["sports"] and sport not in cfg["sports"]:
+                continue
+            if check_chain(chain_name, v_scores):
+                chain_bonus += cfg["bonus"]
+                chains_fired.append(chain_name)
 
     chain_bonus = max(-CHAIN_CAP, min(chain_bonus, CHAIN_CAP))
     final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)

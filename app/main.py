@@ -283,10 +283,22 @@ def _convergence(our: dict, ai: dict, ai_models: list = None) -> dict:
     }
 
 
+def _score_to_grade(score):
+    if score >= 8.5: return "A+"
+    if score >= 7.5: return "A"
+    if score >= 6.5: return "A-"
+    if score >= 6.0: return "B+"
+    if score >= 5.5: return "B"
+    if score >= 5.0: return "B-"
+    if score >= 4.5: return "C+"
+    if score >= 4.0: return "C"
+    if score >= 3.0: return "D+"
+    if score >= 2.0: return "D"
+    return "F"
+
+
 def _apply_conflict_downgrade(game: dict, pick: dict, ai_models: list, conv: dict, pr: dict | None) -> bool:
-    """If engine pick side disagrees with AI majority pick side, downgrade.
-    Caps consensus at 4.5, sets status=CONFLICT, adds KILL flag. Returns True if conflict.
-    """
+    """Graduated conflict response when engine and AI disagree on pick side."""
     if not (ai_models and pick and pick.get("side") and conv):
         return False
     home_name = game.get("homeTeam", "") or game.get("home_team", "")
@@ -308,29 +320,62 @@ def _apply_conflict_downgrade(game: dict, pick: dict, ai_models: list, conv: dic
     elif away_votes > home_votes:
         ai_side = away_name
     else:
-        return False  # tie â€” don't flag
+        return False
     engine_side = pick["side"]
     if not engine_side or ai_side == engine_side:
         return False
-    capped = min(conv.get("consensusScore", 0), 4.5)
-    conv["consensusScore"] = capped
-    conv["consensusGrade"] = "D+"
-    conv["status"] = "CONFLICT"
+
+    majority_votes = max(home_votes, away_votes)
+    minority_votes = min(home_votes, away_votes)
     conv["conflict"] = {
         "engineSide": engine_side,
         "aiSide": ai_side,
         "homeVotes": home_votes,
         "awayVotes": away_votes,
     }
-    if pr is not None:
-        flags = pr.setdefault("flags", [])
-        if not any(f.get("rule") == "side_conflict" for f in flags):
-            flags.insert(0, {
-                "rule": "side_conflict",
-                "action": "KILL",
-                "severity": "high",
-                "note": f"CONFLICT â€” Engine picks {engine_side}, AI picks {ai_side}",
-            })
+
+    if minority_votes >= 2:
+        capped = min(conv.get("consensusScore", 0), 6.0)
+        conv["consensusScore"] = capped
+        conv["consensusGrade"] = _score_to_grade(capped)
+        conv["status"] = "SPLIT"
+        if pr is not None:
+            flags = pr.setdefault("flags", [])
+            if not any(f.get("rule") == "side_conflict" for f in flags):
+                flags.insert(0, {
+                    "rule": "side_conflict",
+                    "action": "DOWNGRADE",
+                    "severity": "medium",
+                    "note": f"SPLIT -- Engine picks {engine_side}, AI leans {ai_side} ({majority_votes}-{minority_votes})",
+                })
+    elif minority_votes == 1:
+        capped = min(conv.get("consensusScore", 0), 5.0)
+        conv["consensusScore"] = capped
+        conv["consensusGrade"] = _score_to_grade(capped)
+        conv["status"] = "CONFLICT"
+        if pr is not None:
+            flags = pr.setdefault("flags", [])
+            if not any(f.get("rule") == "side_conflict" for f in flags):
+                flags.insert(0, {
+                    "rule": "side_conflict",
+                    "action": "DOWNGRADE",
+                    "severity": "high",
+                    "note": f"CONFLICT -- Engine picks {engine_side}, AI picks {ai_side} ({majority_votes}-{minority_votes})",
+                })
+    else:
+        capped = min(conv.get("consensusScore", 0), 4.5)
+        conv["consensusScore"] = capped
+        conv["consensusGrade"] = _score_to_grade(capped)
+        conv["status"] = "CONFLICT"
+        if pr is not None:
+            flags = pr.setdefault("flags", [])
+            if not any(f.get("rule") == "side_conflict" for f in flags):
+                flags.insert(0, {
+                    "rule": "side_conflict",
+                    "action": "KILL",
+                    "severity": "critical",
+                    "note": f"CONFLICT -- Engine picks {engine_side}, AI unanimously picks {ai_side} ({majority_votes}-0)",
+                })
     return True
 
 
@@ -346,8 +391,7 @@ def _apply_kill_override(pick: dict, conv: dict, pr: dict | None) -> None:
             if isinstance(f, dict) and f.get("action") == "KILL":
                 killed = True
                 break
-    if isinstance(conv, dict) and conv.get("status") == "CONFLICT":
-        killed = True
+    # Only kill on explicit KILL flags, not CONFLICT status alone
     if killed:
         pick["sizing"] = "PASS"
         pick["killed"] = True
