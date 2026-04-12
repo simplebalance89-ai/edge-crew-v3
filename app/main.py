@@ -25,7 +25,7 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from grade_engine import grade_both_sides, score_to_grade, calculate_ev, peter_rules
 from data_fetch import enrich_game_for_grading, fetch_team_profile
-from ai_models import crowdsource_grade, kimi_gatekeeper
+from ai_models import kimi_gatekeeper
 
 logger = logging.getLogger("edge-crew-v3")
 logging.basicConfig(level=logging.INFO)
