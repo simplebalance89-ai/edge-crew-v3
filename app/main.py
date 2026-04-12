@@ -599,6 +599,7 @@ AZURE_AI_KEY = os.environ.get("AZURE_AI_KEY", "") or os.environ.get("AZURE_SWEDE
 AZURE_GCE_KEY = os.environ.get("AZURE_GCE_KEY", "")
 AZURE_AI_PETERWILSON_KEY = os.environ.get("AZURE_AI_PETERWILSON_KEY", "")
 AZURE_NC_KEY = os.environ.get("AZURE_NC_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 
@@ -623,6 +624,11 @@ AZURE_HOSTS = {
         # shape (model name in body) — same dispatch as the Sweden host.
         "url": "https://peter-mnji0acb-northcentralus.services.ai.azure.com/openai/v1/chat/completions",
         "key": AZURE_NC_KEY,
+        "format": "openai_v1",
+    },
+    "openrouter": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "key": OPENROUTER_API_KEY,
         "format": "openai_v1",
     },
     "gemini": {
@@ -675,7 +681,11 @@ REAL_AI_MODELS = [
     # ── Kimi on Azure (panel-side, separate from Moonshot gatekeeper) ───────
     {"display": "Kimi K2.5 (Azure)", "deployment": "FW-Kimi-K2.5",                          "host": "north_central", "persona": "scout profiler — asks who benefits and who eats the cost",  "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 180},
 
-    # ── Outside-family diversity (non-Azure) ────────────────────────────────
+    # ── OpenRouter (one key, many models) ──────────────────────────────────
+    {"display": "Claude Sonnet 4.6", "deployment": "anthropic/claude-sonnet-4-6",            "host": "openrouter", "persona": "Anthropic rigorous reviewer, catches sloppy reasoning", "token_param": "max_tokens", "max_tokens": 4000,  "timeout": 120},
+    {"display": "Qwen 3.6 Plus",    "deployment": "qwen/qwen3.6-plus",                      "host": "openrouter", "persona": "Alibaba visual-language flagship, strong on data + non-western perspective", "token_param": "max_tokens", "max_tokens": 2000,  "timeout": 120},
+
+    # ── Outside-family diversity (non-Azure, direct) ────────────────────────
     {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                      "host": "gemini","persona": "Google multimodal, broad pattern matcher — often catches line movement", "token_param": "maxOutputTokens",      "max_tokens": 2000,  "timeout": 120},
     {"display": "Perplexity Sonar",  "deployment": "sonar",                                  "host": "perplexity","persona": "real-time web research, contrarian to consensus", "token_param": "max_tokens", "max_tokens": 2000, "timeout": 90},
 ]
