@@ -125,6 +125,15 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
                 profile.update(_extract_scoreboard_data(team_data, sport))
                 team_id = str(team_data.get("team", {}).get("id", ""))
                 logger.info(f"[ESPN] Scoreboard hit: {team_name} → {profile.get('record','?')}")
+                if sport == "SOCCER" and team_id and profile.get("ppg_synthetic"):
+                    detail = await _fetch_team_detail(client, espn_sport, espn_league, team_id, sport)
+                    if detail and detail.get("ppg_L5"):
+                        profile["ppg_L5"] = detail["ppg_L5"]
+                        profile["opp_ppg_L5"] = detail.get("opp_ppg_L5", profile.get("opp_ppg_L5", 0))
+                        if detail.get("avg_margin_L10") is not None:
+                            profile["avg_margin_L10"] = detail["avg_margin_L10"]
+                        profile.pop("ppg_synthetic", None)
+                        logger.info(f"[ESPN] Soccer real PPG from team detail: {team_name} → ppg={profile['ppg_L5']}")
             else:
                 # 2) Get team ID, then fetch /teams/{id} for full profile
                 team_id = await _get_team_id(client, espn_sport, espn_league, team_name)
@@ -151,11 +160,10 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
                 profile.update(schedule_data)
                 profile["espn_team_id"] = team_id
 
-                # ── Real pace for NFL/NCAAF/NCAAB via ESPN team statistics
-                # endpoint. NHL gets pace via the official Stats API in
-                # enrich_game_for_grading; NBA already has real quarter
-                # data; everything else used to be a flat 5.0 neutral.
-                if sport in ("NFL", "NCAAF", "NCAAB"):
+                # ── Real pace for NFL/NCAAF/NCAAB/NBA via ESPN team stats.
+                # NHL gets pace via the official Stats API in
+                # enrich_game_for_grading.
+                if sport in ("NFL", "NCAAF", "NCAAB", "NBA"):
                     try:
                         from services.espn_pace import get_team_pace as _espn_pace
                         p = await _espn_pace(team_id, sport)

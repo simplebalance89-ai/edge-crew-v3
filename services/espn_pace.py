@@ -1,5 +1,5 @@
 """
-NFL / NCAAB pace data via the ESPN team statistics endpoint.
+NFL / NCAAB / NBA pace data via the ESPN team statistics endpoint.
 
 Mirrors services.nhl_pace in spirit: pull a real tempo number from a free
 public endpoint, cache it, hand it back as pace_L5 so the existing
@@ -35,6 +35,7 @@ SPORT_PATH = {
     "NFL":   ("football",   "nfl"),
     "NCAAF": ("football",   "college-football"),
     "NCAAB": ("basketball", "mens-college-basketball"),
+    "NBA":   ("basketball", "nba"),
 }
 
 _CACHE_TTL = 3600
@@ -104,8 +105,7 @@ async def get_team_pace(team_id: str, sport: str) -> Optional[dict]:
         else:
             # ESPN sometimes serves a per-game variant directly
             pace_per_game = _extract_stat(categories, ("offensiveplayspergame", "playspergame"))
-    elif sport == "NCAAB":
-        # Possessions proxy: FGA + 0.44*FTA per game (approximation)
+    elif sport in ("NCAAB", "NBA"):
         fga = _extract_stat(categories, ("fieldgoalsattempted",))
         fta = _extract_stat(categories, ("freethrowsattempted",))
         if fga and gp and gp > 0:

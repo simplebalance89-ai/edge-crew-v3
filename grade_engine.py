@@ -2388,8 +2388,8 @@ SPORT_VARIABLES = {
         "congestion": 6, "form": 8, "star_player": 8, "off_ranking": 9,
         "def_ranking": 9, "home_away": 7, "rest": 4, "h2h": 6,
         "motivation": 6, "ats": 6, "line_movement": 6, "depth": 4,
-        "goalkeeper": 8, "xg_diff": 7, "squad_rotation": 6,
-        "league_home_boost": 5, "set_piece": 5,
+        "goalkeeper": 8, "squad_rotation": 6,
+        "league_home_boost": 5,
     },
     "NCAAB": {
         "off_ranking": 9, "def_ranking": 9, "star_player": 9, "line_movement": 9,
