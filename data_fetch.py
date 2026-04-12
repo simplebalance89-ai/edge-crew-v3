@@ -939,7 +939,7 @@ def _extract_scoreboard_data(data: dict, sport: str = "NBA") -> dict:
     for rec in comp.get("records", []):
         rtype = rec.get("type", "").lower()
         summary = rec.get("summary", "")
-        if rtype == "total":
+        if rtype in ("total", "ytd"):
             profile["record"] = summary
         elif rtype == "home":
             profile["home_record"] = summary
@@ -1008,7 +1008,7 @@ def _extract_team_detail(team: dict, sport: str = "NBA") -> dict:
         rtype = item.get("type", "").lower()
         summary = item.get("summary", "")
 
-        if rtype == "total":
+        if rtype in ("total", "ytd"):
             profile["record"] = summary
             for stat in item.get("stats", []):
                 sname = stat.get("name", "").lower()
@@ -1096,8 +1096,8 @@ def _derive_ppg_from_record(profile: dict, sport: str = "NBA") -> None:
         return
     try:
         parts = profile["record"].split("-")
-        w, l = int(parts[0]), int(parts[1])
-        total = w + l
+        w = int(parts[0])
+        total = sum(int(p) for p in parts)  # handles W-L and W-L-OTL
         if total > 0 and not profile.get("ppg_L5"):
             pct = w / total
             # Sport-specific PPG derivation from win%
@@ -1403,6 +1403,47 @@ async def enrich_game_for_grading(game_data: dict, sport: str, odds_key: str = "
                 away_profile["nhl_pace"] = away_pace
         except Exception as e:
             logger.debug(f"[NHL_PACE] fetch failed for {away}@{home}: {e}")
+
+        try:
+            from services.nhl_special_teams import get_team_special_teams
+            home_st, away_st = await asyncio.gather(
+                get_team_special_teams(home), get_team_special_teams(away)
+            )
+            if home_st:
+                if home_st.get("pp_pct") is not None:
+                    home_profile["pp_pct"] = home_st["pp_pct"]
+                if home_st.get("pk_pct") is not None:
+                    home_profile["pk_pct"] = home_st["pk_pct"]
+            if away_st:
+                if away_st.get("pp_pct") is not None:
+                    away_profile["pp_pct"] = away_st["pp_pct"]
+                if away_st.get("pk_pct") is not None:
+                    away_profile["pk_pct"] = away_st["pk_pct"]
+        except Exception as e:
+            logger.debug(f"[NHL_ST] fetch failed for {away}@{home}: {e}")
+
+    # ── NFL: turnover differential + red zone efficiency from ESPN stats.
+    if sport == "NFL":
+        try:
+            from services.nfl_stats import get_nfl_team_stats
+            home_tid = home_profile.get("espn_team_id")
+            away_tid = away_profile.get("espn_team_id")
+            home_nfl, away_nfl = await asyncio.gather(
+                get_nfl_team_stats(home, home_tid),
+                get_nfl_team_stats(away, away_tid),
+            )
+            if home_nfl:
+                if "turnover_diff" in home_nfl:
+                    home_profile["turnover_diff"] = home_nfl["turnover_diff"]
+                if "red_zone_pct" in home_nfl:
+                    home_profile["red_zone_pct"] = home_nfl["red_zone_pct"]
+            if away_nfl:
+                if "turnover_diff" in away_nfl:
+                    away_profile["turnover_diff"] = away_nfl["turnover_diff"]
+                if "red_zone_pct" in away_nfl:
+                    away_profile["red_zone_pct"] = away_nfl["red_zone_pct"]
+        except Exception as e:
+            logger.debug(f"[NFL_STATS] fetch failed for {away}@{home}: {e}")
 
     odds = game_data.get("odds", {})
 
