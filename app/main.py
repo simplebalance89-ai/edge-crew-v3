@@ -2167,23 +2167,39 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
 
     # Blend AI model scores into ai_grade (only when we actually have models)
     if ai_models:
-        # Calibrate individual model scores before averaging.
-        # LLMs trend optimistic — a raw 7.0 is their "decent game" not a real
-        # A-. Pull scores toward 5.0 (neutral) so only genuine multi-factor
-        # edges break into A- territory. 0.55 = 45% compression.
-        # raw 7.0 → 6.1 (B+), raw 7.5 → 6.4 (B+), raw 8.0 → 6.65 (A-)
-        # raw 8.5 → 6.9 (A-), raw 9.0 → 7.2 (A-), raw 6.0 → 5.55 (B)
+        # Calibrate AI model scores in two stages:
+        #
+        # 1) Compress raw scores toward center (LLMs never output below 6.5)
+        #    Factor 0.55 = 45% compression. raw 7.0→6.1, raw 8.0→6.65
+        #
+        # 2) Apply AI-specific grade thresholds that are HIGHER than the engine.
+        #    The engine earns grades through 18-22 weighted variables — hard to
+        #    inflate. AI models grade off vibes. So A- for AI requires 7.0+ post-
+        #    calibration (only raw 8.6+ reaches that), not the engine's 6.5.
+        #
+        #    AI thresholds: A+=9.0, A=8.0, A-=7.0, B+=6.3, B=5.5, rest same.
+        #
+        AI_GRADE_MAP = [
+            (9.0, "A+"), (8.0, "A"), (7.0, "A-"), (6.3, "B+"), (5.5, "B"),
+            (5.0, "B-"), (4.5, "C+"), (3.5, "C"), (2.5, "D"), (0.0, "F"),
+        ]
+        def _ai_grade(score: float) -> str:
+            for threshold, g in AI_GRADE_MAP:
+                if score >= threshold:
+                    return g
+            return "F"
+
         CALIBRATION_FACTOR = 0.55
         CALIBRATION_CENTER = 5.0
         for m in ai_models:
             raw = m.get("score", 5.0)
             m["score_raw"] = raw
             m["score"] = round(CALIBRATION_CENTER + (raw - CALIBRATION_CENTER) * CALIBRATION_FACTOR, 1)
-            m["grade"] = _score_to_grade_local(m["score"])
+            m["grade"] = _ai_grade(m["score"])
 
         avg_ai = round(sum(m["score"] for m in ai_models) / len(ai_models), 1)
         ai_grade["score"] = avg_ai
-        ai_grade["grade"] = _score_to_grade_local(avg_ai)
+        ai_grade["grade"] = _ai_grade(avg_ai)
         ai_grade["confidence"] = int(sum(m["confidence"] for m in ai_models) / len(ai_models))
         ai_grade["model"] = f"{len(ai_models)}-Model Consensus"
 
