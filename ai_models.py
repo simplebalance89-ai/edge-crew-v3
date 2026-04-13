@@ -113,6 +113,35 @@ AI_MODELS = [
 ]
 
 
+def _build_profile_block(tag: str, prof: dict, sport: str = "") -> str:
+    """Build a rich profile block with all available data for a team."""
+    parts = []
+    if prof.get("record"): parts.append(f"Record: {prof['record']}")
+    if prof.get("home_record"): parts.append(f"Home: {prof['home_record']}")
+    if prof.get("away_record"): parts.append(f"Away: {prof['away_record']}")
+    if prof.get("L5"): parts.append(f"L5: {prof['L5']}")
+    if prof.get("streak"): parts.append(f"Streak: {prof['streak']}")
+    if prof.get("ppg_L5"): parts.append(f"PPG: {prof['ppg_L5']}")
+    if prof.get("opp_ppg_L5"): parts.append(f"OPP PPG: {prof['opp_ppg_L5']}")
+    if prof.get("margin_L5"): parts.append(f"Margin L5: {prof['margin_L5']:+.1f}")
+    if prof.get("rest_days") is not None: parts.append(f"Rest: {prof['rest_days']}d")
+    if prof.get("is_b2b"): parts.append("B2B")
+    if prof.get("h2h_season") and prof["h2h_season"] != "0-0":
+        parts.append(f"H2H: {prof['h2h_season']}")
+    if prof.get("league_position"): parts.append(f"Standing: #{prof['league_position']}")
+    if prof.get("matches_in_10d"): parts.append(f"Games in 10d: {prof['matches_in_10d']}")
+    # Injuries summary
+    injuries = prof.get("injuries") or []
+    if isinstance(injuries, list) and injuries:
+        fresh = [inj for inj in injuries if isinstance(inj, dict) and inj.get("freshness") == "FRESH" and inj.get("status") in ("OUT", "Day-To-Day", "QUESTIONABLE")]
+        if fresh:
+            inj_strs = [f"{inj.get('player', '?')} ({inj.get('position', '?')}, {inj.get('injury_type', '?')})" for inj in fresh[:4]]
+            parts.append(f"Fresh injuries: {', '.join(inj_strs)}")
+    if not parts:
+        return ""
+    return f"  {tag}: {' | '.join(parts)}"
+
+
 def _build_game_prompt(game: dict, model_personality: str) -> str:
     """Build the analysis prompt for a single game."""
     home = game.get("homeTeam", "?")
@@ -135,32 +164,34 @@ def _build_game_prompt(game: dict, model_personality: str) -> str:
         ml_a = odds.get("mlAway", 0)
         lines.append(f"ODDS: Spread {spread:+.1f} | O/U {total} | ML {ml_a}/{ml_h}")
 
-    for tag, prof in [("HOME", hp), ("AWAY", ap)]:
-        parts = []
-        if prof.get("record"): parts.append(f"Record: {prof['record']}")
-        if prof.get("L5"): parts.append(f"L5: {prof['L5']}")
-        if prof.get("streak"): parts.append(f"Streak: {prof['streak']}")
-        if prof.get("ppg_L5"): parts.append(f"PPG: {prof['ppg_L5']}")
-        if prof.get("opp_ppg_L5"): parts.append(f"OPP PPG: {prof['opp_ppg_L5']}")
-        if prof.get("rest_days") is not None: parts.append(f"Rest: {prof['rest_days']}d")
-        if prof.get("is_b2b"): parts.append("B2B")
-        if prof.get("home_record"): parts.append(f"Home: {prof['home_record']}")
-        if prof.get("away_record"): parts.append(f"Away: {prof['away_record']}")
-        if parts:
-            lines.append(f"{tag}: {' | '.join(parts)}")
+    home_block = _build_profile_block("HOME", hp, sport)
+    away_block = _build_profile_block("AWAY", ap, sport)
+    if home_block: lines.append(home_block)
+    if away_block: lines.append(away_block)
 
     context = "\n".join(lines)
 
-    return f"""You are an elite sports analyst. Your personality: {model_personality}.
+    return f"""You are a professional sports handicapper who stakes real money. Your personality: {model_personality}.
 
-Grade this game on a 1-10 scale and explain WHY in 2-3 sentences.
+Your default assumption: every game is close to a coin flip. The data has to move you off that position.
+
+Evaluate these INDEPENDENT factors before grading. Each factor scores 1-10 (5 = neutral/no edge):
+- OFFENSE: Is one side meaningfully better at scoring? Not just slightly — meaningfully.
+- DEFENSE: Is one side giving up significantly fewer points?
+- SITUATIONAL: Rest, B2B, travel, home/away splits, schedule density — real fatigue edges only.
+- INJURIES: Are key starters or rotation players OUT? Role players don't move the needle.
+- FORM: L5 record AND margin. A 3-2 record with +0.5 margin is not hot — it's average.
+- VALUE: Is the line off? Is there sharp movement? Or does the line already price in the edge?
+- H2H: Season series — does one team own the other, or is it a split?
+
+Your grade is the SYNTHESIS of all seven factors. One strong factor surrounded by neutral ones is a B at best. You need multiple independent edges stacking to break above B+.
 
 {context}
 
 Return ONLY valid JSON:
-{{"grade": "A-", "score": 7.2, "confidence": 82, "pick": "team name", "thesis": "2-3 sentences explaining WHY you graded it this way — what's the edge or concern?", "key_factors": ["factor1", "factor2", "factor3"]}}
+{{"grade": "B", "score": 5.8, "confidence": 55, "pick": "team name", "thesis": "2-3 sentences. What specific edges stack? What keeps this from being higher?", "key_factors": ["factor1", "factor2", "factor3"]}}
 
-Be specific. Name players, cite records, reference the odds. Don't hedge — take a side."""
+Be honest about what you DON'T know. Missing data is not an edge — it's uncertainty."""
 
 
 # Hardcoded knowledge — NHL goalie tier dicts come from grade_engine. Pitcher
@@ -225,18 +256,12 @@ def _build_batch_prompt(games: list, model_personality: str, sport: str = "") ->
         if odds:
             lines.append(f"  Spread: {odds.get('spread', 0):+.1f} | O/U: {odds.get('total', 0)} | ML: {odds.get('mlAway', 0)}/{odds.get('mlHome', 0)}")
 
-        for tag, prof in [("HOME", hp), ("AWAY", ap)]:
-            parts = []
-            if prof.get("record"): parts.append(f"{prof['record']}")
-            if prof.get("L5"): parts.append(f"L5:{prof['L5']}")
-            if prof.get("streak"): parts.append(f"Streak:{prof['streak']}")
-            if prof.get("ppg_L5"): parts.append(f"PPG:{prof['ppg_L5']}")
-            if prof.get("rest_days") is not None: parts.append(f"Rest:{prof['rest_days']}d")
-            if prof.get("is_b2b"): parts.append("B2B")
-            if parts:
-                lines.append(f"  {tag}: {' | '.join(parts)}")
+        home_block = _build_profile_block("HOME", hp, g_sport)
+        away_block = _build_profile_block("AWAY", ap, g_sport)
+        if home_block: lines.append(home_block)
+        if away_block: lines.append(away_block)
 
-        # MLB: pitcher tiers + park factor.
+        # MLB: pitcher stats + park factor.
         if g_sport == "MLB":
             h_sp_d = hp.get("starting_pitcher") or {}
             a_sp_d = ap.get("starting_pitcher") or {}
@@ -249,8 +274,7 @@ def _build_batch_prompt(games: list, model_personality: str, sport: str = "") ->
             if home in _BATCH_HITTER_PARKS:
                 lines.append("  PARK: hitter-friendly (boost offense, hurt pitchers)")
 
-        # NHL: starting goalies + tiers. Data layer often leaves this TBD —
-        # TODO: populate starting_goalie in profile dicts (next session).
+        # NHL: starting goalies + tiers.
         if g_sport == "NHL":
             h_g = (hp.get("starting_goalie") or {}).get("name", "TBD")
             a_g = (ap.get("starting_goalie") or {}).get("name", "TBD")
@@ -263,18 +287,29 @@ def _build_batch_prompt(games: list, model_personality: str, sport: str = "") ->
 
     games_text = "\n\n".join(game_blocks)
 
-    return f"""You are an elite sports analyst. Your personality: {model_personality}.
+    return f"""You are a professional sports handicapper who stakes real money. Your personality: {model_personality}.
 
-Grade EACH game below on a 1-10 scale. For each game, explain WHY in 2-3 sentences.
+Your default assumption: every game is close to a coin flip. The data has to move you off that position.
+
+For EACH game, evaluate these INDEPENDENT factors (5 = neutral/no edge):
+- OFFENSE: Meaningful scoring edge? Not marginal — meaningful.
+- DEFENSE: Significant defensive gap?
+- SITUATIONAL: Rest, B2B, travel, schedule density — real fatigue edges only.
+- INJURIES: Key starters OUT? Role players don't move the needle.
+- FORM: L5 record AND margin. Winning close games is not dominance.
+- VALUE: Does the line already price in the edge? Sharp movement?
+- H2H: Season series ownership or split?
+
+Your grade is the SYNTHESIS. One strong factor with neutral elsewhere is a B at best. Multiple independent edges must stack to break above B+.
 
 {games_text}
 
 Return ONLY valid JSON:
 {{"games": [
-  {{"game_index": 1, "grade": "A-", "score": 7.2, "confidence": 82, "pick": "team name", "thesis": "2-3 sentences explaining WHY", "key_factors": ["factor1", "factor2"]}}
+  {{"game_index": 1, "grade": "B", "score": 5.8, "confidence": 55, "pick": "team name", "thesis": "2-3 sentences. What edges stack? What keeps this from grading higher?", "key_factors": ["factor1", "factor2"]}}
 ]}}
 
-Be specific and decisive. Name teams, cite stats, reference odds. Take a side — no hedging."""
+Be honest about what you DON'T know. Missing data is not an edge — it's uncertainty. If both teams look similar, that's a B- or C+, not a close A-."""
 
 
 AZURE_OPENAI_ENDPOINT = os.environ.get(
