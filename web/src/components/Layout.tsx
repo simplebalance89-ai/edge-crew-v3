@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Trophy, Calendar, User, LogOut, Layers } from 'lucide-react'
+import { Trophy, Calendar, User, LogOut, Layers, Flame } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 
 interface LayoutProps {
@@ -12,6 +12,7 @@ export default function Layout({ children }: LayoutProps) {
   const setUser = useAppStore((s) => s.setUser)
   
   const navItems = [
+    { path: '/top-picks', label: 'Top Picks', icon: Flame, highlight: true },
     { path: '/', label: 'Games', icon: Calendar },
     { path: '/parlay', label: 'Build Slip', icon: Layers },
     { path: '/picks', label: 'Picks', icon: Trophy },
@@ -49,16 +50,21 @@ export default function Layout({ children }: LayoutProps) {
                   </button>
                 </div>
               )}
-              {navItems.map(({ path, label, icon: Icon }) => {
+              {navItems.map(({ path, label, icon: Icon, highlight }: any) => {
                 const isActive = location.pathname === path
+                const highlightIdle = highlight && !isActive
                 return (
                   <Link
                     key={path}
                     to={path}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
                       isActive
-                        ? 'bg-[#00E5FF]/10 text-[#00E5FF] border border-[#00E5FF]/30'
-                        : 'text-[#6E6E80] hover:text-white hover:bg-white/5'
+                        ? highlight
+                          ? 'bg-[#FF2D78]/15 text-[#FF2D78] border border-[#FF2D78]/40'
+                          : 'bg-[#00E5FF]/10 text-[#00E5FF] border border-[#00E5FF]/30'
+                        : highlightIdle
+                          ? 'text-[#FF2D78] hover:bg-[#FF2D78]/10 border border-[#FF2D78]/20'
+                          : 'text-[#6E6E80] hover:text-white hover:bg-white/5'
                     }`}
                   >
                     <Icon size={18} />

@@ -2407,6 +2407,9 @@ SPORT_VARIABLES = {
         "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
         "umpire": 4,
         "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
+        # Matchup depth variables (mlb_matchup_depth module)
+        "bullpen_sequencing": 7, "manager_tendencies": 5, "platoon_depth": 6,
+        "pitcher_fatigue": 7, "run_environment": 6,
     },
     "SOCCER": {
         "congestion": 6, "form": 8, "star_player": 8, "off_ranking": 9,
@@ -2443,6 +2446,25 @@ SPORT_VARIABLES = {
         "motivation": 7, "stance_matchup": 6, "finish_rate": 6,
         "rest": 5, "h2h": 5, "line_movement": 5,
     },
+    "WNBA": {
+        "off_ranking": 9, "def_ranking": 9, "star_player": 10, "form": 8,
+        "line_movement": 7, "h2h": 6, "ats": 7, "home_away": 4,
+        "rest": 5, "depth": 8, "motivation": 6, "three_pt_rate": 5,
+        "b2b_fatigue": 4, "travel_distance": 7, "altitude": 3,
+        "bench_diff": 7, "turnover_rate": 6,
+    },
+    "TENNIS": {
+        "surface_edge": 10, "form": 9, "h2h": 8, "serve_dominance": 9,
+        "return_game": 8, "ranking_gap": 7, "fatigue": 8,
+        "mental_clutch": 7, "star_player": 6, "weather_factor": 5,
+        "home_away": 3, "line_movement": 6, "ats": 5, "motivation": 7,
+    },
+    "COLLEGE_BASEBALL": {
+        "starting_pitcher": 10, "bullpen": 6, "off_ranking": 8, "def_ranking": 7,
+        "form": 8, "home_away": 7, "weather_factor": 7, "h2h": 5, "ats": 5,
+        "conference_strength": 7, "ranking_gap": 6, "rest": 5,
+        "line_movement": 5, "motivation": 6, "star_player": 7, "depth": 4,
+    },
 }
 
 
@@ -2458,7 +2480,15 @@ def grade_game(game: dict, pick_side: str) -> dict:
     opp_side = "away" if pick_side == "home" else "home"
     opp = game.get(f"{opp_side}_profile", {})
 
-    var_weights = SPORT_VARIABLES.get(sport, SPORT_VARIABLES["NBA"])
+    var_weights = dict(SPORT_VARIABLES.get(sport, SPORT_VARIABLES["NBA"]))
+    # Dynamic weight learning — override hardcoded weights when enough game data exists
+    try:
+        from dynamic_weights import get_adjusted_weights
+        learned = get_adjusted_weights(sport)
+        if learned:
+            var_weights.update(learned)
+    except Exception:
+        pass  # Fall back to hardcoded weights silently
     variables = {}
 
     # Data availability checks — skip variables we have NO data for
@@ -2658,6 +2688,32 @@ def grade_game(game: dict, pick_side: str) -> dict:
             score, note = score_plate_discipline(game, pick_side)
             if note == "no plate discipline data":
                 available = False
+        # ── MLB matchup depth variables ──
+        elif var_name in ("bullpen_sequencing", "manager_tendencies", "platoon_depth", "pitcher_fatigue", "run_environment"):
+            try:
+                from services.mlb_matchup_depth import (
+                    score_bullpen_sequencing, score_manager_tendencies,
+                    score_platoon_depth, score_pitcher_fatigue, score_run_environment,
+                )
+                home_data = game.get("home_profile", {})
+                away_data = game.get("away_profile", {})
+                _depth_funcs = {
+                    "bullpen_sequencing": lambda: score_bullpen_sequencing(home_data, away_data),
+                    "manager_tendencies": lambda: score_manager_tendencies(home_data, away_data),
+                    "platoon_depth": lambda: score_platoon_depth(home_data, away_data),
+                    "pitcher_fatigue": lambda: score_pitcher_fatigue(home_data, away_data),
+                    "run_environment": lambda: score_run_environment(home_data, away_data, game.get("park_factor")),
+                }
+                result = _depth_funcs[var_name]()
+                side_result = result.get(pick_side)
+                if side_result and side_result[0] is not None:
+                    score, note = side_result
+                else:
+                    score, note = 5, "data unavailable"
+                    available = False
+            except Exception:
+                score, note = 5, "matchup depth module error"
+                available = False
         # ── NFL new variables ──
         elif var_name == "weather":
             wx = game.get("weather") or {}
@@ -2778,7 +2834,10 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 chains_fired.append(chain_name)
 
     chain_bonus = max(-CHAIN_CAP, min(chain_bonus, CHAIN_CAP))
-    final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+    # DISABLED: chains do not affect score until system is dialed in.
+    # Chains still fire and are returned for visibility, but bonus is zeroed.
+    effective_chain_bonus = 0.0  # was: chain_bonus
+    final = round(max(1.0, min(10.0, composite + effective_chain_bonus)), 2)
     grade = score_to_grade(final)
 
     return {
@@ -2791,6 +2850,449 @@ def grade_game(game: dict, pick_side: str) -> dict:
         "confidence": min(95, max(40, int(55 + (final - 5) * 8))),
         "variables": variables,
         "pick_side": pick_side,
+    }
+
+
+def grade_game_total(game: dict) -> dict:
+    """Grade over/under for a game. Returns verdict, score, confidence, factors."""
+    sport = game.get("sport", "NBA").upper()
+    home = game.get("home_profile", {}) or {}
+    away = game.get("away_profile", {}) or {}
+    odds = game.get("odds", {}) or {}
+    total_line = odds.get("total", 0)
+
+    if not total_line or total_line <= 0:
+        return {"verdict": "SKIP", "score": 0, "confidence": 0, "factors": ["no total line"]}
+
+    lean = 0.0
+    factors = []
+
+    # --- Universal signals ---
+
+    # Offensive strength (both teams)
+    home_ppg = home.get("ppg_L5", 0) or 0
+    away_ppg = away.get("ppg_L5", 0) or 0
+    home_opp_ppg = home.get("opp_ppg_L5", 0) or 0
+    away_opp_ppg = away.get("opp_ppg_L5", 0) or 0
+
+    if home_ppg and away_ppg:
+        avg_ppg = (home_ppg + away_ppg) / 2
+        scoring_avg = {
+            "NBA": 114, "WNBA": 80, "NCAAB": 72, "NHL": 3.2, "MLB": 4.5,
+            "NFL": 22, "NCAAF": 27, "SOCCER": 1.4,
+        }
+        avg = scoring_avg.get(sport, 114)
+        if avg > 0:
+            off_ratio = avg_ppg / avg
+            if off_ratio >= 1.08:
+                lean += 1.2
+                factors.append(f"Both offenses hot (avg PPG {avg_ppg:.1f})")
+            elif off_ratio >= 1.03:
+                lean += 0.6
+                factors.append(f"Above-avg offenses (avg PPG {avg_ppg:.1f})")
+            elif off_ratio <= 0.92:
+                lean -= 1.0
+                factors.append(f"Both offenses cold (avg PPG {avg_ppg:.1f})")
+            elif off_ratio <= 0.97:
+                lean -= 0.4
+                factors.append(f"Below-avg offenses (avg PPG {avg_ppg:.1f})")
+
+    # Defensive strength (both teams)
+    if home_opp_ppg and away_opp_ppg:
+        avg_def = (home_opp_ppg + away_opp_ppg) / 2
+        def_avg = {
+            "NBA": 114, "WNBA": 80, "NCAAB": 72, "NHL": 3.2, "MLB": 4.5,
+            "NFL": 22, "NCAAF": 27, "SOCCER": 1.4,
+        }
+        d_avg = def_avg.get(sport, 114)
+        if d_avg > 0:
+            def_ratio = avg_def / d_avg
+            if def_ratio >= 1.08:
+                lean += 1.0
+                factors.append(f"Both defenses porous (avg allow {avg_def:.1f})")
+            elif def_ratio >= 1.03:
+                lean += 0.5
+                factors.append(f"Below-avg defenses (avg allow {avg_def:.1f})")
+            elif def_ratio <= 0.92:
+                lean -= 1.2
+                factors.append(f"Both defenses elite (avg allow {avg_def:.1f})")
+            elif def_ratio <= 0.97:
+                lean -= 0.5
+                factors.append(f"Above-avg defenses (avg allow {avg_def:.1f})")
+
+    # Pace/tempo
+    home_pace = home.get("pace_L5", 0) or 0
+    away_pace = away.get("pace_L5", 0) or 0
+    if home_pace and away_pace:
+        avg_pace = (home_pace + away_pace) / 2
+        pace_avg = {
+            "NBA": 225, "NCAAB": 70, "NHL": 60, "NFL": 63, "NCAAF": 63,
+        }
+        p_avg = pace_avg.get(sport, 0)
+        if p_avg > 0:
+            pace_ratio = avg_pace / p_avg
+            if pace_ratio >= 1.06:
+                lean += 0.8
+                factors.append(f"Fast-paced matchup (avg pace {avg_pace:.1f})")
+            elif pace_ratio >= 1.02:
+                lean += 0.3
+                factors.append(f"Above-avg pace ({avg_pace:.1f})")
+            elif pace_ratio <= 0.94:
+                lean -= 0.8
+                factors.append(f"Slow grind matchup (avg pace {avg_pace:.1f})")
+            elif pace_ratio <= 0.98:
+                lean -= 0.3
+                factors.append(f"Below-avg pace ({avg_pace:.1f})")
+
+    # Recent form / scoring trend
+    home_l5 = home.get("L5", "")
+    away_l5 = away.get("L5", "")
+    if home_l5 and away_l5:
+        hw, hl = _parse_record(home_l5)
+        aw, al = _parse_record(away_l5)
+        total_wins = hw + aw
+        total_games = hw + hl + aw + al
+        if total_games >= 6:
+            win_rate = total_wins / total_games
+            if win_rate >= 0.7:
+                lean += 0.4
+                factors.append(f"Both teams in form (combined {total_wins}W in L5)")
+            elif win_rate <= 0.3:
+                lean -= 0.3
+                factors.append(f"Both teams struggling ({total_wins}W in L5)")
+
+    # Rest advantage — well-rested teams score more
+    home_rest = home.get("rest_days")
+    away_rest = away.get("rest_days")
+    home_b2b = home.get("is_b2b", False)
+    away_b2b = away.get("is_b2b", False)
+    if home_rest is not None and away_rest is not None:
+        if home_rest >= 3 and away_rest >= 3:
+            lean += 0.3
+            factors.append("Both teams well-rested")
+        elif home_b2b and away_b2b:
+            lean -= 0.3
+            factors.append("Both on B2B — fatigue depresses scoring")
+        elif home_b2b or away_b2b:
+            pass  # wash — one rested, one tired
+
+    # Total line movement
+    shifts = game.get("shifts", {}) or {}
+    total_open = shifts.get("total_open")
+    if total_open and total_line:
+        try:
+            t_delta = float(total_line) - float(total_open)
+            if t_delta >= 2.0:
+                lean += 0.5
+                factors.append(f"Total moved UP {t_delta:+.1f} (public on OVER)")
+            elif t_delta >= 1.0:
+                lean += 0.25
+                factors.append(f"Total ticked up {t_delta:+.1f}")
+            elif t_delta <= -2.0:
+                lean -= 0.5
+                factors.append(f"Total moved DOWN {t_delta:+.1f} (sharp UNDER)")
+            elif t_delta <= -1.0:
+                lean -= 0.25
+                factors.append(f"Total ticked down {t_delta:+.1f}")
+        except (ValueError, TypeError):
+            pass
+
+    # --- Sport-specific signals ---
+
+    if sport == "MLB":
+        # Starting pitcher quality
+        home_sp = home.get("starting_pitcher", {}) or {}
+        away_sp = away.get("starting_pitcher", {}) or {}
+        home_era = home_sp.get("era") or home_sp.get("ERA")
+        away_era = away_sp.get("era") or away_sp.get("ERA")
+        home_tier = _pitcher_tier_from_stats(home_sp)
+        away_tier = _pitcher_tier_from_stats(away_sp)
+
+        tier_lean = {"ace": -1.2, "good": -0.6, "mid": 0, "bad": 0.7, "unknown": 0}
+        sp_lean = tier_lean.get(home_tier, 0) + tier_lean.get(away_tier, 0)
+        if abs(sp_lean) >= 0.5:
+            lean += sp_lean
+            factors.append(f"SP matchup: {home_tier} vs {away_tier} (lean {sp_lean:+.1f})")
+
+        if home_era and away_era:
+            try:
+                avg_era = (float(home_era) + float(away_era)) / 2
+                if avg_era >= 5.0:
+                    lean += 0.6
+                    factors.append(f"High avg SP ERA ({avg_era:.2f})")
+                elif avg_era <= 2.75:
+                    lean -= 0.6
+                    factors.append(f"Low avg SP ERA ({avg_era:.2f})")
+            except (ValueError, TypeError):
+                pass
+
+        # Bullpen fatigue
+        home_bp = home.get("bullpen", {}) or {}
+        away_bp = away.get("bullpen", {}) or {}
+        home_tired = home_bp.get("bullpen_tired_arms", 0)
+        away_tired = away_bp.get("bullpen_tired_arms", 0)
+        total_tired = home_tired + away_tired
+        if total_tired >= 5:
+            lean += 0.8
+            factors.append(f"Both bullpens fatigued ({total_tired} tired arms)")
+        elif total_tired >= 3:
+            lean += 0.4
+            factors.append(f"Some bullpen fatigue ({total_tired} tired arms)")
+
+        home_bp_era = home_bp.get("bullpen_era_L7", 4.0)
+        away_bp_era = away_bp.get("bullpen_era_L7", 4.0)
+        if home_bp_era and away_bp_era:
+            avg_bp_era = (home_bp_era + away_bp_era) / 2
+            if avg_bp_era >= 5.0:
+                lean += 0.5
+                factors.append(f"Bullpens struggling (avg ERA L7 {avg_bp_era:.2f})")
+            elif avg_bp_era <= 3.0:
+                lean -= 0.4
+                factors.append(f"Bullpens locked in (avg ERA L7 {avg_bp_era:.2f})")
+
+        # Park factor
+        home_team = game.get("homeTeam", "") or game.get("home_team", "")
+        pf = PARK_FACTORS.get(home_team)
+        if pf is not None:
+            if pf >= 105:
+                lean += 1.0
+                factors.append(f"Hitter-friendly park (PF {pf})")
+            elif pf >= 102:
+                lean += 0.4
+                factors.append(f"Mildly hitter-friendly park (PF {pf})")
+            elif pf <= 94:
+                lean -= 0.8
+                factors.append(f"Pitcher-friendly park (PF {pf})")
+            elif pf <= 97:
+                lean -= 0.3
+                factors.append(f"Mildly pitcher-friendly park (PF {pf})")
+
+        # Weather
+        wx = game.get("weather") or {}
+        if wx:
+            temp_raw = wx.get("temp")
+            wind_raw = (wx.get("wind", "") or "").lower()
+            condition = (wx.get("condition", "") or "").lower()
+            try:
+                temp = int(temp_raw) if temp_raw is not None else None
+            except (TypeError, ValueError):
+                temp = None
+
+            wind_out = "out" in wind_raw
+            wind_in = " in" in wind_raw or wind_raw.startswith("in ")
+            wind_mph = 0
+            for part in wind_raw.replace(",", " ").split():
+                try:
+                    wind_mph = int(part)
+                    break
+                except ValueError:
+                    continue
+
+            if "dome" not in condition and "roof closed" not in condition:
+                if temp is not None:
+                    if temp >= 85:
+                        lean += 0.5
+                        factors.append(f"Hot weather ({temp}F)")
+                    elif temp <= 45:
+                        lean -= 0.5
+                        factors.append(f"Cold weather ({temp}F)")
+                if wind_out and wind_mph >= 10:
+                    lean += 0.8
+                    factors.append(f"Wind blowing out {wind_mph}mph")
+                elif wind_out and wind_mph >= 5:
+                    lean += 0.4
+                    factors.append(f"Wind blowing out {wind_mph}mph (moderate)")
+                elif wind_in and wind_mph >= 10:
+                    lean -= 0.8
+                    factors.append(f"Wind blowing in {wind_mph}mph")
+                elif wind_in and wind_mph >= 5:
+                    lean -= 0.4
+                    factors.append(f"Wind blowing in {wind_mph}mph (moderate)")
+
+        # Umpire
+        ump = game.get("umpire") or {}
+        ump_name = ump.get("name", "")
+        if ump_name:
+            tend = UMPIRE_TENDENCIES.get(ump_name)
+            if tend:
+                k_delta = tend["k_pct"] - LEAGUE_AVG_K_PCT
+                if k_delta >= 0.8:
+                    lean -= 0.5
+                    factors.append(f"Tight-zone ump {ump_name} (K% {tend['k_pct']})")
+                elif k_delta <= -0.5:
+                    lean += 0.4
+                    factors.append(f"Loose-zone ump {ump_name} (K% {tend['k_pct']})")
+
+    elif sport in ("NBA", "WNBA", "NCAAB"):
+        # Three-point rate proxy — high-scoring teams in fast pace = OVER
+        if home_ppg and away_ppg:
+            if sport == "NBA":
+                if home_ppg >= 118 and away_ppg >= 118:
+                    lean += 0.7
+                    factors.append("Both teams elite offense (NBA 118+ PPG)")
+                elif home_ppg >= 112 and away_ppg >= 112:
+                    lean += 0.3
+                    factors.append("Both above-avg scorers")
+            elif sport == "NCAAB":
+                if home_ppg >= 78 and away_ppg >= 78:
+                    lean += 0.6
+                    factors.append("Both teams high-scoring (NCAAB 78+ PPG)")
+
+        # B2B fatigue — tired teams score less AND defend worse (slight wash, lean UNDER)
+        if home_b2b and away_b2b:
+            lean -= 0.2
+            factors.append("Both on B2B — overall scoring depressed")
+        elif home_b2b or away_b2b:
+            lean -= 0.15
+            factors.append("One team on B2B — slight scoring dip")
+
+        # Defensive matchup
+        if home_opp_ppg and away_opp_ppg:
+            if sport == "NBA":
+                if home_opp_ppg <= 108 and away_opp_ppg <= 108:
+                    lean -= 0.7
+                    factors.append("Both elite defenses (allow <108)")
+                elif home_opp_ppg >= 118 and away_opp_ppg >= 118:
+                    lean += 0.7
+                    factors.append("Both porous defenses (allow 118+)")
+
+    elif sport == "NHL":
+        # Goalie quality
+        home_g = home.get("starting_goalie", {}) or {}
+        away_g = away.get("starting_goalie", {}) or {}
+        home_gname = home_g.get("name") or home.get("recent_starter") or home.get("goalie")
+        away_gname = away_g.get("name") or away.get("recent_starter") or away.get("goalie")
+
+        if home_gname and away_gname:
+            home_tier = _goalie_tier(home_gname)
+            away_tier = _goalie_tier(away_gname)
+            tier_val = {"ELITE": -1.0, "GOOD": -0.4, None: 0}
+            g_lean = tier_val.get(home_tier, 0) + tier_val.get(away_tier, 0)
+            if abs(g_lean) >= 0.5:
+                lean += g_lean
+                h_label = home_tier or "UNKNOWN"
+                a_label = away_tier or "UNKNOWN"
+                factors.append(f"Goalie matchup: {h_label} vs {a_label} (lean {g_lean:+.1f})")
+
+        # SV% — both struggling goalies lean OVER
+        home_sv = _normalize_sv_pct(home_g.get("sv_pct") or home_g.get("SV%") or home_g.get("svp"))
+        away_sv = _normalize_sv_pct(away_g.get("sv_pct") or away_g.get("SV%") or away_g.get("svp"))
+        if home_sv is not None and away_sv is not None:
+            avg_sv = (home_sv + away_sv) / 2
+            if avg_sv < 0.900:
+                lean += 0.6
+                factors.append(f"Both goalies struggling (avg SV% {avg_sv:.3f})")
+            elif avg_sv > 0.925:
+                lean -= 0.5
+                factors.append(f"Both goalies elite (avg SV% {avg_sv:.3f})")
+
+        # Special teams
+        home_pp = home.get("pp_pct")
+        away_pp = away.get("pp_pct")
+        home_pk = home.get("pk_pct")
+        away_pk = away.get("pk_pct")
+        if home_pp is not None and away_pp is not None:
+            avg_pp = (home_pp + away_pp) / 2
+            if avg_pp >= 24:
+                lean += 0.4
+                factors.append(f"Strong power plays (avg PP% {avg_pp:.1f})")
+            elif avg_pp <= 17:
+                lean -= 0.3
+                factors.append(f"Weak power plays (avg PP% {avg_pp:.1f})")
+        if home_pk is not None and away_pk is not None:
+            avg_pk = (home_pk + away_pk) / 2
+            if avg_pk <= 76:
+                lean += 0.4
+                factors.append(f"Weak penalty kills (avg PK% {avg_pk:.1f})")
+            elif avg_pk >= 84:
+                lean -= 0.3
+                factors.append(f"Strong penalty kills (avg PK% {avg_pk:.1f})")
+
+        # Shot quality / pace
+        home_nhl = home.get("nhl_pace", {}) or {}
+        away_nhl = away.get("nhl_pace", {}) or {}
+        home_sf = home_nhl.get("shots_for_per_game")
+        away_sf = away_nhl.get("shots_for_per_game")
+        if home_sf and away_sf:
+            avg_sf = (home_sf + away_sf) / 2
+            if avg_sf >= 34:
+                lean += 0.4
+                factors.append(f"High shot volume (avg {avg_sf:.1f} SF/g)")
+            elif avg_sf <= 28:
+                lean -= 0.3
+                factors.append(f"Low shot volume (avg {avg_sf:.1f} SF/g)")
+
+    elif sport == "SOCCER":
+        # Goalkeeper quality
+        for side_name, prof in [("home", home), ("away", away)]:
+            gk = prof.get("goalkeeper", {}) or {}
+            sv_pct = gk.get("save_pct")
+            if sv_pct is not None:
+                if sv_pct >= 0.75:
+                    lean -= 0.3
+                    factors.append(f"{side_name.title()} GK elite (SV% {sv_pct:.2f})")
+                elif sv_pct <= 0.60:
+                    lean += 0.3
+                    factors.append(f"{side_name.title()} GK poor (SV% {sv_pct:.2f})")
+
+        # Defensive style — low-conceding teams
+        if home_opp_ppg and away_opp_ppg:
+            avg_concede = (home_opp_ppg + away_opp_ppg) / 2
+            if avg_concede <= 0.8:
+                lean -= 0.6
+                factors.append(f"Both tight defenses (avg concede {avg_concede:.2f})")
+            elif avg_concede >= 1.8:
+                lean += 0.6
+                factors.append(f"Both leaky defenses (avg concede {avg_concede:.2f})")
+
+    elif sport in ("NFL", "NCAAF"):
+        # Weather for outdoor NFL
+        wx = game.get("weather") or {}
+        if wx:
+            condition = (wx.get("condition", "") or "").lower()
+            temp_raw = wx.get("temp")
+            wind_raw = (wx.get("wind", "") or "").lower()
+            try:
+                temp = int(temp_raw) if temp_raw is not None else None
+            except (TypeError, ValueError):
+                temp = None
+            wind_mph = 0
+            for part in wind_raw.replace(",", " ").split():
+                try:
+                    wind_mph = int(part)
+                    break
+                except ValueError:
+                    continue
+            if "dome" not in condition and "roof closed" not in condition:
+                if temp is not None and temp <= 32:
+                    lean -= 0.5
+                    factors.append(f"Freezing conditions ({temp}F)")
+                if wind_mph >= 15:
+                    lean -= 0.4
+                    factors.append(f"Strong wind ({wind_mph}mph) — suppresses passing")
+                if "rain" in condition or "snow" in condition:
+                    lean -= 0.3
+                    factors.append(f"Precipitation ({condition})")
+
+    # Clamp lean to -5..+5
+    lean = max(-5.0, min(5.0, lean))
+
+    # Convert lean to verdict
+    confidence = min(95, int(abs(lean) * 15 + 30))
+    if abs(lean) < 0.5:
+        verdict = "SKIP"
+        confidence = max(20, confidence - 20)
+    elif lean > 0:
+        verdict = "OVER"
+    else:
+        verdict = "UNDER"
+
+    return {
+        "verdict": verdict,
+        "score": round(lean, 2),
+        "confidence": confidence,
+        "factors": factors,
+        "total_line": total_line,
     }
 
 
@@ -2914,7 +3416,8 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
         elif profile_name == "edge":
             chain_bonus *= 1.2
 
-        final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+        # DISABLED: chains zeroed until system is dialed in
+        final = round(max(1.0, min(10.0, composite + 0.0)), 2)  # was: composite + chain_bonus
         grade = score_to_grade(final)
 
         profiles[profile_name] = {
@@ -2942,7 +3445,8 @@ def grade_profiles(game: dict, pick_side: str) -> dict:
             total_w += adjusted_weight * 10
             total_s += var_data["score"] * adjusted_weight
         other_composite = round(total_s / total_w * 10, 2) if total_w > 0 else 5.0
-        other_final = round(max(1.0, min(10.0, other_composite + other_base.get("chain_bonus", 0) * (0.5 if profile_name == "renzo" else 1.2 if profile_name == "edge" else 1.0))), 2)
+        # DISABLED: chains zeroed until system is dialed in
+        other_final = round(max(1.0, min(10.0, other_composite + 0.0)), 2)  # was: + chain_bonus * profile_mult
 
         # Each profile picks the side with the higher score
         if profiles[profile_name]["final"] >= other_final:
@@ -3124,7 +3628,8 @@ def _grade_mma_side(game: dict, side: str) -> dict:
         chains_fired.append("live_dog_with_record")
     chain_bonus = max(-1.0, min(1.0, chain_bonus))
 
-    final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
+    # DISABLED: chains zeroed until system is dialed in
+    final = round(max(1.0, min(10.0, composite + 0.0)), 2)  # was: composite + chain_bonus
     grade = score_to_grade(final)
 
     return {
@@ -3184,7 +3689,8 @@ def _mma_profiles(game: dict, pick_side: str) -> dict:
             tw += w * 10
             ts += var_data["score"] * w
         composite = round(ts / tw * 10, 2) if tw > 0 else 5.0
-        final = round(max(1.0, min(10.0, composite + base.get("chain_bonus", 0))), 2)
+        # DISABLED: chains zeroed until system is dialed in
+        final = round(max(1.0, min(10.0, composite + 0.0)), 2)  # was: + chain_bonus
 
         # Other-side composite (so the profile can pick a side)
         otw, ots = 0.0, 0.0
@@ -3196,7 +3702,8 @@ def _mma_profiles(game: dict, pick_side: str) -> dict:
             otw += w * 10
             ots += var_data["score"] * w
         other_composite = round(ots / otw * 10, 2) if otw > 0 else 5.0
-        other_final = round(max(1.0, min(10.0, other_composite + other_base.get("chain_bonus", 0))), 2)
+        # DISABLED: chains zeroed until system is dialed in
+        other_final = round(max(1.0, min(10.0, other_composite + 0.0)), 2)  # was: + chain_bonus
 
         picks = pick_side if final >= other_final else other_side
         profiles[name] = {
@@ -3306,7 +3813,12 @@ def calculate_ev(game: dict, pick_side: str, consensus_final: float, pick: dict 
     odds = game.get("odds", {})
     pick_type = (pick or {}).get("type", "ml")
 
-    if pick_type == "spread":
+    if pick_type == "total":
+        if pick_side in ("over", "OVER"):
+            ml = odds.get("overPrice") or -110
+        else:
+            ml = odds.get("underPrice") or -110
+    elif pick_type == "spread":
         # Use the spread price for the pick side (default -110 if missing)
         if pick_side == "home":
             ml = odds.get("spreadPriceHome") or -110

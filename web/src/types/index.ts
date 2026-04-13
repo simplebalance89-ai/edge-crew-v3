@@ -106,7 +106,14 @@ export interface Grade {
   thesis?: string;
   keyFactors?: string[];
   profiles?: Record<string, { grade: string; final: number; composite: number; sizing: string; chains_fired: string[] }>;
-  variables?: Record<string, { score: number; name: string; available: boolean }>;
+  variables?: Record<string, { score: number; name: string; weight: number; note: string; available: boolean }>;
+  chains?: ChainInfo[];
+}
+
+export interface ChainInfo {
+  name: string;
+  bonus: number;
+  category: 'positive' | 'negative';
 }
 
 export interface ConvergenceResult {
@@ -216,7 +223,7 @@ export interface GutPickEntry {
   timestamp: string;
 }
 
-export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "soccer" | "mma" | "boxing" | "golf";
+export type Sport = "nba" | "nhl" | "mlb" | "nfl" | "ncaab" | "ncaaf" | "soccer" | "mma" | "boxing" | "golf" | "wnba" | "tennis" | "college_baseball";
 
 export const SPORT_LABELS: Record<Sport, string> = {
   nba: "NBA",
@@ -224,10 +231,14 @@ export const SPORT_LABELS: Record<Sport, string> = {
   mlb: "MLB",
   nfl: "NFL",
   ncaab: "NCAAB",
+  ncaaf: "NCAAF",
   soccer: "Soccer",
   mma: "MMA",
   boxing: "Boxing",
   golf: "Golf",
+  wnba: "WNBA",
+  tennis: "Tennis",
+  college_baseball: "CBALL",
 };
 
 export interface GolfOutright {
