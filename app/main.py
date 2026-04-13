@@ -2502,14 +2502,14 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                         game["_sport_key"] = key  # needed for event-level BTTS fetch
                         if game["status"] in ("completed", "live"):
                             continue  # Only show upcoming â€” no live or finished
-                        # Only tonight's games â€” filter out anything more than 18 hours away
+                        # Only tonight's games â€” filter out tomorrow's slate
                         try:
-                            ct = game.get("scheduledAt", "")
+                            ct = game.get(“scheduledAt”, “”)
                             if ct:
-                                gt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                                gt = datetime.fromisoformat(ct.replace(“Z”, “+00:00”))
                                 hours_ahead = (gt - datetime.now(timezone.utc)).total_seconds() / 3600
-                                if hours_ahead < -6 or hours_ahead > 30:
-                                    continue  # Finished >6h ago or >30h out â€” skip
+                                if hours_ahead < -6 or hours_ahead > 14:
+                                    continue  # Finished >6h ago or >14h out â€” skip
                         except Exception:
                             pass
                         all_games.append(game)
@@ -3143,31 +3143,54 @@ async def health():
     }
 
 
-@app.get("/api/games")
-async def get_games(sport: str = "nba", mode: str = "games", league: str = ""):
+def _filter_live_games(games: list) -> list:
+    “””Drop games that have already started OR are more than ~12 hours out.
+    Applied at response time so cached slates stay clean:
+      - Live/in-progress games get stripped even if cached as 'scheduled'
+      - Tomorrow's games don't leak into tonight's slate”””
+    now = datetime.now(timezone.utc)
+    out = []
+    for g in games:
+        ct = (g or {}).get(“scheduledAt”, “”)
+        if ct:
+            try:
+                gt = datetime.fromisoformat(ct.replace(“Z”, “+00:00”))
+                if gt < now:
+                    continue  # Already started — drop it
+                hours_ahead = (gt - now).total_seconds() / 3600
+                if hours_ahead > 14:
+                    continue  # Tomorrow's game — drop it
+            except Exception:
+                pass
+        out.append(g)
+    return out
+
+
+@app.get(“/api/games”)
+async def get_games(sport: str = “nba”, mode: str = “games”, league: str = “”):
     sport_lower = sport.lower()
-    cache_key = f"{sport_lower}:{mode}:{league}"
+    cache_key = f”{sport_lower}:{mode}:{league}”
     cached = _cache.get(cache_key)
     if cached:
-        age = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
+        age = (datetime.now(timezone.utc) - cached[“fetched_at”]).total_seconds()
         if age < CACHE_TTL:
-            return cached["data"]
+            return _filter_live_games(cached[“data”])
     # If we have AI-enriched cached data, do NOT overwrite it with a bare
     # un-enriched fetch â€” that would silently nuke the cron pre-warm work.
     # Refresh cache only if there is no enriched data sitting in it.
     cached_enriched = bool(
         cached
-        and cached.get("data")
-        and any((g or {}).get("aiModels") for g in cached["data"])
+        and cached.get(“data”)
+        and any((g or {}).get(“aiModels”) for g in cached[“data”])
     )
     if cached_enriched:
-        return cached["data"]
+        return _filter_live_games(cached[“data”])
     games = await _fetch_and_grade(sport_lower, mode=mode, league=league)
     # Sort by date â€” soonest games first
-    games.sort(key=lambda g: g.get("scheduledAt", "9999"))
+    games.sort(key=lambda g: g.get(“scheduledAt”, “9999”))
     if games:
-        _cache[cache_key] = {"data": games, "fetched_at": datetime.now(timezone.utc)}
-    return games
+        _cache[cache_key] = {“data”: games, “fetched_at”: datetime.now(timezone.utc)}
+    return _filter_live_games(games)
 
 
 @app.get("/api/cache-status")
