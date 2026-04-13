@@ -2217,7 +2217,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
                     return g
             return "F"
 
-        CALIBRATION_FACTOR = 0.50
+        CALIBRATION_FACTOR = 0.60
         CALIBRATION_CENTER = 5.0
         for m in ai_models:
             raw = m.get("score", 5.0)
@@ -3340,7 +3340,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
             # Calibrate AI model scores — LLMs never output below 7.0 raw,
             # so compress toward 5.0 center before averaging. Separate AI
             # grade thresholds (higher than engine) prevent grade inflation.
-            _CAL_FACTOR = 0.50
+            _CAL_FACTOR = 0.60
             _CAL_CENTER = 5.0
             _AI_GRADE_MAP = [
                 (9.0, "A+"), (8.0, "A"), (7.0, "A-"), (6.3, "B+"), (5.5, "B"),
