@@ -2189,7 +2189,7 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
                     return g
             return "F"
 
-        CALIBRATION_FACTOR = 0.55
+        CALIBRATION_FACTOR = 0.45
         CALIBRATION_CENTER = 5.0
         for m in ai_models:
             raw = m.get("score", 5.0)
