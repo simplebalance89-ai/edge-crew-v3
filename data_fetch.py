@@ -94,7 +94,7 @@ def _name_match(needle: str, candidates: list) -> bool:
 async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
                              opponent_name: str = "") -> dict:
     """Fetch team profile from ESPN. Returns dict with record, ppg, rest, injuries, L5, etc."""
-    cache_key = f"{sport}:{team_name}"
+    cache_key = f"{sport}:{odds_key or 'default'}:{team_name}"
     cached = _team_cache.get(cache_key)
     if cached:
         age = (datetime.now(timezone.utc) - cached["_fetched"]).total_seconds()
