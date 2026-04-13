@@ -2440,6 +2440,237 @@ def score_activity(game: dict, pick_side: str) -> tuple:
     return 5, "no activity data"
 
 
+# ─── NEW-AGE Scorer Functions (layered on existing data) ──────────────────────
+
+def score_scoring_margin_diff(game: dict, pick_side: str) -> tuple:
+    """Goal/run differential: PPG minus OPP_PPG for both sides, compare."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    ppg = profile.get("ppg_L5", 0) or 0
+    opp_ppg = profile.get("opp_ppg_L5", 0) or 0
+    o_ppg = opp.get("ppg_L5", 0) or 0
+    o_opp = opp.get("opp_ppg_L5", 0) or 0
+    if not ppg and not opp_ppg:
+        return 5, "no scoring data"
+    our_diff = ppg - opp_ppg
+    their_diff = o_ppg - o_opp
+    delta = our_diff - their_diff
+    score = 5.0 + delta * 0.8
+    return _clamp(score), f"margin diff {our_diff:+.1f} vs {their_diff:+.1f} (delta {delta:+.1f})"
+
+
+def score_home_away_split(game: dict, pick_side: str) -> tuple:
+    """How much better/worse is this team in their current venue context?"""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    is_home = pick_side == "home"
+    split_rec = profile.get("home_record" if is_home else "away_record", "")
+    if not split_rec or "-" not in split_rec:
+        return 5, "no split data"
+    parts = split_rec.replace("-", " ").split()
+    try:
+        wins = int(parts[0])
+        losses = int(parts[1])
+        total = wins + losses
+        if total < 5:
+            return 5, f"small sample ({split_rec})"
+        pct = wins / total
+        score = 5.0 + (pct - 0.5) * 8
+        venue = "home" if is_home else "away"
+        return _clamp(score), f"{venue} {split_rec} ({pct:.3f})"
+    except (ValueError, IndexError):
+        return 5, f"parse error: {split_rec}"
+
+
+def score_goalie_tier_delta(game: dict, pick_side: str) -> tuple:
+    """Difference in goalie tier between the two sides. ELITE vs AVERAGE = big edge."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    our_g = (profile.get("starting_goalie") or {}).get("name", "TBD")
+    opp_g = (opp.get("starting_goalie") or {}).get("name", "TBD")
+    tier_map = {"ELITE": 3, "GOOD": 2, "AVERAGE": 1, "UNKNOWN": 0}
+    def _tier(name):
+        if not name or name == "TBD":
+            return 0
+        last = name.strip().lower().split()[-1]
+        if last in _BATCH_ELITE_GOALIES:
+            return 3
+        if last in _BATCH_GOOD_GOALIES:
+            return 2
+        return 1
+    ours = _tier(our_g)
+    theirs = _tier(opp_g)
+    delta = ours - theirs
+    if delta >= 2:
+        return 8.5, f"ELITE vs AVG ({our_g} vs {opp_g})"
+    if delta == 1:
+        return 6.5, f"tier edge ({our_g} vs {opp_g})"
+    if delta == 0:
+        return 5, f"even ({our_g} vs {opp_g})"
+    if delta == -1:
+        return 3.5, f"tier disadvantage ({our_g} vs {opp_g})"
+    return 2, f"AVG vs ELITE ({our_g} vs {opp_g})"
+
+
+def score_special_teams_combined(game: dict, pick_side: str) -> tuple:
+    """Combined PP% + PK% edge. Teams elite on both = massive special teams edge."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    # Reuse pp/pk scorer logic but combine
+    pp = profile.get("pp_pct", profile.get("powerplay_pct"))
+    pk = profile.get("pk_pct", profile.get("penalty_kill_pct"))
+    if pp is None and pk is None:
+        return 5, "no special teams data"
+    # Simple: both above average = boost, both below = drop
+    pp_score = 5.0
+    pk_score = 5.0
+    if pp is not None:
+        try:
+            pp = float(pp)
+            pp_score = 5.0 + (pp - 20.0) * 0.3  # 20% is average
+        except (ValueError, TypeError):
+            pass
+    if pk is not None:
+        try:
+            pk = float(pk)
+            pk_score = 5.0 + (pk - 80.0) * 0.3  # 80% is average
+        except (ValueError, TypeError):
+            pass
+    combined = (pp_score + pk_score) / 2
+    return _clamp(combined), f"PP+PK combined {combined:.1f}"
+
+
+def score_schedule_density(game: dict, pick_side: str) -> tuple:
+    """Games in last 10 days — schedule grind factor."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    our_games = profile.get("matches_in_10d", 0) or 0
+    their_games = opp.get("matches_in_10d", 0) or 0
+    if not our_games and not their_games:
+        return 5, "no schedule data"
+    delta = their_games - our_games  # positive = opponent is more fatigued
+    score = 5.0 + delta * 0.8
+    return _clamp(score), f"schedule {our_games} vs {their_games} games in 10d"
+
+
+def score_league_position_gap(game: dict, pick_side: str) -> tuple:
+    """Standing position gap — #1 vs #20 is a mismatch."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    our_pos = profile.get("league_position")
+    their_pos = opp.get("league_position")
+    if our_pos is None or their_pos is None:
+        return 5, "no standing data"
+    try:
+        our_pos = int(our_pos)
+        their_pos = int(their_pos)
+    except (ValueError, TypeError):
+        return 5, "parse error"
+    gap = their_pos - our_pos  # positive = we're higher in standings
+    score = 5.0 + gap * 0.25
+    return _clamp(score), f"standing #{our_pos} vs #{their_pos} (gap {gap:+d})"
+
+
+def score_bullpen_k_dominance(game: dict, pick_side: str) -> tuple:
+    """Bullpen strikeout dominance — K-rate pen vs contact pen."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    # Use bullpen ERA as proxy — lower ERA correlates with higher K rate
+    bp = profile.get("bullpen") or {}
+    opp_bp = opp.get("bullpen") or {}
+    era = bp.get("bullpen_era_L7")
+    opp_era = opp_bp.get("bullpen_era_L7")
+    if era is None and opp_era is None:
+        return 5, "no bullpen K data"
+    try:
+        our_era = float(era) if era is not None else 4.0
+        their_era = float(opp_era) if opp_era is not None else 4.0
+    except (ValueError, TypeError):
+        return 5, "parse error"
+    # Lower ERA = better. Each 0.5 ERA difference = ~1 point
+    delta = their_era - our_era  # positive = our pen is better
+    score = 5.0 + delta * 1.2
+    return _clamp(score), f"pen ERA {our_era:.2f} vs {their_era:.2f} (delta {delta:+.1f})"
+
+
+def score_k_rate_vs_barrel(game: dict, pick_side: str) -> tuple:
+    """THE matchup: our pitching staff K rate vs their lineup power.
+    K pitchers vs HR-or-nothing hitters = strikeouts. Peter's thesis."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    opp_side = "away" if pick_side == "home" else "home"
+    opp = game.get(f"{opp_side}_profile", {}) or {}
+    sp = profile.get("starting_pitcher") or {}
+    opp_splits = opp.get("lineup_vs_hand") or {}
+    k9 = sp.get("k9")
+    opp_ops = opp_splits.get("ops_vs_hand")
+    opp_hr = opp_splits.get("hr_vs_hand")
+    opp_avg = opp_splits.get("avg_vs_hand")
+    if k9 is None or opp_ops is None:
+        return 5, "no K vs barrel data"
+    try:
+        k9f = float(k9)
+        ops_f = float(opp_ops)
+        avg_f = float(opp_avg) if opp_avg is not None else 0.260
+        hr_i = int(opp_hr) if opp_hr is not None else 10
+    except (ValueError, TypeError):
+        return 5, "parse error"
+    # High K pitcher (9+) vs power lineup (high OPS, high HR, low AVG) = edge
+    is_k_pitcher = k9f >= 9.0
+    is_power_lineup = ops_f >= 0.750 and avg_f <= 0.250  # swing big, miss big
+    score = 5.0
+    if is_k_pitcher and is_power_lineup:
+        score = 8.0  # K pitcher vs HR-or-bust = Ks
+    elif is_k_pitcher:
+        score = 6.5  # K pitcher vs any lineup = lean
+    elif not is_k_pitcher and is_power_lineup:
+        score = 3.5  # contact pitcher vs power lineup = danger
+    # K/9 gradient
+    score += (k9f - 8.5) * 0.5
+    # Power lineup penalty
+    if ops_f >= 0.800:
+        score -= 0.5
+    return _clamp(score), f"K9 {k9f:.1f} vs OPS {ops_f:.3f}/AVG {avg_f:.3f}/HR {hr_i}"
+
+
+def score_run_differential_l5(game: dict, pick_side: str) -> tuple:
+    """Run/goal differential over L5 — margin matters more than record."""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    margin = profile.get("margin_L5", profile.get("L5_margin", 0))
+    if margin is None:
+        return 5, "no margin data"
+    try:
+        margin = float(margin)
+    except (ValueError, TypeError):
+        return 5, "parse error"
+    score = 5.0 + margin * 0.6
+    return _clamp(score), f"L5 margin {margin:+.1f}"
+
+
+def score_record_strength(game: dict, pick_side: str) -> tuple:
+    """Overall record win% — are they actually a good team?"""
+    profile = game.get(f"{pick_side}_profile", {}) or {}
+    rec = profile.get("record", "")
+    if not rec or "-" not in rec:
+        return 5, "no record"
+    parts = rec.replace("-", " ").split()
+    try:
+        wins = int(parts[0])
+        losses = int(parts[1])
+        total = wins + losses
+        if total < 10:
+            return 5, f"small sample ({rec})"
+        pct = wins / total
+        score = 5.0 + (pct - 0.5) * 10
+        return _clamp(score), f"record {rec} ({pct:.3f})"
+    except (ValueError, IndexError):
+        return 5, f"parse error: {rec}"
+
+
 # ─── Variable Config Per Sport ─────────────────────────────────────────────────
 
 SPORT_VARIABLES = {
@@ -2452,24 +2683,45 @@ SPORT_VARIABLES = {
         "altitude": 7, "referee_pace": 5, "turnover_rate": 6,
     },
     "NHL": {
-        "goalie": 9, "star_player": 9, "rest": 8, "off_ranking": 7, "def_ranking": 7,
-        "form": 7, "road_trip": 7, "h2h": 6, "ats": 6,
-        "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
-        "pp_pct": 7, "pk_pct": 7, "goalie_workload": 8, "b2b_flag": 7,
-        "shot_quality": 6, "travel_fatigue": 5,
+        # Tier 1: Goalie is king (consensus: 77% models cite goalie metrics)
+        "goalie": 10.8, "goalie_workload": 9.7, "goalie_tier_delta": 9.2,
+        # Tier 2: Team strength + possession (58% cite xG/Corsi)
+        "off_ranking": 8.9, "def_ranking": 8.6, "scoring_margin_diff": 8.3,
+        "star_player": 8.1,
+        # Tier 3: Special teams + situational
+        "pp_pct": 7.9, "pk_pct": 7.5, "special_teams_combined": 7.3,
+        "rest": 7.7, "b2b_flag": 7.1, "form": 6.9,
+        # Tier 4: Matchup + context
+        "home_away_split": 6.7, "road_trip": 6.5, "travel_fatigue": 6.3,
+        "h2h": 6.1, "depth": 5.9, "schedule_density": 5.7,
+        "shot_quality": 5.5, "altitude": 5.3,
+        # Tier 5: Market + situational
+        "ats": 5.1, "line_movement": 4.9, "motivation": 4.7,
+        "league_position_gap": 4.5, "record_strength": 4.3,
+        "run_differential_l5": 4.1, "home_away": 3.9,
     },
     "MLB": {
-        "starting_pitcher": 6, "starter_depth": 9, "bullpen": 11,
-        "lineup_vs_hand": 9, "pitcher_hitter_archetype": 8, "star_player": 7,
-        "off_ranking": 7, "def_ranking": 7,
-        "lineup_dna": 8, "pitcher_profile": 7, "bullpen_fatigue": 8,
-        "weather_factor": 5, "gb_fb_ratio": 6, "plate_discipline": 7,
-        "form": 7, "rest": 6, "h2h": 6, "ats": 6, "park_factor": 6,
-        "umpire": 4,
-        "line_movement": 5, "home_away": 5, "depth": 4, "motivation": 5,
-        # Matchup depth variables (mlb_matchup_depth module)
-        "bullpen_sequencing": 7, "manager_tendencies": 5, "platoon_depth": 6,
-        "pitcher_fatigue": 7, "run_environment": 6,
+        # Tier 1: Bullpen is king + K matchup thesis (Peter's philosophy)
+        "bullpen": 10.9, "bullpen_k_dominance": 10.4, "k_rate_vs_barrel": 9.8,
+        "bullpen_fatigue": 9.5,
+        # Tier 2: Lineup quality + starter depth (NOT starter name)
+        "lineup_vs_hand": 9.2, "starter_depth": 8.9, "lineup_dna": 8.6,
+        "pitcher_hitter_archetype": 8.3,
+        # Tier 3: Offensive/defensive strength
+        "off_ranking": 8.1, "def_ranking": 7.9, "scoring_margin_diff": 7.7,
+        "plate_discipline": 7.5, "star_player": 7.3,
+        # Tier 4: Pitcher detail + matchup depth
+        "pitcher_profile": 7.1, "starting_pitcher": 6.9, "bullpen_sequencing": 6.7,
+        "platoon_depth": 6.5, "pitcher_fatigue": 6.3,
+        # Tier 5: Context + environment
+        "park_factor": 6.1, "weather_factor": 5.9, "umpire": 5.7,
+        "gb_fb_ratio": 5.5, "form": 5.3, "run_environment": 5.1,
+        # Tier 6: Situational + market
+        "home_away_split": 4.9, "rest": 4.7, "h2h": 4.5,
+        "run_differential_l5": 4.3, "record_strength": 4.1,
+        "ats": 3.9, "line_movement": 3.7, "home_away": 3.5,
+        "depth": 3.3, "motivation": 3.1, "manager_tendencies": 2.9,
+        "schedule_density": 2.7,
     },
     "SOCCER": {
         "congestion": 6, "form": 8, "star_player": 8, "off_ranking": 9,
@@ -2855,6 +3107,47 @@ def grade_game(game: dict, pick_side: str) -> dict:
         elif var_name == "activity":
             score, note = score_activity(game, pick_side)
             available = False
+        # ── New-age variables (layered on existing data) ──
+        elif var_name == "scoring_margin_diff":
+            score, note = score_scoring_margin_diff(game, pick_side)
+            if "no scoring" in note:
+                available = False
+        elif var_name == "home_away_split":
+            score, note = score_home_away_split(game, pick_side)
+            if "no split" in note or "small sample" in note:
+                available = False
+        elif var_name == "goalie_tier_delta":
+            score, note = score_goalie_tier_delta(game, pick_side)
+            if "TBD" in note and "TBD" in note[note.find("vs"):]:
+                available = False
+        elif var_name == "special_teams_combined":
+            score, note = score_special_teams_combined(game, pick_side)
+            if "no special" in note:
+                available = False
+        elif var_name == "schedule_density":
+            score, note = score_schedule_density(game, pick_side)
+            if "no schedule" in note:
+                available = False
+        elif var_name == "league_position_gap":
+            score, note = score_league_position_gap(game, pick_side)
+            if "no standing" in note:
+                available = False
+        elif var_name == "bullpen_k_dominance":
+            score, note = score_bullpen_k_dominance(game, pick_side)
+            if "no bullpen K" in note:
+                available = False
+        elif var_name == "k_rate_vs_barrel":
+            score, note = score_k_rate_vs_barrel(game, pick_side)
+            if "no K vs barrel" in note:
+                available = False
+        elif var_name == "run_differential_l5":
+            score, note = score_run_differential_l5(game, pick_side)
+            if "no margin" in note:
+                available = False
+        elif var_name == "record_strength":
+            score, note = score_record_strength(game, pick_side)
+            if "no record" in note or "small sample" in note:
+                available = False
         else:
             score, note = 5, f"{var_name}: no data"
             available = False
