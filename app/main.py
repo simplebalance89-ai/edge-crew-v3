@@ -590,9 +590,9 @@ def _parse_event(event: dict, sport_label: str) -> dict:
         try:
             gt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
             hours_ago = (datetime.now(timezone.utc) - gt).total_seconds() / 3600
-            if hours_ago > 5:
+            if hours_ago > 3.5:
                 status = "completed"
-            elif hours_ago > 0.5:
+            elif hours_ago > 0:
                 status = "live"
         except Exception:
             pass
@@ -2500,8 +2500,8 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                     for event in events:
                         game = _parse_event(event, sport_upper)
                         game["_sport_key"] = key  # needed for event-level BTTS fetch
-                        if game[“status”] == “completed”:
-                            continue  # Only hide finished games â€” keep live visible
+                        if game["status"] in ("completed", "live"):
+                            continue  # Only show upcoming â€” no live or finished
                         # Only tonight's games â€” filter out anything more than 18 hours away
                         try:
                             ct = game.get("scheduledAt", "")
