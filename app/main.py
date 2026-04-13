@@ -3308,15 +3308,32 @@ async def _analyze_games_impl(request: AnalyzeRequest):
 
         if ai_grades_list:
             valid_models = [m for m in ai_grades_list if m.get("source") == "real" and m.get("score", 0) > 0]
+
+            # Calibrate AI model scores — LLMs never output below 7.0 raw,
+            # so compress toward 5.0 center before averaging. Separate AI
+            # grade thresholds (higher than engine) prevent grade inflation.
+            _CAL_FACTOR = 0.45
+            _CAL_CENTER = 5.0
+            _AI_GRADE_MAP = [
+                (9.0, "A+"), (8.0, "A"), (7.0, "A-"), (6.3, "B+"), (5.5, "B"),
+                (5.0, "B-"), (4.5, "C+"), (3.5, "C"), (2.5, "D"), (0.0, "F"),
+            ]
+            def _ai_g(s):
+                for t, g in _AI_GRADE_MAP:
+                    if s >= t: return g
+                return "F"
+
+            for m in valid_models:
+                raw = m["score"]
+                m["score_raw"] = raw
+                m["score"] = round(_CAL_CENTER + (raw - _CAL_CENTER) * _CAL_FACTOR, 1)
+                m["grade"] = _ai_g(m["score"])
+
             valid_scores = [m["score"] for m in valid_models]
             if valid_scores:
                 avg_score = round(sum(valid_scores) / len(valid_scores), 1)
                 avg_conf = int(sum(m.get("confidence", 50) for m in valid_models) / len(valid_models))
-                blended_grade = "F"
-                for threshold, g in GRADE_MAP:
-                    if avg_score >= threshold:
-                        blended_grade = g
-                        break
+                blended_grade = _ai_g(avg_score)
                 game["aiGrade"] = {
                     "grade": blended_grade,
                     "score": avg_score,
