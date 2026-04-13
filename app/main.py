@@ -1275,13 +1275,18 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
                 f"{home}: {_lvh_str(h_lvh)} | "
             )
         mlb_priority_block = (
-            "MLB EDGE PRIORITY: "
-            "1) bullpen quality/fatigue, "
-            "2) starter depth + command (IP/K9/BB9), "
-            "3) lineup-vs-hand + pitcher/lineup archetype fit, "
-            "4) park/weather/umpire, "
-            "5) starter-name narrative LAST. "
-            "Do not anchor on pitcher name alone. | "
+            "MLB GRADING PHILOSOPHY — MODERN BASEBALL, NOT 1995: "
+            "Starters go 5 innings. The BULLPEN finishes the game. "
+            "1) BULLPEN is king: K-rate of available high-leverage arms, fatigue, rest days. "
+            "A tired pen with no K guys is a death sentence — grade DOWN hard. "
+            "2) K-RATE vs BARREL-RATE MATCHUP: If the pitching staff (starter + pen) are strikeout "
+            "pitchers and the opposing lineup swings for home runs, those hitters are getting K'd. "
+            "Power arm vs power lineup = pitcher wins. Contact pitcher vs power lineup = disaster. "
+            "3) STARTER DEPTH, not starter NAME: How many innings can he eat? K/9, BB/9, command. "
+            "A 6-IP, 9 K/9 guy saves the pen. A 4-IP, 5 K/9 guy exposes it. "
+            "4) Lineup quality: wRC+ rolling, barrel rate, plate discipline. Are they actually hitting? "
+            "5) Park + weather + umpire: wind blowing out at Coors is different from Safeco. "
+            "6) Starter name/ERA narrative is LAST and LEAST. Do NOT anchor on it. | "
         )
 
     # NHL-specific: starting goalies + tier label + SV% when ESPN provides it.
@@ -1444,6 +1449,8 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{data_memo}"
         f"engine composite: {our_score:.1f}/10. "
         f"GRADING DISCIPLINE: Most games are close to even. Your default is 5.0 (coin flip). "
+        f"{'For MLB: bullpen K-rate + fatigue is the #1 separator. K-pitching vs barrel-heavy lineup is the #2. A game where both pens are rested with high-K arms AND the lineup matchup favors one side is a 7.0+. A game with TBD pitchers and no bullpen edge is a 5.0. ' if sport == 'MLB' else ''}"
+        f"{'For NHL: goalie quality (GSAA) is the #1 separator. Corsi/xG differential is #2. A game with an elite goalie vs a backup AND strong possession edge is a 7.0+. Two similar teams with similar goalies is a 5.0. ' if sport == 'NHL' else ''}"
         f"One edge alone (form, rest, injuries) is a 5.5-6.0. "
         f"Multiple independent edges stacking is 6.5-7.5. "
         f"8.0+ means extreme mismatch with confirmed data — almost never happens. "
