@@ -2584,15 +2584,11 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
         except asyncio.TimeoutError:
             logger.warning("[BTTS] Timeout fetching BTTS odds â€” continuing without")
 
-    # Determine odds_key for soccer league routing
-    odds_key = ""
-    if sport_upper == "SOCCER":
-        for key in keys:
-            odds_key = key
-            break
-
     # Grade all games in parallel
     async def _grade_single(game):
+        # Use per-game _sport_key so each soccer league routes to the
+        # correct ESPN endpoint (was using first key in list → MLS for all).
+        odds_key = game.get("_sport_key", "") if sport_upper == "SOCCER" else ""
         # Outdoor-sport weather: NFL today, NCAAF/Soccer when their stadium
         # tables get filled in. Skipped for domes (weather doesn't matter
         # inside an enclosed roof) and skipped silently if open-meteo errors.
