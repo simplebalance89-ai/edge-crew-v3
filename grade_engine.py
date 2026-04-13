@@ -1569,6 +1569,66 @@ ELITE_SOCCER_STRIKERS = {
     "pumas unam": ["dinenno", "silva"],
 }
 
+# Team → starting goalkeeper mapping. Used to populate profile.goalkeeper
+# so score_goalkeeper() can tier them. Keeper changes mid-season happen —
+# update this dict when they do. Same pattern as ELITE_SOCCER_STRIKERS.
+TEAM_STARTING_KEEPERS = {
+    # Premier League
+    "manchester city": "ederson", "man city": "ederson",
+    "arsenal": "raya", "liverpool": "alisson",
+    "tottenham": "vicario", "tottenham hotspur": "vicario",
+    "chelsea": "sanchez", "manchester united": "onana", "man united": "onana",
+    "newcastle": "pope", "newcastle united": "pope",
+    "aston villa": "emi martinez", "west ham": "areola", "west ham united": "areola",
+    "brighton": "verbruggen", "brighton & hove albion": "verbruggen",
+    "brentford": "flekken", "crystal palace": "henderson",
+    "fulham": "leno", "everton": "pickford",
+    "wolves": "sa", "wolverhampton wanderers": "sa",
+    "bournemouth": "kepa", "nottingham forest": "sels",
+    "ipswich": "walton", "ipswich town": "walton",
+    "leicester": "hermansen", "leicester city": "hermansen",
+    "southampton": "ramsdale", "leeds": "meslier", "leeds united": "meslier",
+    # La Liga
+    "real madrid": "courtois", "barcelona": "ter stegen",
+    "atletico madrid": "oblak", "real sociedad": "remiro",
+    "athletic bilbao": "rulli", "athletic club": "rulli",
+    "villarreal": "jorgensen", "real betis": "rui silva",
+    "girona": "gazzaniga", "sevilla": "bounou",
+    "valencia": "mamardashvili", "getafe": "soria",
+    "celta vigo": "guaita", "rayo vallecano": "dimitrievski",
+    "mallorca": "greif", "levante": "cardenas",
+    # Serie A
+    "inter milan": "sommer", "internazionale": "sommer",
+    "ac milan": "maignan", "milan": "maignan",
+    "juventus": "di gregorio", "napoli": "meret",
+    "roma": "svilar", "as roma": "svilar",
+    "atalanta": "carnesecchi", "lazio": "provedel",
+    "fiorentina": "de gea", "bologna": "skorupski",
+    "torino": "milinkovic-savic",
+    # Bundesliga
+    "bayern munich": "neuer", "bayern": "neuer",
+    "borussia dortmund": "kobel", "dortmund": "kobel",
+    "bayer leverkusen": "hradecky", "leverkusen": "hradecky",
+    "rb leipzig": "gulacsi", "leipzig": "gulacsi",
+    "stuttgart": "nubel", "vfb stuttgart": "nubel",
+    "eintracht frankfurt": "trapp", "frankfurt": "trapp",
+    # Ligue 1
+    "psg": "donnarumma", "paris saint-germain": "donnarumma",
+    "marseille": "de lange", "olympique marseille": "de lange",
+    "monaco": "kohn", "lyon": "perri", "olympique lyonnais": "perri",
+    "lille": "chevalier",
+    # MLS
+    "inter miami": "callender", "la galaxy": "scott",
+    "lafc": "crepeau", "los angeles fc": "crepeau",
+    "atlanta united": "guzan", "seattle sounders": "thomas",
+    "columbus crew": "schulte", "fc cincinnati": "kann",
+    # Liga MX
+    "club america": "ochoa", "america": "ochoa",
+    "chivas": "rangel", "guadalajara": "rangel",
+    "monterrey": "andrada", "tigres": "guzman", "tigres uanl": "guzman",
+    "cruz azul": "jurado",
+}
+
 # Elite / good top-flight goalkeepers. Last names (lowercase) unless a
 # multi-word surname is required.
 ELITE_SOCCER_KEEPERS = {

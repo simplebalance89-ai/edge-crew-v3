@@ -2165,6 +2165,20 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     else:
         try:
             enriched = await enrich_game_for_grading(game, sport_upper, odds_key)
+
+            # Soccer: inject starting goalkeeper from hardcoded dict so
+            # score_goalkeeper() can tier them (weight 8, was always returning 5).
+            if sport_upper == "SOCCER":
+                from grade_engine import TEAM_STARTING_KEEPERS
+                for side_key in ("home_profile", "away_profile"):
+                    prof = enriched.get(side_key) or {}
+                    if not prof.get("goalkeeper") and not prof.get("keeper"):
+                        team = prof.get("team", "")
+                        keeper = TEAM_STARTING_KEEPERS.get(team.strip().lower(), "")
+                        if keeper:
+                            prof["goalkeeper"] = keeper
+                            prof["starting_keeper"] = {"name": keeper}
+
             result = grade_both_sides(enriched)
             best = result["best"]
 
