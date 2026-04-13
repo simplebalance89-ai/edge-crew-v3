@@ -1372,16 +1372,39 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
     # baseball language ("pitching edge") into NBA grading. This was a real
     # bug â€” DeepSeek V3.2 Spec parroted "pitching edge" on the Rockets-Suns
     # NBA game tonight because the example said it.
+    # Build missing-data memo so models know what's TBD and don't grade blind
+    _data_gaps = []
+    if sport == "NHL":
+        h_g_name = (hp.get("starting_goalie") or {}).get("name", "TBD")
+        a_g_name = (ap.get("starting_goalie") or {}).get("name", "TBD")
+        if h_g_name == "TBD" or a_g_name == "TBD":
+            _data_gaps.append("goalies TBD")
+    if sport == "MLB":
+        h_sp_name = (hp.get("starting_pitcher") or {}).get("name", "TBD")
+        a_sp_name = (ap.get("starting_pitcher") or {}).get("name", "TBD")
+        if h_sp_name == "TBD" or a_sp_name == "TBD":
+            _data_gaps.append("pitchers TBD")
+    if not inj_present:
+        _data_gaps.append("injuries unavailable")
+    if not hp.get("L5") or not ap.get("L5"):
+        _data_gaps.append("L5 form missing")
+    if not hp.get("h2h_season") or hp.get("h2h_season") == "0-0":
+        _data_gaps.append("no H2H data")
+    data_memo = ""
+    if _data_gaps:
+        data_memo = f"DATA GAPS: {', '.join(_data_gaps)}. Missing data is uncertainty — grade conservatively, do not fill gaps with assumptions. | "
+
+    # Anchor examples at 5.5 (B range) not 7.2. LLMs anchor to examples.
     sport_example = {
-        "NBA":   '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
-        "WNBA":  '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
-        "NCAAB": '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form and home court edge"}',
-        "NHL":   '{"grade": 7.2, "pick": "Home", "reasoning": "elite goalie edge and rest advantage"}',
-        "MLB":   '{"grade": 7.2, "pick": "Home", "reasoning": "bullpen freshness and lineup-vs-hand edge outweigh starter-name narrative"}',
-        "NFL":   '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
-        "NCAAF": '{"grade": 7.2, "pick": "Home", "reasoning": "rest advantage and matchup edge in the trenches"}',
-        "SOCCER":'{"grade": 7.2, "pick": "BTTS_Yes", "reasoning": "both attacks are in form and defensive absences raise both-side scoring probability"}',
-    }.get(sport, '{"grade": 7.2, "pick": "Home", "reasoning": "stronger recent form"}')
+        "NBA":   '{"grade": 5.5, "pick": "Home", "reasoning": "slight home court edge but both teams similar — coin flip lean"}',
+        "WNBA":  '{"grade": 5.5, "pick": "Home", "reasoning": "slight home court edge but both teams similar — coin flip lean"}',
+        "NCAAB": '{"grade": 5.5, "pick": "Home", "reasoning": "slight home court edge but both teams similar — coin flip lean"}',
+        "NHL":   '{"grade": 5.5, "pick": "Home", "reasoning": "slight goalie edge but rest and form are even — no strong play"}',
+        "MLB":   '{"grade": 5.5, "pick": "Home", "reasoning": "bullpen is a slight edge but TBD pitchers and neutral park make this a lean at best"}',
+        "NFL":   '{"grade": 5.5, "pick": "Home", "reasoning": "rest edge but matchup is neutral — lean only"}',
+        "NCAAF": '{"grade": 5.5, "pick": "Home", "reasoning": "rest edge but matchup is neutral — lean only"}',
+        "SOCCER":'{"grade": 5.5, "pick": "BTTS_Yes", "reasoning": "both teams score but defensive form is unknown — lean only"}',
+    }.get(sport, '{"grade": 5.5, "pick": "Home", "reasoning": "slight lean, no strong edge"}')
 
     if sport == "SOCCER":
         schema = (
@@ -1418,7 +1441,12 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
         f"{goalie_block}"
         f"{soccer_block}"
         f"{injury_block}"
+        f"{data_memo}"
         f"engine composite: {our_score:.1f}/10. "
+        f"GRADING DISCIPLINE: Most games are close to even. Your default is 5.0 (coin flip). "
+        f"One edge alone (form, rest, injuries) is a 5.5-6.0. "
+        f"Multiple independent edges stacking is 6.5-7.5. "
+        f"8.0+ means extreme mismatch with confirmed data — almost never happens. "
         f"{market_rule} "
         f"As a sharp bettor ({personality}), output ONLY a single JSON object on one line, "
         f"no thinking, no prose, no code fences. Schema: "
