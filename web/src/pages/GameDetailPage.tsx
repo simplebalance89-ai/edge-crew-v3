@@ -14,6 +14,60 @@ const gradeColor = (g: string) => {
   return '#ef4444'
 }
 
+const VARIABLE_CATEGORIES: Record<string, string[]> = {
+  'Pitching': ['starting_pitcher', 'starter_depth', 'bullpen', 'bullpen_fatigue', 'pitcher_profile', 'gb_fb_ratio'],
+  'Offense': ['off_ranking', 'lineup_vs_hand', 'lineup_dna', 'plate_discipline', 'three_pt_rate'],
+  'Defense': ['def_ranking', 'goalie', 'goalkeeper', 'pk_pct', 'shot_quality'],
+  'Situational': ['rest', 'form', 'home_away', 'motivation', 'h2h', 'ats', 'road_trip', 'b2b_fatigue', 'b2b_flag', 'travel_distance', 'travel_fatigue', 'altitude', 'weather', 'weather_factor'],
+  'Market': ['line_movement', 'park_factor', 'umpire'],
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'Pitching': '#38BDF8',
+  'Offense': '#F59E0B',
+  'Defense': '#10B981',
+  'Situational': '#A78BFA',
+  'Market': '#D4A017',
+  'Special': '#F72585',
+}
+
+const ALL_MAPPED = new Set(Object.values(VARIABLE_CATEGORIES).flat())
+
+function categorizeVariables(vars: Record<string, any>): Record<string, string[]> {
+  const result: Record<string, string[]> = {}
+  const keys = Object.keys(vars)
+  for (const [cat, members] of Object.entries(VARIABLE_CATEGORIES)) {
+    const matched = keys.filter(k => members.includes(k))
+    if (matched.length > 0) result[cat] = matched
+  }
+  const special = keys.filter(k => !ALL_MAPPED.has(k))
+  if (special.length > 0) result['Special'] = special
+  return result
+}
+
+const CHAIN_DESCRIPTIONS: Record<string, string> = {
+  'ace_on_mound': 'Top-tier starter pitching with dominant recent form',
+  'bullpen_fortress': 'Elite bullpen depth with fresh arms available',
+  'offensive_surge': 'Lineup clicking on all cylinders with hot bats',
+  'pitching_mismatch': 'Significant quality gap between opposing starters',
+  'plate_discipline_edge': 'Superior walk rates and contact quality at the plate',
+  'ground_ball_machine': 'High GB pitcher vs flyball-prone lineup — double play threat',
+  'bullpen_collapse': 'Overworked and underperforming relief corps',
+  'lineup_vs_hand_boost': 'Lineup historically crushes this handedness',
+  'park_factor_boost': 'Venue conditions strongly favor one side',
+  'umpire_squeeze': 'Tight zone ump suppresses scoring — favors pitching side',
+  'home_cooking': 'Strong home record with crowd and familiarity advantage',
+  'road_warrior': 'Team performs at elite level away from home',
+  'rest_advantage': 'Extra rest days vs fatigued opponent',
+  'b2b_fade': 'Back-to-back game fatigue dragging performance down',
+  'travel_grind': 'Long travel distance sapping energy and focus',
+  'momentum_wave': 'Hot streak with winning form carrying forward',
+  'motivation_mismatch': 'One team playing for something, the other coasting',
+  'goalie_wall': 'Elite goaltending with hot recent save percentage',
+  'defensive_anchor': 'Top-ranked defense creating turnovers and stops',
+  'three_point_barrage': 'High-volume three-point shooting with accuracy edge',
+}
+
 export default function GameDetailPage() {
   const { id } = useParams()
   const { user } = useAppStore()
@@ -21,7 +75,7 @@ export default function GameDetailPage() {
   const [locked, setLocked] = useState(false)
 
   // Try all sports to find the game
-  const sports = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'soccer', 'mma', 'boxing', 'golf']
+  const sports = ['nba', 'nhl', 'mlb', 'nfl', 'ncaab', 'ncaaf', 'soccer', 'mma', 'boxing', 'golf', 'wnba', 'tennis', 'college_baseball']
 
   const { data: allGames, isLoading } = useQuery({
     queryKey: ['all-games-detail', id],
@@ -136,47 +190,121 @@ export default function GameDetailPage() {
       {/* ═══ EXPANDED DETAILS ═══ */}
       <div className="mt-6 space-y-4">
 
-        {/* ── FULL VARIABLE BREAKDOWN ── */}
-        {variables && Object.keys(variables).length > 0 && (
-          <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5">
-            <h2 className="text-sm font-black tracking-[2px] text-[#F72585] mb-4">FULL VARIABLE BREAKDOWN</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-              {Object.entries(variables)
-                .sort(([, a], [, b]) => b.score - a.score)
-                .map(([key, v]) => (
-                  <div key={key} className={`flex items-center justify-between py-2 border-b border-white/[0.06] ${!v.available ? 'opacity-40' : ''}`}>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-white/80">{v.name}</span>
-                        {!v.available && <span className="text-[8px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded">N/A</span>}
-                      </div>
-                      {v.weight != null && (
-                        <span className="text-[10px] text-white/30">Weight: {v.weight}x</span>
-                      )}
-                      {v.notes && (
-                        <div className="text-[10px] text-white/35 mt-0.5 leading-snug">{v.notes}</div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 ml-4">
-                      <div className="w-20 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${(v.score / 10) * 100}%`,
-                            backgroundColor: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444',
-                          }}
-                        />
-                      </div>
-                      <span className="text-sm font-black w-6 text-right" style={{ color: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444' }}>
-                        {v.score}
+        {/* ── FULL VARIABLE BREAKDOWN (Categorized) ── */}
+        {variables && Object.keys(variables).length > 0 && (() => {
+          const grouped = categorizeVariables(variables)
+          return (
+            <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5">
+              <h2 className="text-sm font-black tracking-[2px] text-[#F72585] mb-4">FULL VARIABLE BREAKDOWN</h2>
+              <div className="space-y-4">
+                {Object.entries(grouped).map(([category, keys]) => (
+                  <div key={category}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[category] || '#F72585' }} />
+                      <span className="text-[10px] font-black tracking-[1.5px] uppercase" style={{ color: CATEGORY_COLORS[category] || '#F72585' }}>
+                        {category}
                       </span>
+                      <div className="flex-1 h-px bg-white/[0.06]" />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                      {keys
+                        .sort((a, b) => variables[b].score - variables[a].score)
+                        .map(key => {
+                          const v = variables[key]
+                          return (
+                            <div key={key} className={`flex items-center justify-between py-2 border-b border-white/[0.06] ${!v.available ? 'opacity-40' : ''}`}>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-white/80">{v.name}</span>
+                                  {!v.available && <span className="text-[8px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded">N/A</span>}
+                                  {v.weight != null && (
+                                    <span className="text-[9px] font-bold text-white/25 bg-white/[0.04] px-1.5 py-0.5 rounded">{v.weight}x</span>
+                                  )}
+                                </div>
+                                {v.notes && (
+                                  <div className="text-[10px] text-white/35 mt-0.5 leading-snug">{v.notes}</div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 ml-4">
+                                <div className="w-20 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full transition-all"
+                                    style={{
+                                      width: `${(v.score / 10) * 100}%`,
+                                      backgroundColor: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444',
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-sm font-black w-6 text-right" style={{ color: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444' }}>
+                                  {v.score}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })}
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="mt-3 pt-3 border-t border-white/[0.08] flex items-center justify-between">
+                <span className="text-xs text-white/40">Engine Score</span>
+                <span className="text-lg font-black" style={{ color: gradeColor(ourGrade.grade) }}>{ourGrade.score.toFixed(1)} ({ourGrade.grade})</span>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* ── CHAINS FIRED ── */}
+        {ourGrade.chains && ourGrade.chains.length > 0 && (
+          <div className="bg-[#0E0E14] border border-[#1A1A28] rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-sm font-black tracking-[2px] text-[#7C3AED]">CHAINS FIRED</h2>
+              <span className="text-[10px] font-black bg-[#7C3AED]/20 text-[#A78BFA] border border-[#7C3AED]/40 px-2 py-0.5 rounded-full">
+                {ourGrade.chains.length}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {ourGrade.chains.map((chain, i) => {
+                const isPositive = chain.bonus > 0
+                const formatted = chain.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                const desc = CHAIN_DESCRIPTIONS[chain.name]
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/[0.08]"
+                    style={{ borderLeftWidth: 3, borderLeftColor: isPositive ? '#10B981' : '#ef4444' }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-white/80">{formatted}</span>
+                        <span
+                          className="text-[10px] font-black px-1.5 py-0.5 rounded"
+                          style={{
+                            backgroundColor: isPositive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                            color: isPositive ? '#10B981' : '#ef4444',
+                          }}
+                        >
+                          {isPositive ? '+' : ''}{chain.bonus}
+                        </span>
+                      </div>
+                      {desc && (
+                        <div className="text-[10px] text-white/35 mt-0.5 leading-snug">{desc}</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             <div className="mt-3 pt-3 border-t border-white/[0.08] flex items-center justify-between">
-              <span className="text-xs text-white/40">Engine Score</span>
-              <span className="text-lg font-black" style={{ color: gradeColor(ourGrade.grade) }}>{ourGrade.score.toFixed(1)} ({ourGrade.grade})</span>
+              <span className="text-xs text-white/40">Total Chain Bonus</span>
+              {(() => {
+                const total = ourGrade.chains.reduce((sum, c) => sum + c.bonus, 0)
+                return (
+                  <span className="text-lg font-black" style={{ color: total >= 0 ? '#10B981' : '#ef4444' }}>
+                    {total > 0 ? '+' : ''}{total.toFixed(1)}
+                  </span>
+                )
+              })()}
             </div>
           </div>
         )}

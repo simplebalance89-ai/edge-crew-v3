@@ -8,7 +8,8 @@ builder can hand the models actual fight history instead of just
 moneyline numbers.
 
 Returns the same shape for both sides:
-    {"name", "record", "wins", "losses", "draws", "last5", "ko_pct"}
+    {"name", "record", "wins", "losses", "draws", "ko_pct",
+     "reach_inches", "height_inches", "stance", "weight_class"}
 
 Anything missing is left as None so the prompt builder can render "—".
 Cached per fighter name for an hour. Defensive on every error path.
@@ -96,6 +97,28 @@ def _parse_record(record_str: str) -> dict:
     return out
 
 
+def _extract_inches(value) -> Optional[float]:
+    """Convert ESPN height/reach to inches. ESPN sends either a raw inch int
+    or a string like '74' or '6'2"'. Returns float inches or None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    # Try feet'inches" format
+    import re
+    m = re.match(r"(\d+)['\u2032]?\s*(\d+)", s)
+    if m:
+        return float(int(m.group(1)) * 12 + int(m.group(2)))
+    return None
+
+
 async def get_fighter_profile(name: str, sport: str = "MMA") -> Optional[dict]:
     """Return a fighter/boxer profile dict, or None if lookup fails.
 
@@ -142,12 +165,38 @@ async def get_fighter_profile(name: str, sport: str = "MMA") -> Optional[dict]:
                 break
 
     parsed = _parse_record(record_str)
+
+    reach_inches = _extract_inches(detail.get("reach"))
+    height_inches = _extract_inches(detail.get("height"))
+
+    ko_pct = None
+    wins = parsed["wins"]
+    if wins and wins > 0:
+        ko_wins = None
+        stats = detail.get("statistics") or []
+        if isinstance(stats, list):
+            for cat in stats:
+                if not isinstance(cat, dict):
+                    continue
+                for split in cat.get("splits") or []:
+                    for stat in split.get("stats") or []:
+                        if (stat.get("name") or "").lower() in ("knockouts", "koWins", "ko", "tko"):
+                            try:
+                                ko_wins = int(stat["value"])
+                            except (TypeError, ValueError, KeyError):
+                                pass
+        if ko_wins is not None:
+            ko_pct = round(ko_wins / wins * 100, 1)
+
     out = {
         "name": detail.get("displayName") or detail.get("fullName") or name,
         "record": record_str or None,
-        "wins": parsed["wins"],
+        "wins": wins,
         "losses": parsed["losses"],
         "draws": parsed["draws"],
+        "ko_pct": ko_pct,
+        "reach_inches": reach_inches,
+        "height_inches": height_inches,
         "weight_class": (detail.get("weightClass") or {}).get("text") if isinstance(detail.get("weightClass"), dict) else detail.get("weightClass"),
         "stance": detail.get("stance"),
         "espn_id": detail.get("id"),

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 # Add parent dir to path for grade_engine / data_fetch imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from grade_engine import grade_both_sides, score_to_grade, calculate_ev, peter_rules
+from grade_engine import grade_both_sides, score_to_grade, calculate_ev, peter_rules, grade_game_total
 from data_fetch import enrich_game_for_grading, fetch_team_profile
 from ai_models import kimi_gatekeeper
 
@@ -736,21 +736,14 @@ REAL_AI_MODELS = [
 
 
 def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> list[dict]:
-    """Sport-aware model roster — 8 models per sport panel, Azure Model Router
+    # 10 models per sport: 3 reasoning, 2 thinking, 1 data, 4 general
+    """Sport-aware model roster -- 10 models per sport panel, Azure Model Router
     mandatory on every panel.
 
-    Rationale: different sports reward different model strengths. MLB rewards
-    dense stats + line-movement sniffing; NHL rewards contrarian pace/goalie
-    reads; combat rewards fighter-profile + line-value against heavy chalk;
-    soccer markets are thin and reward research + broad pattern matching.
-    Same 19 models across every sport wastes tokens, latency, and dilutes
-    signal. Each sport panel is 8 models = 1 router + 7 specialists.
-
-    Kimi K2 Thinking is intentionally NOT here — it is the post-convergence
+    Kimi K2 Thinking is intentionally NOT here -- it is the post-convergence
     gatekeeper (Stage 5), hit via Moonshot direct API after the panel votes.
     """
     if fast_mode:
-        # Global fast roster for slate-level Analyze All — 6 models, no router.
         keep = {
             "Grok 3",
             "DeepSeek V3.2 Spec",
@@ -760,86 +753,126 @@ def _active_real_models_for_sport(sport_upper: str, fast_mode: bool = False) -> 
             "Perplexity Sonar",
         }
     elif sport_upper == "MLB":
-        # Stats-heavy: historical numbers, bullpen depth, lineup vs hand.
-        # Gemini 2.5 Flash specifically caught the Cardinals 2026-04-11 line
-        # movement. Phi-4 is the chain-of-thought anchor. DeepSeek R1 + V3.1
-        # give variance on data mass. GPT-4.1 + GPT-5.2 Chat two-pronged GPT.
         keep = {
-            "Azure Model Router",
-            "Grok 4.1",
-            "DeepSeek R1",
-            "DeepSeek V3.1",
-            "Phi-4 Reasoning",
-            "GPT-4.1",
-            "GPT-5.2 Chat",
-            "Gemini 2.5 Flash",
-        }
-    elif sport_upper == "NHL":
-        # Pace / goalie / matchup volatility. Two Grok generations (4.20 bleeding
-        # edge from Sweden + 4 Fast as variance). DeepSeek R1 heavy math.
-        # Phi-4 thin-edge reasoning. Llama-4 Scout as a fast first-read on pace
-        # (Scout > Maverick for hockey because hockey is faster). GPT-5 Mini
-        # quick consensus. Gemini Flash as outside-family sanity check.
-        keep = {
-            "Azure Model Router",
-            "Grok 4.20 Reasoning",
-            "Grok 4 Fast",
             "DeepSeek R1",
             "Phi-4 Reasoning",
             "GPT-5 Mini",
-            "Llama-4 Scout",
-            "Gemini 2.5 Flash",
-        }
-    elif sport_upper in ("MMA", "BOXING"):
-        # Combat: fighter records, style, line-value against heavy chalk.
-        # Three Groks for contrarian depth (4.20 newest, 4.1 trap reader,
-        # 3 old-bias). DeepSeek R1 for record math. Phi-4 for skill-gap CoT.
-        # GPT-4.1 balanced keel. Kimi K2.5 (Azure) as scout profiler —
-        # specifically asks "who benefits and who eats the cost" which is
-        # exactly the right question for MMA line value.
-        keep = {
-            "Azure Model Router",
-            "Grok 4.20 Reasoning",
             "Grok 4.1",
-            "Grok 3",
-            "DeepSeek R1",
-            "Phi-4 Reasoning",
+            "Gemini 2.5 Flash",
+            "DeepSeek V3.2 Spec",
+            "Azure Model Router",
             "GPT-4.1",
+            "Claude Sonnet 4.6",
             "Kimi K2.5 (Azure)",
         }
-    elif sport_upper == "SOCCER":
-        # Thin markets, broad fixtures, large slates (MLS + EPL + La Liga
-        # + Serie A etc). Research-first (Perplexity) + two DeepSeek variants
-        # for data variance + Mistral Large 3 for European-league edge
-        # + GPT double coverage.
+    elif sport_upper == "NHL":
+        # RT fix: Perplexity for goalie swaps, Kimi for schedule congestion profiling
         keep = {
-            "Azure Model Router",
-            "Grok 3",
-            "DeepSeek V3.2 Spec",
-            "DeepSeek V3.1",
-            "GPT-4.1",
-            "GPT-5 Mini",
-            "Mistral Large 3",
-            "Perplexity Sonar",
-        }
-    elif sport_upper in ("NFL", "NBA", "WNBA", "NCAAF", "NCAAB"):
-        # Default team-sport panel until we have settled data to tune these
-        # individually. Broad cross-family diversity. Two Llamas (Maverick
-        # heavyweight + Scout lightweight) for open-source variance. Gemini
-        # Flash as outside-family sanity check. GPT-5.4 Nano as bleeding-edge.
-        keep = {
-            "Azure Model Router",
-            "Grok 4.1",
+            "Grok 4.20 Reasoning",
             "DeepSeek R1",
             "Phi-4 Reasoning",
+            "Grok 4 Fast",
+            "Gemini 2.5 Flash",
+            "Perplexity Sonar",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Llama-4 Scout",
+            "Kimi K2.5 (Azure)",
+        }
+    elif sport_upper in ("NBA", "WNBA"):
+        # RT fix: Kimi for rotation value analysis
+        keep = {
+            "Grok 4.20 Reasoning",
+            "DeepSeek R1",
+            "GPT-5 Mini",
+            "Grok 4.1",
+            "GPT-5.2 Chat",
+            "Kimi K2.5 (Azure)",
+            "Azure Model Router",
             "GPT-4.1",
             "Llama-4 Maverick",
-            "Llama-4 Scout",
+            "Gemini 2.5 Flash",
+        }
+    elif sport_upper in ("NFL", "NCAAF"):
+        keep = {
+            "Grok 4.20 Reasoning",
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "Grok 4.1",
+            "GPT-5.4 Nano",
+            "Perplexity Sonar",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Llama-4 Maverick",
+            "Claude Sonnet 4.6",
+        }
+    elif sport_upper == "SOCCER":
+        keep = {
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-5 Mini",
+            "GPT-5.2 Chat",
+            "Gemini 2.5 Flash",
+            "Perplexity Sonar",
+            "Azure Model Router",
+            "Grok 3",
+            "Mistral Large 3",
+            "Claude Sonnet 4.6",
+        }
+    elif sport_upper in ("MMA", "BOXING"):
+        # RT fix: Perplexity for camp news/weight cuts
+        keep = {
+            "Grok 4.20 Reasoning",
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "Grok 4.1",
+            "GPT-5.2 Chat",
+            "Perplexity Sonar",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Kimi K2.5 (Azure)",
+            "DeepSeek V3.2 Spec",
+        }
+    elif sport_upper == "NCAAB":
+        # RT fix: Kimi for bracketology/home court profiling
+        keep = {
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-5 Mini",
+            "Grok 4.1",
+            "Gemini 2.5 Flash",
+            "DeepSeek V3.1",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Kimi K2.5 (Azure)",
+            "Claude Sonnet 4.6",
+        }
+    elif sport_upper in ("TENNIS", "GOLF"):
+        keep = {
+            "DeepSeek R1",
+            "Phi-4 Reasoning",
+            "GPT-5 Mini",
+            "Grok 4.1",
+            "GPT-5.4 Nano",
+            "Perplexity Sonar",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Mistral Large 3",
             "Gemini 2.5 Flash",
         }
     else:
-        # Unknown sport → fall back to full roster rather than dropping picks
-        return REAL_AI_MODELS
+        keep = {
+            "Grok 4.20 Reasoning",
+            "DeepSeek R1",
+            "GPT-5 Mini",
+            "Grok 4.1",
+            "GPT-5.2 Chat",
+            "DeepSeek V3.2 Spec",
+            "Azure Model Router",
+            "GPT-4.1",
+            "Llama-4 Maverick",
+            "Gemini 2.5 Flash",
+        }
     return [m for m in REAL_AI_MODELS if m.get("display") in keep]
 
 
@@ -1371,8 +1404,8 @@ def _build_realai_prompt(game: dict, our_score: float, personality: str) -> str:
             "Prioritize bullpen/depth/archetype signals over starter-name narratives."
         )
     else:
-        schema = '{"grade": <0-10 number>, "pick": "Home" or "Away", "reasoning": "one short sentence"}'
-        market_rule = "Pick side only (Home or Away)."
+        schema = '{"grade": <0-10 number>, "pick": "Home" or "Away" or "Over" or "Under", "reasoning": "one short sentence"}'
+        market_rule = "Pick side (Home or Away) or total (Over or Under) based on strongest edge."
 
     return (
         f"GAME: {away} ({ap.get('record','?')}, L5 {ap.get('L5','?')}) @ "
@@ -2157,16 +2190,31 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
 
     # Peter's Rules
     pr = peter_rules(enriched or game, pick_side)
+    # DISABLED: Peter's Rules zeroed until base system is dialed in
+    pr["adjustment"] = 0
+    pr["has_kill"] = False
+    pr["flags"] = []
 
-    # â”€â”€â”€ CONFLICT DETECTION â”€â”€â”€
+    #â”€â”€â”€ CONFLICT DETECTION â”€â”€â”€
     _apply_conflict_downgrade(game, pick, ai_models, conv, pr)
     _apply_kill_override(pick, conv, pr)
+
+    total_pick = None
+    try:
+        total_result = grade_game_total(enriched or game)
+        if total_result["verdict"] != "SKIP" and total_result["confidence"] >= 55:
+            total_ev = calculate_ev(enriched or game, total_result["verdict"].lower(), total_result["confidence"] / 10.0, {"type": "total"})
+            total_result["ev"] = total_ev
+            total_pick = total_result
+    except Exception:
+        pass
 
     return {
         "ourGrade": our_grade,
         "aiGrade": ai_grade,
         "convergence": conv,
         "pick": pick,
+        "total_pick": total_pick,
         "aiModels": ai_models,
         "ev": ev,
         "peterRules": pr,
@@ -3250,6 +3298,12 @@ async def _analyze_games_impl(request: AnalyzeRequest):
                 game["pick"] = _compute_pick(
                     game, game.get("odds", {}), our_grade, game["aiGrade"], game["convergence"]
                 )
+                try:
+                    total_result = grade_game_total(game)
+                    if total_result["verdict"] != "SKIP" and total_result["confidence"] >= 55:
+                        game["total_pick"] = total_result
+                except Exception:
+                    pass
 
         # In fast mode, skip gatekeeper to keep soccer analyze latency down.
         if ai_grades_list and not fast_mode:
@@ -3714,7 +3768,66 @@ async def get_parlay():
     }
 
 
-# â”€â”€â”€ Static File Serving â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+@app.get("/api/top-picks")
+async def get_top_picks():
+    """Cross-sport top picks, sorted by grade. Peter's main view."""
+    ACTIVE_SPORTS = ["nba", "nhl", "mlb", "nfl", "ncaab", "ncaaf", "soccer", "mma", "boxing", "wnba"]
+
+    results = await asyncio.gather(
+        *[_fetch_and_grade(sport) for sport in ACTIVE_SPORTS],
+        return_exceptions=True,
+    )
+
+    all_games = []
+    for sport_games in results:
+        if isinstance(sport_games, Exception) or not sport_games:
+            continue
+        if isinstance(sport_games, list):
+            all_games.extend(sport_games)
+
+    grade_rank = {"A+": 10, "A": 9, "A-": 8, "B+": 7, "B": 6, "B-": 5, "C+": 4, "C": 3, "D": 2, "F": 1}
+
+    top = []
+    for g in all_games:
+        conv = g.get("convergence", {})
+        cg = conv.get("consensusGrade", "-")
+        rank = grade_rank.get(cg, 0)
+        if rank < 7:
+            continue
+
+        pick = g.get("pick", {})
+        total_pick = g.get("total_pick", {})
+        bet_label = ""
+        if pick and pick.get("side"):
+            if pick.get("type") == "spread" and pick.get("line"):
+                line = pick["line"]
+                bet_label = f"{pick['side']} {'+' if line > 0 else ''}{line}"
+            else:
+                bet_label = f"{pick['side']} ML"
+
+        total_label = ""
+        if total_pick and total_pick.get("verdict") in ("OVER", "UNDER"):
+            tl = total_pick.get("total_line", "")
+            total_label = f"{total_pick['verdict']} {tl}"
+
+        g["bet_label"] = bet_label
+        g["total_label"] = total_label
+        g["_rank"] = rank
+        g["_cons_score"] = conv.get("consensusScore", 0)
+        g["_ev"] = (g.get("ev", {}) or {}).get("ev_pct", 0) or 0
+        top.append(g)
+
+    top.sort(key=lambda g: (g["_rank"], g["_cons_score"], g["_ev"]), reverse=True)
+
+    for g in top[:20]:
+        g.pop("_rank", None)
+        g.pop("_cons_score", None)
+        g.pop("_ev", None)
+
+    return top[:20]
+
+
+#â”€â”€â”€ Static File Serving â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/", response_class=HTMLResponse)
 async def root():

@@ -2,7 +2,7 @@ import { useState, type MouseEvent } from 'react'
 import { Lock, Check } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore'
 import { lockPick, submitGutPick, analyzeGame } from '@/services/api'
-import type { Game, Grade, ConvergenceResult } from '@/types'
+import type { Game, Grade, ConvergenceResult, ChainInfo } from '@/types'
 
 interface TwoLaneCardProps {
   game: Game
@@ -11,11 +11,83 @@ interface TwoLaneCardProps {
   convergence?: ConvergenceResult['convergence']
 }
 
+const SPORT_HEADLINES: Record<string, string[]> = {
+  MLB: ['bullpen', 'lineup_dna', 'starting_pitcher'],
+  NBA: ['three_pt_rate', 'b2b_fatigue', 'star_player'],
+  NHL: ['goalie', 'pp_pct', 'pk_pct'],
+  NFL: ['weather', 'star_player', 'turnover_diff'],
+  SOCCER: ['goalkeeper', 'congestion', 'xg_diff'],
+  NCAAB: ['conference_strength', 'pace', 'home_away'],
+  NCAAF: ['recruiting', 'home_away', 'coaching_change'],
+  MMA: ['reach_advantage', 'finish_rate', 'form'],
+  BOXING: ['reach_advantage', 'stance_matchup', 'finish_rate'],
+}
+
+const VARIABLE_DISPLAY_NAMES: Record<string, string> = {
+  bullpen: 'Bullpen',
+  lineup_dna: 'Lineup DNA',
+  starting_pitcher: 'Starting Pitcher',
+  three_pt_rate: '3PT Rate',
+  b2b_fatigue: 'B2B Fatigue',
+  star_player: 'Star Player',
+  goalie: 'Goalie',
+  pp_pct: 'Power Play %',
+  pk_pct: 'Penalty Kill %',
+  weather: 'Weather',
+  turnover_diff: 'Turnover Diff',
+  goalkeeper: 'Goalkeeper',
+  congestion: 'Congestion',
+  xg_diff: 'xG Diff',
+  conference_strength: 'Conf Strength',
+  pace: 'Pace',
+  home_away: 'Home/Away',
+  recruiting: 'Recruiting',
+  coaching_change: 'Coaching Change',
+  reach_advantage: 'Reach Adv',
+  finish_rate: 'Finish Rate',
+  form: 'Form',
+  stance_matchup: 'Stance Matchup',
+}
+
 const gradeColor = (g: string) => {
   if (g?.startsWith('A')) return '#10B981'
   if (g?.startsWith('B')) return '#38BDF8'
   if (g?.startsWith('C') || g?.startsWith('D')) return '#F59E0B'
   return '#ef4444'
+}
+
+function ChainTags({ chains, formatName }: { chains: ChainInfo[]; formatName: (s: string) => string }) {
+  const [expanded, setExpanded] = useState(false)
+  const positive = chains.filter(c => c.category === 'positive')
+  const negative = chains.filter(c => c.category === 'negative')
+  const all = [...positive, ...negative]
+  const visible = expanded ? all : all.slice(0, 4)
+  const overflow = all.length - 4
+
+  return (
+    <div className="mb-2 flex flex-wrap gap-1">
+      {visible.map((c, i) => {
+        const isPos = c.category === 'positive'
+        return (
+          <span key={i} className={`text-[8px] px-1.5 py-0.5 rounded border ${
+            isPos
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+          }`}>
+            {formatName(c.name)}{c.bonus ? ` ${c.bonus > 0 ? '+' : ''}${c.bonus.toFixed(1)}` : ''}
+          </span>
+        )
+      })}
+      {!expanded && overflow > 0 && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpanded(true) }}
+          className="text-[8px] px-1.5 py-0.5 rounded border bg-white/5 border-white/15 text-white/40 hover:text-white/60"
+        >
+          +{overflow} more
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCardProps) {
@@ -193,6 +265,35 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
         </div>
       </div>
 
+      {/* ═══ SPORT HEADLINE STATS ═══ */}
+      {(() => {
+        const sport = (game.sport || '').toUpperCase()
+        const headlineKeys = SPORT_HEADLINES[sport]
+        if (!headlineKeys || !displayOur.variables) return null
+        const vars = displayOur.variables as Record<string, { score: number; name: string; available: boolean }>
+        const pills = headlineKeys.filter((k) => vars[k]?.available)
+        if (pills.length === 0) return null
+        return (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {pills.map((key) => {
+              const v = vars[key]
+              const color = v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444'
+              const bgColor = v.score >= 7 ? 'rgba(16,185,129,0.12)' : v.score >= 5 ? 'rgba(212,160,36,0.12)' : 'rgba(239,68,68,0.12)'
+              const borderColor = v.score >= 7 ? 'rgba(16,185,129,0.35)' : v.score >= 5 ? 'rgba(212,160,36,0.35)' : 'rgba(239,68,68,0.35)'
+              return (
+                <span
+                  key={key}
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                  style={{ color, backgroundColor: bgColor, borderColor }}
+                >
+                  {VARIABLE_DISPLAY_NAMES[key] || v.name}: {v.score}
+                </span>
+              )
+            })}
+          </div>
+        )
+      })()}
+
       {/* ═══ GOLF OUTRIGHTS ═══ */}
       {game.sport === 'GOLF' && game.outrights && game.outrights.length > 0 && (
         <div className="mb-3">
@@ -226,41 +327,62 @@ export function TwoLaneCard({ game, ourGrade, aiGrade, convergence }: TwoLaneCar
           <div className="text-[10px] font-black tracking-[1.5px] text-[#F72585] mb-2 pb-1.5 border-b border-white/[0.06]">OUR PROCESS</div>
 
           {/* Main Matrix — top variable scores */}
-          {displayOur.variables && Object.keys(displayOur.variables).length > 0 && (
+          {displayOur.variables && Object.keys(displayOur.variables).length > 0 && (() => {
+            const sportSpecificVars: Record<string, string> = {
+              bullpen: 'MLB', starting_pitching: 'MLB', park_factor: 'MLB',
+              pace: 'NBA', three_point: 'NBA', free_throw: 'NBA',
+              power_play: 'NHL', goaltending: 'NHL', save_pct: 'NHL',
+              red_zone: 'NFL', turnover: 'NFL', rushing: 'NFL',
+              tempo: 'NCAAB', bench_scoring: 'NCAAB',
+              passing_offense: 'NCAAF', recruiting: 'NCAAF',
+            }
+            const sportUp = game.sport?.toUpperCase() || ''
+            return (
             <div className="mb-2">
               <div className="text-[9px] text-white/35 font-bold tracking-wide mb-1">MAIN MATRIX</div>
-              {Object.entries(displayOur.variables as Record<string, {score: number; name: string; available: boolean}>)
+              {Object.entries(displayOur.variables as Record<string, {score: number; name: string; weight: number; note: string; available: boolean}>)
                 .filter(([, v]) => v.available)
-                .filter(([key]) => {
-                  // Pace is only real for NBA — every other sport derives it
-                  // synthetically from win% and the score is misleading. Hide
-                  // it on non-NBA cards rather than tricking the user.
-                  if (game.sport?.toUpperCase() !== 'NBA' && /pace/i.test(key)) return false
-                  return true
-                })
-                .sort(([, a], [, b]) => b.score - a.score)
-                .slice(0, 8)
-                .map(([key, v]) => (
-                  <div key={key} className="flex justify-between text-[10px] py-[1px]">
-                    <span className="text-white/50">{v.name}</span>
-                    <span className="font-bold" style={{ color: v.score >= 7 ? '#10B981' : v.score >= 5 ? '#d4a024' : '#ef4444' }}>
-                      {v.score}
-                    </span>
+                .sort(([, a], [, b]) => (b.score * (b.weight || 1)) - (a.score * (a.weight || 1)))
+                .slice(0, 10)
+                .map(([key, v]) => {
+                  const weighted = v.score * (v.weight || 1)
+                  const barColor = v.score >= 8 ? '#00D4AA' : v.score >= 6 ? '#FFB800' : v.score >= 4 ? '#666' : '#F72585'
+                  const varSport = sportSpecificVars[key.toLowerCase()]
+                  const sportLabel = varSport && varSport !== sportUp ? ` (${varSport})` : ''
+                  return (
+                  <div key={key} className="flex justify-between items-center text-[10px] py-[1px]">
+                    <span className="text-white/50">{v.name}{sportLabel && <span className="text-white/25 text-[8px]">{sportLabel}</span>}</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-12 h-1 bg-white/10 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(weighted * 10, 100)}%`, backgroundColor: barColor }} />
+                      </div>
+                      <span className="font-bold w-4 text-right" style={{ color: barColor }}>
+                        {v.score}
+                      </span>
+                    </div>
                   </div>
-                ))}
+                  )
+                })}
             </div>
-          )}
+            )
+          })()}
 
           {/* Chains fired */}
-          {displayOur.keyFactors && displayOur.keyFactors.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1">
-              {displayOur.keyFactors.map((chain: string, i: number) => (
-                <span key={i} className="text-[8px] px-1.5 py-0.5 bg-[#F72585]/10 border border-[#F72585]/30 text-[#F72585] rounded">
-                  {chain}
-                </span>
-              ))}
-            </div>
-          )}
+          {(() => {
+            const chains: ChainInfo[] = displayOur.chains || []
+            const fromKeyFactors = !chains.length && displayOur.keyFactors?.length
+            const formatChainName = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\B\w+/g, w => w.toLowerCase())
+            if (fromKeyFactors) {
+              const positive = displayOur.keyFactors!.filter(k => !/penalty|collapse|cold|weak|fade/i.test(k))
+              const negative = displayOur.keyFactors!.filter(k => /penalty|collapse|cold|weak|fade/i.test(k))
+              const all = [
+                ...positive.map(k => ({ name: k, bonus: 0, category: 'positive' as const })),
+                ...negative.map(k => ({ name: k, bonus: 0, category: 'negative' as const })),
+              ]
+              return all.length > 0 ? <ChainTags chains={all} formatName={formatChainName} /> : null
+            }
+            return chains.length > 0 ? <ChainTags chains={chains} formatName={formatChainName} /> : null
+          })()}
 
           {/* Grader Cards: Sintonia, Edge, Renzo */}
           {displayOur.profiles && Object.keys(displayOur.profiles).length > 0 && (
