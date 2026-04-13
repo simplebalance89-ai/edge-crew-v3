@@ -2168,12 +2168,12 @@ async def _grade_game_full(game: dict, sport_upper: str, odds_key: str = "") -> 
     # Blend AI model scores into ai_grade (only when we actually have models)
     if ai_models:
         # Calibrate individual model scores before averaging.
-        # LLMs trend optimistic — a raw 7.0 from a model is really a ~6.0 in
-        # engine terms. This pulls scores toward 5.0 (neutral) so that only
-        # truly strong multi-factor edges break into A- territory.
-        # Factor 0.7 = 30% compression toward center. A raw 7.0 → 6.4,
-        # raw 8.0 → 7.1, raw 6.0 → 5.7, raw 5.0 → 5.0 (unchanged).
-        CALIBRATION_FACTOR = 0.7
+        # LLMs trend optimistic — a raw 7.0 is their "decent game" not a real
+        # A-. Pull scores toward 5.0 (neutral) so only genuine multi-factor
+        # edges break into A- territory. 0.55 = 45% compression.
+        # raw 7.0 → 6.1 (B+), raw 7.5 → 6.4 (B+), raw 8.0 → 6.65 (A-)
+        # raw 8.5 → 6.9 (A-), raw 9.0 → 7.2 (A-), raw 6.0 → 5.55 (B)
+        CALIBRATION_FACTOR = 0.55
         CALIBRATION_CENTER = 5.0
         for m in ai_models:
             raw = m.get("score", 5.0)
