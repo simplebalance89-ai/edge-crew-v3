@@ -27,12 +27,8 @@ class DatabaseConfig:
         self.pool_pre_ping = os.getenv("DB_POOL_PRE_PING", "true").lower() == "true"
         
         # Connection string
-        self.database_url = os.getenv("DATABASE_URL")
-        if not self.database_url:
-            # Use a default SQLite URL for testing/development without PostgreSQL
-            self.database_url = "sqlite:///./test.db"
-            logger.warning("DATABASE_URL not set, using SQLite for testing")
-            
+        self.database_url = os.getenv("DATABASE_URL", "").strip()
+        
         # TimescaleDB optimization
         self.chunk_time_interval = os.getenv("DB_CHUNK_INTERVAL", "1 day")
         self.enable_compression = os.getenv("DB_ENABLE_COMPRESSION", "true").lower() == "true"
@@ -218,11 +214,16 @@ _db_manager = DatabaseManager(_db_config)
 
 def initialize_database():
     """Initialize global database manager"""
+    if not _db_config.database_url:
+        logger.info("DATABASE_URL not set; database manager will remain uninitialized (file persistence mode)")
+        return _db_manager
     _db_manager.initialize()
     return _db_manager
 
 def get_db_manager() -> DatabaseManager:
     """Get global database manager instance"""
+    if not _db_config.database_url:
+        raise RuntimeError("Database manager not initialized. Call initialize_database() first.")
     if not _db_manager.engine:
         raise RuntimeError("Database manager not initialized. Call initialize_database() first.")
     return _db_manager
