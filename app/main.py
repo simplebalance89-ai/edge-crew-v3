@@ -671,26 +671,27 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 
 AZURE_HOSTS = {
+    # All Azure 1 (pwgcerp-9302-resource) models - consolidated to single endpoint
     "gce": {
-        "url_template": "https://gce-personal-resource.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
-        "key": AZURE_GCE_KEY,
+        "url_template": "https://pwgcerp-9302-resource.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
+        "key": AZURE_GCE_KEY or AZURE_AI_KEY,  # Fallback to main key
         "format": "aoai_classic",
     },
     "sweden": {
-        "url": "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/chat/completions",
-        "key": AZURE_AI_KEY,
+        "url": "https://pwgcerp-9302-resource.openai.azure.com/openai/v1/chat/completions",
+        "key": AZURE_AI_KEY or AZURE_GCE_KEY,  # Same endpoint, different format
         "format": "openai_v1",
     },
+    # Azure 4 (ai-peterwconveyance8025) - Claude models only
     "ai_peterwilson": {
-        "url_template": "https://ai-peterwilson7092ai011379814834.cognitiveservices.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
+        "url_template": "https://ai-peterwconveyance8025ai117912890367.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01-preview",
         "key": AZURE_AI_PETERWILSON_KEY,
         "format": "aoai_classic",
     },
+    # Also uses Azure 1 - consolidated
     "north_central": {
-        # peter-mnji0acb-northcentralus Azure AI Foundry. Uses the openai/v1
-        # shape (model name in body) - same dispatch as the Sweden host.
-        "url": "https://peter-mnji0acb-northcentralus.services.ai.azure.com/openai/v1/chat/completions",
-        "key": AZURE_NC_KEY,
+        "url": "https://pwgcerp-9302-resource.openai.azure.com/openai/v1/chat/completions",
+        "key": AZURE_NC_KEY or AZURE_AI_KEY,
         "format": "openai_v1",
     },
     "openrouter": {
@@ -715,28 +716,26 @@ AZURE_HOSTS = {
 # GATEKEEPER (Stage 5 of the Edge Crew v3 pipeline) via the Moonshot direct API.
 # token_param: "max_completion_tokens" required for gpt-5+ / o-series / grok reasoning; "max_tokens" otherwise.
 REAL_AI_MODELS = [
-    #    Azure Model Router (mandatory on every sport panel)                  
-    {"display": "Azure Model Router","deployment": "model-router",                           "host": "gce", "persona": "Azure auto-routes to the best model for the task - consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+    #    Azure Model Router (Azure 4 - ai-peterwconveyance8025 - has Claude) 
+    {"display": "Azure Model Router","deployment": "model-router",                           "host": "ai_peterwilson", "persona": "Azure auto-routes to the best model for the task - consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
 
-    #    Grok family                                                          
-    {"display": "Grok 4.20 Reasoning","deployment": "grok-4-20-reasoning",                   "host": "sweden", "persona": "newest xAI reasoning model, bleeding edge",  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
+    #    Grok family (Azure 1 - pwgcerp-9302-resource)
     {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 4 Fast",       "deployment": "grok-4-fast-reasoning",                 "host": "gce", "persona": "prior-gen Grok 4 reasoning, variance vs 4.1","token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
 
-    #    DeepSeek family                                                      
-    {"display": "DeepSeek R1",       "deployment": "DeepSeek-R1-0528",                      "host": "gce", "persona": "data-driven heavy reasoner",                 "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 180},
-    {"display": "DeepSeek V3.2 Spec","deployment": "DeepSeek-V3-2-Speciale",                "host": "gce", "persona": "newest specialty model, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
-    {"display": "DeepSeek V3.1",     "deployment": "DeepSeek-V3-1",                         "host": "gce", "persona": "prior-gen DeepSeek V3, variance vs V3.2",    "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
+    #    DeepSeek family (Azure 1 - pwgcerp-9302-resource)
+    {"display": "DeepSeek V3.2",     "deployment": "DeepSeek-V3-2",                         "host": "gce", "persona": "newest DeepSeek V3.2, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
+    {"display": "DeepSeek V3.1",     "deployment": "DeepSeek-V3-1",                         "host": "gce", "persona": "DeepSeek V3.1, variance vs V3.2",          "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
 
     #    Microsoft Phi (chain-of-thought specialists)                         
     {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
 
-    #    OpenAI / GPT family                                                  
-    {"display": "GPT-4.1",           "deployment": "gpt-41",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    #    OpenAI / GPT family (Azure 1 - pwgcerp-9302-resource)
+    {"display": "GPT-4o",            "deployment": "gpt-4o",                                 "host": "gce", "persona": "OpenAI multimodal workhorse",               "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "GPT-4.1",           "deployment": "gpt-4.1",                                "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
+    {"display": "GPT-4.1-mini",      "deployment": "gpt-4.1-mini",                           "host": "gce", "persona": "OpenAI fast consensus",                   "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                            "host": "gce", "persona": "next-gen OpenAI consensus",                  "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
-    {"display": "GPT-5.2 Chat",      "deployment": "gpt-52-instant",                        "host": "gce", "persona": "latest GPT-5.2 chat, deep strategic framing","token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
-    {"display": "GPT-5.4 Nano",      "deployment": "gpt-5.4-nano",                          "host": "ai_peterwilson", "persona": "newest GPT-5 family, fastest variant",  "token_param": "max_completion_tokens", "max_tokens": 2000,  "timeout": 60},
 
     #    Meta Llama family                                                    
     {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce", "persona": "open-source heavyweight, broad pattern",     "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
