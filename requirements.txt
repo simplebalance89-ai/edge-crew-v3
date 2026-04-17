@@ -2,8 +2,21 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 httpx==0.26.0
 pydantic==2.5.3
+pydantic-settings==2.1.0
 python-dotenv==1.0.0
 MLB-StatsAPI==1.7.2
+
+# Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Database connection pooling and ORM
+sqlalchemy==2.0.25
+redis==5.0.1
+
+# System monitoring
+psutil==5.9.8
 
 # ── Optional opt-in deps ─────────────────────────────────────────────────────
 # Each of these is gated on an env var in the app code; uncomment when you
