@@ -25,7 +25,15 @@ class HealthStatus:
 
 
 async def check_database() -> Dict[str, Any]:
-    """Check PostgreSQL database connectivity"""
+    """Check PostgreSQL database connectivity. Optional — app works without it."""
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if not database_url:
+        return {
+            "status": HealthStatus.HEALTHY,
+            "mode": "file_persistence",
+            "note": "DATABASE_URL not set; using JSON file persistence",
+        }
+    
     try:
         db_manager = get_db_manager()
         is_healthy = db_manager.test_connection()
@@ -120,13 +128,18 @@ async def check_external_apis() -> Dict[str, Any]:
         }
     
     # Check Azure AI (if configured)
-    azure_key = os.environ.get("AZURE_SWEDEN_KEY", "")
+    azure_key = (
+        os.environ.get("AZURE_OPENAI_KEY", "")
+        or os.environ.get("AZURE_AI_KEY", "")
+        or os.environ.get("AZURE_SWEDEN_KEY", "")
+    )
     if azure_key:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                endpoint = os.environ.get(
-                    "AZURE_AI_ENDPOINT",
-                    "https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/"
+                endpoint = (
+                    os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+                    or os.environ.get("AZURE_AI_ENDPOINT", "")
+                    or "https://pwgcerp-9302-resource.openai.azure.com/"
                 )
                 resp = await client.get(
                     endpoint,
@@ -146,7 +159,7 @@ async def check_external_apis() -> Dict[str, Any]:
     else:
         checks["azure_ai"] = {
             "status": HealthStatus.DEGRADED,
-            "error": "AZURE_SWEDEN_KEY not configured",
+            "error": "Azure AI key not configured (AZURE_OPENAI_KEY, AZURE_AI_KEY, or AZURE_SWEDEN_KEY)",
         }
     
     return checks
@@ -236,12 +249,18 @@ async def run_health_checks() -> Dict[str, Any]:
     memory_result = results[4] if not isinstance(results[4], Exception) else {"status": HealthStatus.UNHEALTHY, "error": str(results[4])}
     
     # Determine overall status
+    # Database and disk are critical; Redis is optional (degraded if missing)
     all_statuses = [
         db_result["status"],
-        redis_result["status"],
         disk_result["status"],
         memory_result["status"],
     ]
+    
+    # Redis is optional — app works fine without it
+    if redis_result["status"] == HealthStatus.UNHEALTHY:
+        all_statuses.append(HealthStatus.DEGRADED)
+    else:
+        all_statuses.append(redis_result["status"])
     
     # External APIs don't make the service unhealthy, just degraded
     for api_name, api_result in api_results.items():
@@ -292,16 +311,21 @@ def get_readiness_check() -> Dict[str, Any]:
         "time": datetime.now(timezone.utc).isoformat(),
     }
     
-    # Check if we can at least access the database config
-    try:
-        from app.database import _db_manager
-        if _db_manager.engine is not None:
-            checks["database_configured"] = True
-        else:
+    # Database is optional in Edge Crew — file persistence works without it
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if database_url:
+        try:
+            from app.database import _db_manager
+            if _db_manager.engine is not None:
+                checks["database_configured"] = True
+            else:
+                checks["database_configured"] = False
+                checks["status"] = HealthStatus.UNHEALTHY
+        except Exception:
             checks["database_configured"] = False
             checks["status"] = HealthStatus.UNHEALTHY
-    except Exception:
+    else:
         checks["database_configured"] = False
-        checks["status"] = HealthStatus.UNHEALTHY
+        checks["mode"] = "file_persistence"
     
     return checks
