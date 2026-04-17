@@ -1490,6 +1490,7 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
     Returns parsed {grade, pick, reasoning} dict or None on any failure."""
     host_cfg = AZURE_HOSTS.get(model_cfg["host"])
     if not host_cfg or not host_cfg.get("key"):
+        logger.warning(f"[REAL-AI FAIL] {display}: host or key missing - host={model_cfg.get('host')}, has_key={bool(host_cfg and host_cfg.get('key'))}")
         return None
 
     deployment = model_cfg["deployment"]
@@ -1558,8 +1559,10 @@ async def _call_azure_model(model_cfg: dict, prompt: str) -> Optional[dict]:
 
     try:
         req_timeout = float(model_cfg.get("timeout") or 60)
+        logger.info(f"[REAL-AI CALL] {display}: host={model_cfg['host']}, deployment={deployment}, url={url[:80]}..., timeout={req_timeout}")
         async with httpx.AsyncClient(timeout=req_timeout) as client:
             resp = await client.post(url, headers=headers, json=body)
+        logger.info(f"[REAL-AI HTTP] {display}: status={resp.status_code}")
     except Exception as e:
         logger.warning(f"[REAL-AI EXC] {display}: {type(e).__name__}: {str(e)[:160]}")
         return None
