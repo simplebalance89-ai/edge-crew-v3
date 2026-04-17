@@ -13,6 +13,14 @@ from decimal import Decimal
 from typing import Callable, Optional
 
 import structlog
+import sys
+import os
+import time
+
+# Add parent directory to path for error_handler import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from app.error_handler import task_manager, retry_with_backoff, ErrorCategory, classify_error
+from app.core.config import security_settings
 
 from models import (
     DataSource,
@@ -25,32 +33,50 @@ from models import (
 logger = structlog.get_logger()
 
 
+class SchedulerConfig:
+    """Configuration for SmartScheduler loaded from environment"""
+    
+    def __init__(self):
+        import os
+        # Priority score thresholds
+        self.critical_threshold = int(os.getenv("SCHEDULER_CRITICAL_THRESHOLD", "15"))
+        self.high_threshold = int(os.getenv("SCHEDULER_HIGH_THRESHOLD", "8"))
+        
+        # Base intervals per priority (seconds)
+        self.fetch_intervals = {
+            Priority.CRITICAL: int(os.getenv("SCHEDULER_CRITICAL_INTERVAL", "30")),
+            Priority.HIGH: int(os.getenv("SCHEDULER_HIGH_INTERVAL", "120")),
+            Priority.MEDIUM: int(os.getenv("SCHEDULER_MEDIUM_INTERVAL", "300")),
+            Priority.LOW: int(os.getenv("SCHEDULER_LOW_INTERVAL", "900")),
+        }
+        
+        # Dedup window (seconds)
+        self.dedup_window = int(os.getenv("SCHEDULER_DEDUP_WINDOW", "60"))
+        
+        # Max age for stale game cleanup (hours)
+        self.max_age_hours = int(os.getenv("SCHEDULER_MAX_AGE_HOURS", "48"))
+        
+        # Scheduling loop interval (seconds)
+        self.loop_interval = int(os.getenv("SCHEDULER_LOOP_INTERVAL", "10"))
+        
+        # Error retry interval (seconds)
+        self.error_retry_interval = int(os.getenv("SCHEDULER_ERROR_RETRY", "30"))
+
+
 class SmartScheduler:
     """
     Intelligent scheduling system that prioritizes data fetching
     based on game proximity and betting significance.
     """
 
-    # Priority score thresholds
-    CRITICAL_THRESHOLD = 15
-    HIGH_THRESHOLD = 8
-    
-    # Base intervals per priority (seconds)
-    FETCH_INTERVALS = {
-        Priority.CRITICAL: 30,    # Every 30 seconds
-        Priority.HIGH: 120,       # Every 2 minutes
-        Priority.MEDIUM: 300,     # Every 5 minutes
-        Priority.LOW: 900,        # Every 15 minutes
-    }
-
-    def __init__(self):
+    def __init__(self, config: SchedulerConfig = None):
+        self.config = config or SchedulerConfig()
         self._games: dict[str, GameInfo] = {}
         self._schedules: dict[DataSource, asyncio.Task] = {}
         self._callbacks: dict[DataSource, list[Callable]] = defaultdict(list)
         self._lock = asyncio.Lock()
         self._running = False
         self._cache: dict[str, datetime] = {}
-        self._dedup_window = 60  # seconds
 
     async def start(self):
         """Start the scheduler."""
@@ -125,9 +151,9 @@ class SmartScheduler:
                 score += 1
 
         # Determine priority based on score
-        if score >= self.CRITICAL_THRESHOLD:
+        if score >= self.config.critical_threshold:
             return Priority.CRITICAL
-        elif score >= self.HIGH_THRESHOLD:
+        elif score >= self.config.high_threshold:
             return Priority.HIGH
         elif score > 0:
             return Priority.MEDIUM
@@ -137,7 +163,7 @@ class SmartScheduler:
     def get_fetch_interval(self, sport: Sport) -> int:
         """Get the appropriate fetch interval for a sport."""
         priority = self.get_fetch_priority(sport)
-        return self.FETCH_INTERVALS[priority]
+        return self.config.fetch_intervals[priority]
 
     def should_fetch(self, key: str, min_interval: int) -> bool:
         """
@@ -163,15 +189,15 @@ class SmartScheduler:
         while self._running:
             try:
                 await self._execute_scheduled_fetches()
-                await asyncio.sleep(10)  # Check every 10 seconds
+                await asyncio.sleep(self.config.loop_interval)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error("scheduler.loop_error", error=str(e))
-                await asyncio.sleep(30)
+                await asyncio.sleep(self.config.error_retry_interval)
 
     async def _execute_scheduled_fetches(self):
-        """Execute scheduled fetches for all sources."""
+        """Execute scheduled fetches for all sources with managed tasks."""
         for source, callbacks in self._callbacks.items():
             for sport in Sport:
                 interval = self.get_fetch_interval(sport)
@@ -187,18 +213,39 @@ class SmartScheduler:
                         interval=interval
                     )
                     
-                    # Execute all callbacks for this source
+                    # Execute all callbacks for this source using managed tasks
                     for callback in callbacks:
                         try:
-                            asyncio.create_task(
-                                callback(sport, priority),
-                                name=f"fetch_{source.value}_{sport.value}"
+                            task_id = f"fetch_{source.value}_{sport.value}_{int(time.time() * 1000)}"
+                            
+                            # Wrap callback with retry logic
+                            @retry_with_backoff(max_retries=3, base_delay=1.0)
+                            async def wrapped_callback(sport_val, priority_val):
+                                return await callback(sport_val, priority_val)
+                            
+                            # Create managed task with resource limits
+                            await task_manager.create_managed_task(
+                                wrapped_callback,
+                                task_id,
+                                sport,
+                                priority
                             )
+                            
+                            logger.debug(
+                                "scheduler.created_managed_task",
+                                task_id=task_id,
+                                source=source.value,
+                                sport=sport.value
+                            )
+                            
                         except Exception as e:
+                            error_category = classify_error(e)
                             logger.error(
                                 "scheduler.callback_error",
                                 source=source.value,
-                                error=str(e)
+                                error_category=error_category.value,
+                                error=str(e),
+                                active_tasks=task_manager.active_task_count
                             )
 
     def get_sport_priority_breakdown(self, sport: Sport) -> dict:
@@ -243,14 +290,16 @@ class SmartScheduler:
             if game.line_movement_24h > Decimal("1.0"):
                 score += 2
                 
-            if score >= self.CRITICAL_THRESHOLD:
+            if score >= self.config.critical_threshold:
                 breakdown["critical_games"] += 1
-            elif score >= self.HIGH_THRESHOLD:
+            elif score >= self.config.high_threshold:
                 breakdown["high_priority_games"] += 1
         
         return breakdown
 
-    def clean_stale_games(self, max_age_hours: int = 48):
+    def clean_stale_games(self, max_age_hours: int = None):
+        if max_age_hours is None:
+            max_age_hours = self.config.max_age_hours
         """Remove games that have passed or are too old."""
         now = datetime.utcnow()
         stale_ids = [

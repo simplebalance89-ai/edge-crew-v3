@@ -1,0 +1,617 @@
+{
+	"info": {
+		"_postman_id": "54a8082f-f41e-43b8-b32c-077c2376e527",
+		"name": "SportsGameOdds API",
+		"description": "Here you'll find the REST API reference documentation for the SportsGameOdds API.\n\nContact Support:\n Name: Sports Game Odds Support\n Email: api@sportsgameodds.com",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "26860278",
+		"_collection_link": "https://wagerlab.postman.co/workspace/My-Workspace~1d22466e-2bb7-4594-8183-e01b4c0daee2/collection/26860278-54a8082f-f41e-43b8-b32c-077c2376e527?action=share&source=collection_link&creator=26860278"
+	},
+	"item": [
+		{
+			"name": "Events",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/events/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"events",
+						""
+					],
+					"query": [
+						{
+							"key": "eventID",
+							"value": "<string>",
+							"description": "An eventID or comma-separated list of eventIDs to get Event data for",
+							"disabled": true
+						},
+						{
+							"key": "sportID",
+							"value": "<string>",
+							"description": "A sportID or comma-separated list of sportIDs to get Events for",
+							"disabled": true
+						},
+						{
+							"key": "leagueID",
+							"value": "<string>",
+							"description": "A leagueID or comma-separated list of leagueIDs to get Events for",
+							"disabled": true
+						},
+						{
+							"key": "type",
+							"value": "<string>",
+							"description": "Only include Events of the specified type",
+							"disabled": true
+						},
+						{
+							"key": "oddsAvailable",
+							"value": "<boolean>",
+							"description": "Whether you want only Events which do (true) or do not (false) have odds markets which are currently available (open for wagering)",
+							"disabled": true
+						},
+						{
+							"key": "oddsPresent",
+							"value": "<boolean>",
+							"description": "Whether you want only Events which do (true) or do not (false) have any associated odds markets regardless of whether those odds markets are currently available (open for wagering)",
+							"disabled": true
+						},
+						{
+							"key": "oddID",
+							"value": "<string>",
+							"description": "An oddID or comma-separated list of oddIDs to include odds for",
+							"disabled": true
+						},
+						{
+							"key": "includeOpposingOdds",
+							"value": "<boolean>",
+							"description": "Whether to include opposing odds for each included oddID",
+							"disabled": true
+						},
+						{
+							"key": "includeAltLines",
+							"value": "<boolean>",
+							"description": "Whether to include alternate lines in the odds byBookmaker data",
+							"disabled": true
+						},
+						{
+							"key": "bookmakerID",
+							"value": "<string>",
+							"description": "A bookmakerID or comma-separated list of bookmakerIDs to include odds for",
+							"disabled": true
+						},
+						{
+							"key": "teamID",
+							"value": "<string>",
+							"description": "A teamID or comma-separated list of teamIDs to include Events for",
+							"disabled": true
+						},
+						{
+							"key": "playerID",
+							"value": "<string>",
+							"description": "A playerID or comma-separated list of playerIDs to include Events (and associated odds) for",
+							"disabled": true
+						},
+						{
+							"key": "finalized",
+							"value": "<boolean>",
+							"description": "Only include finalized Events (true), exclude unfinalized Events (false) or all Events (omit)",
+							"disabled": true
+						},
+						{
+							"key": "live",
+							"value": "<boolean>",
+							"description": "Only include live Events (true), only non-live Events (false) or all Events (omit)",
+							"disabled": true
+						},
+						{
+							"key": "started",
+							"value": "<boolean>",
+							"description": "Only include Events which have have previously started (true), only Events which have not previously started (false) or all Events (omit)",
+							"disabled": true
+						},
+						{
+							"key": "ended",
+							"value": "<boolean>",
+							"description": "Only include Events which have have ended (true), only Events which have not ended (false) or all Events (omit)",
+							"disabled": true
+						},
+						{
+							"key": "cancelled",
+							"value": "<boolean>",
+							"description": "Only include cancelled Events (true), only non-cancelled Events (false) or all Events (omit)",
+							"disabled": true
+						},
+						{
+							"key": "startsAfter",
+							"value": "<dateTime>",
+							"description": "Get Events that start after this date",
+							"disabled": true
+						},
+						{
+							"key": "startsBefore",
+							"value": "<dateTime>",
+							"description": "Get Events that start before this date",
+							"disabled": true
+						},
+						{
+							"key": "limit",
+							"value": "<number>",
+							"description": "The maximum number of Events to return",
+							"disabled": true
+						},
+						{
+							"key": "cursor",
+							"value": "<string>",
+							"description": "The cursor for the request. Used to get the next group of Events. This should be the nextCursor from the prior response.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Get a list of Events"
+			},
+			"response": []
+		},
+		{
+			"name": "Teams",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/teams/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"teams",
+						""
+					],
+					"query": [
+						{
+							"key": "sportID",
+							"value": "<string>",
+							"description": "A single sportID or comma-separated list of sportIDs to get Teams for",
+							"disabled": true
+						},
+						{
+							"key": "leagueID",
+							"value": "<string>",
+							"description": "A single leagueID or comma-separated list of leagueIDs to get Teams for",
+							"disabled": true
+						},
+						{
+							"key": "teamID",
+							"value": "<string>",
+							"description": "A single teamID or comma-separated list of teamIDs to get data for",
+							"disabled": true
+						},
+						{
+							"key": "limit",
+							"value": "<number>",
+							"description": "The maximum number of Teams to return",
+							"disabled": true
+						},
+						{
+							"key": "cursor",
+							"value": "<string>",
+							"description": "The cursor for the request. Used to get the next group of Teams. This should be the nextCursor from the prior response.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Get a list of Teams by ID or league"
+			},
+			"response": []
+		},
+		{
+			"name": "Players",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/players/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"players",
+						""
+					],
+					"query": [
+						{
+							"key": "teamID",
+							"value": "<string>",
+							"description": "TeamID to get Players data for",
+							"disabled": true
+						},
+						{
+							"key": "eventID",
+							"value": "<string>",
+							"description": "EventID to get Players data for",
+							"disabled": true
+						},
+						{
+							"key": "playerID",
+							"value": "<string>",
+							"description": "PlayerID to get data for",
+							"disabled": true
+						},
+						{
+							"key": "limit",
+							"value": "<number>",
+							"description": "The maximum number of Players to return",
+							"disabled": true
+						},
+						{
+							"key": "cursor",
+							"value": "<string>",
+							"description": "The cursor for the request. Used to get the next group of Players. This should be the nextCursor from the prior response.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Get a list of Players for a specific Team or Event"
+			},
+			"response": []
+		},
+		{
+			"name": "Leagues",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/leagues/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"leagues",
+						""
+					],
+					"query": [
+						{
+							"key": "sportID",
+							"value": "<string>",
+							"description": "The sport to get leagues for",
+							"disabled": true
+						},
+						{
+							"key": "leagueID",
+							"value": "<string>",
+							"description": "The league to get data for",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Get a list of Leagues"
+			},
+			"response": []
+		},
+		{
+			"name": "Sports",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/sports/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"sports",
+						""
+					]
+				},
+				"description": "Get a list of sports"
+			},
+			"response": []
+		},
+		{
+			"name": "Stats",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/stats/",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"stats",
+						""
+					],
+					"query": [
+						{
+							"key": "statID",
+							"value": "<string>",
+							"description": "StatID to get data for",
+							"disabled": true
+						},
+						{
+							"key": "sportID",
+							"value": "<string>",
+							"description": "SportID to get StatIDs for",
+							"disabled": true
+						},
+						{
+							"key": "statLevel",
+							"value": "<string>",
+							"description": "Level of the stat, must be used in combination with sportID. Must be one of all, player, or team. Shows stats that are applicable to that specified entity, defaults to all.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Get a list of StatIDs"
+			},
+			"response": []
+		},
+		{
+			"name": "Usage",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/account/usage",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"account",
+						"usage"
+					]
+				},
+				"description": "Get rate-limits and usage data about your API key"
+			},
+			"response": []
+		},
+		{
+			"name": "Events Stream",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "apiKey",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "{{apiKey}}",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/stream/events",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"stream",
+						"events"
+					],
+					"query": [
+						{
+							"key": "feed",
+							"value": "<string>",
+							"description": "The feed you would like to subscribe to (This can only be one of events:upcoming,events:live,events:byid)",
+							"disabled": true
+						},
+						{
+							"key": "leagueID",
+							"value": "<string>",
+							"description": "A leagueID to stream events for",
+							"disabled": true
+						},
+						{
+							"key": "eventID",
+							"value": "<string>",
+							"description": "An eventID to stream events for",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Setup streamed (WebSocket) connection"
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.sportsgameodds.com/v2",
+			"type": "string"
+		}
+	]
+}

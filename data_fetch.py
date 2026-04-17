@@ -14,6 +14,17 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
+import sys
+import os
+
+# Add parent directory to path for cache import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.cache import get_cache, with_cache, CACHE_TTL, cache_key_generator
+
+try:
+    import asyncio
+except ImportError:
+    pass  # asyncio is already imported above
 
 import httpx
 
@@ -49,24 +60,8 @@ SOCCER_LEAGUE_MAP = {
     "soccer_mexico_ligamx": ("soccer", "mex.1"),
 }
 
-_team_cache: Dict[str, dict] = {}
-TEAM_CACHE_TTL = 600  # 10 min
-
-# Cache: sport/league → {name: team_id}
-_team_id_cache: Dict[str, dict] = {}
-_TEAM_ID_TTL = 3600  # 1 hour
-
-# Cache: scoreboard by date+league (yesterday doesn't change)
-_scoreboard_cache: Dict[str, dict] = {}
-_SCOREBOARD_CACHE_TTL = 7200  # 2 hours for historical dates
-
-# Cache: injuries by team_id
-_injury_cache: Dict[str, dict] = {}
-_INJURY_CACHE_TTL = 1800  # 30 min
-
-# Cache: schedule by team_id
-_schedule_cache: Dict[str, dict] = {}
-_SCHEDULE_CACHE_TTL = 3600  # 1 hour
+# Cache keys will be generated dynamically using the cache decorator
+# No more in-memory caches - everything goes through Redis
 
 # Name aliases: Odds API → ESPN
 _NAME_ALIASES = {
@@ -91,21 +86,95 @@ def _name_match(needle: str, candidates: list) -> bool:
     return False
 
 
+async def _fetch_team_profile_internal(team_name: str, sport: str, odds_key: str = "",
+                                        opponent_name: str = "") -> dict:
+    """Internal function that performs the actual ESPN data fetching"""
+    
+    if sport == "SOCCER" and odds_key:
+        espn_sport, espn_league = SOCCER_LEAGUE_MAP.get(odds_key, ("soccer", "usa.1"))
+    else:
+        espn_sport, espn_league = SPORT_ESPN_MAP.get(sport, ("basketball", "nba"))
+
+    profile = _default_profile(team_name)
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # 1) Try scoreboard first (best data for today's games)
+            scoreboard = await _fetch_scoreboard(client, espn_sport, espn_league)
+            team_data = _find_team_in_scoreboard(scoreboard, team_name)
+            team_id = None
+
+            if team_data:
+                profile.update(_extract_scoreboard_data(team_data, sport))
+                team_id = str(team_data.get("team", {}).get("id", ""))
+                logger.info(f"[ESPN] Scoreboard hit: {team_name} → {profile.get('record','?')}")
+                if sport == "SOCCER" and team_id and profile.get("ppg_synthetic"):
+                    detail = await _fetch_team_detail(client, espn_sport, espn_league, team_id, sport)
+                    if detail and detail.get("ppg_L5"):
+                        profile["ppg_L5"] = detail["ppg_L5"]
+                        profile["opp_ppg_L5"] = detail.get("opp_ppg_L5", profile.get("opp_ppg_L5", 0))
+                        if detail.get("avg_margin_L10") is not None:
+                            profile["avg_margin_L10"] = detail["avg_margin_L10"]
+                        profile.pop("ppg_synthetic", None)
+                        logger.info(f"[ESPN] Soccer real PPG from team detail: {team_name} → ppg={profile['ppg_L5']}")
+            else:
+                # 2) Get team ID, then fetch /teams/{id} for full profile
+                team_id = await _get_team_id(client, espn_sport, espn_league, team_name)
+                if team_id:
+                    detail = await _fetch_team_detail(client, espn_sport, espn_league, team_id, sport)
+                    if detail:
+                        profile.update(detail)
+                        logger.info(f"[ESPN] Team detail hit: {team_name} → {profile.get('record','?')}")
+                    else:
+                        logger.warning(f"[ESPN] Team detail empty for {team_name} (id={team_id})")
+                else:
+                    logger.warning(f"[ESPN] No team ID found for '{team_name}'")
+
+            # ── Rest days / B2B (uses cached yesterday scoreboards) ───
+            rest_info = await _fetch_rest_days(client, espn_sport, espn_league, team_name)
+            profile.update(rest_info)
+
+            # ── Injuries + Schedule (parallel if we have team_id) ─────
+            if team_id:
+                inj_task = _fetch_injuries(client, espn_sport, espn_league, team_id)
+                sched_task = _fetch_schedule_data(client, espn_sport, espn_league, team_id, team_name, opponent_name)
+                injuries, schedule_data = await asyncio.gather(inj_task, sched_task)
+                profile["injuries"] = injuries
+                profile.update(schedule_data)
+                profile["espn_team_id"] = team_id
+
+                # ── Real pace for NFL/NCAAF/NCAAB/NBA via ESPN team stats.
+                # NHL gets pace via the official Stats API in
+                # enrich_game_for_grading.
+                if sport in ("NFL", "NCAAF", "NCAAB", "NBA"):
+                    try:
+                        from services.espn_pace import get_team_pace as _espn_pace
+                        p = await _espn_pace(team_id, sport)
+                        if p and p.get("pace_L5") is not None:
+                            profile["pace_L5"] = p["pace_L5"]
+                            profile["espn_pace"] = p
+                    except Exception as _e:
+                        logger.debug(f"[ESPN_PACE] {sport}/{team_name} failed: {_e}")
+
+    except Exception as e:
+        logger.warning(f"[ESPN] Fetch failed for {team_name}: {e}")
+
+    profile["_fetched"] = datetime.now(timezone.utc)
+    
+    # Return the profile - cache decorator will handle caching
+    return profile
+
+@with_cache(
+    get_cache, 
+    cache_key_generator, 
+    ttl=CACHE_TTL['TEAM_PROFILE'], 
+    prefix="team_profile"
+)
 async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
                              opponent_name: str = "") -> dict:
     """Fetch team profile from ESPN. Returns dict with record, ppg, rest, injuries, L5, etc."""
-    cache_key = f"{sport}:{odds_key or 'default'}:{team_name}"
-    cached = _team_cache.get(cache_key)
-    if cached:
-        age = (datetime.now(timezone.utc) - cached["_fetched"]).total_seconds()
-        if age < TEAM_CACHE_TTL:
-            # Return a shallow copy and clear starting_pitcher — that field is
-            # game-specific and must be attached per-game by the caller
-            # (see enrich_game_for_grading). Caching it here causes the wrong
-            # pitcher to leak across different games of the same team.
-            result = dict(cached)
-            result["starting_pitcher"] = {}
-            return result
+    # The cache decorator handles caching automatically
+    return await _fetch_team_profile_internal(team_name, sport, odds_key, opponent_name)
 
     if sport == "SOCCER" and odds_key:
         espn_sport, espn_league = SOCCER_LEAGUE_MAP.get(odds_key, ("soccer", "usa.1"))
@@ -191,25 +260,28 @@ async def fetch_team_profile(team_name: str, sport: str, odds_key: str = "",
 
 # ── ESPN API Calls ─────────────────────────────────────────────────────
 
-async def _fetch_scoreboard(client: httpx.AsyncClient, sport: str, league: str,
-                            date_str: str = "") -> dict:
-    """Fetch scoreboard. date_str is YYYYMMDD or empty for today. Cached."""
-    cache_key = f"{sport}/{league}/{date_str}"
-    cached = _scoreboard_cache.get(cache_key)
-    if cached:
-        age = (datetime.now(timezone.utc) - cached.get("_ts", datetime.min.replace(tzinfo=timezone.utc))).total_seconds()
-        ttl = _SCOREBOARD_CACHE_TTL if date_str else 300  # today = 5 min
-        if age < ttl:
-            return cached.get("data", {})
-
+@with_cache(
+    get_cache, 
+    cache_key_generator, 
+    ttl=CACHE_TTL['GAME_DATA'], 
+    prefix="scoreboard"
+)
+async def _fetch_scoreboard_internal(client: httpx.AsyncClient, sport: str, league: str,
+                                   date_str: str = "") -> dict:
+    """Internal function that fetches scoreboard data"""
     url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
     params = {}
     if date_str:
         params["dates"] = date_str
     resp = await client.get(url, params=params)
     data = resp.json() if resp.status_code == 200 else {}
-    _scoreboard_cache[cache_key] = {"data": data, "_ts": datetime.now(timezone.utc)}
     return data
+
+async def _fetch_scoreboard(client: httpx.AsyncClient, sport: str, league: str,
+                            date_str: str = "") -> dict:
+    """Fetch scoreboard. date_str is YYYYMMDD or empty for today. Cached."""
+    # Use the cached internal function
+    return await _fetch_scoreboard_internal(client, sport, league, date_str)
 
 
 async def _get_team_id(client: httpx.AsyncClient, sport: str, league: str, team_name: str) -> Optional[str]:

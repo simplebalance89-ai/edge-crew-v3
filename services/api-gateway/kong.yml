@@ -549,6 +549,9 @@ plugins:
 # ============================================================================
 # JWT CREDENTIALS (for consumers)
 # ============================================================================
+# NOTE: JWT validation is handled upstream by FastAPI application layer.
+# Kong JWT plugin config below is kept for backward compatibility but
+# secrets are injected via environment variables only.
 jwt_secrets:
   - consumer: edge-web-client
     algorithm: HS256

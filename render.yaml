@@ -4,14 +4,54 @@ services:
     runtime: python
     plan: standard
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     disk:
       name: ec8-data
       mountPath: /data
       sizeGB: 1
+    healthCheckPath: /health/live
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      # Security
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: JWT_REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      # CORS
+      - key: ALLOWED_ORIGINS
+        value: https://edge-crew-v3.onrender.com
+      # Rate Limiting
+      - key: RATE_LIMIT_REQUESTS
+        value: "100"
+      - key: RATE_LIMIT_WINDOW
+        value: "60"
+      - key: ADMIN_RATE_LIMIT_REQUESTS
+        value: "50"
+      # Security Headers
+      - key: HSTS_MAX_AGE
+        value: "31536000"
+      - key: CSP_REPORT_ONLY
+        value: "false"
+      # Redis (for caching, rate limiting, token blacklisting)
+      - key: REDIS_URL
+        sync: false
+      # Database
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "10"
+      # External APIs
       - key: AZURE_SWEDEN_KEY
         sync: false
       - key: AZURE_AI_KEY
@@ -22,7 +62,9 @@ services:
         sync: false
       - key: AZURE_GCE_KEY
         sync: false
-      - key: DATABASE_URL
+      - key: ODDS_API_KEY_PAID
+        sync: false
+      - key: ODDS_API_KEY
         sync: false
 
   # ── Cron: Settle picks against final scores ────────────────────────────────
