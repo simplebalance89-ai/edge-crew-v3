@@ -720,19 +720,19 @@ REAL_AI_MODELS = [
     #    Azure Model Router (ai-peterwilson7092ai011379814834)
     {"display": "Azure Model Router","deployment": "model-router",                           "host": "ai_peterwilson", "persona": "Azure auto-routes to the best model for the task - consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
 
-    #    Grok family (Azure 1 - pwgcerp-9302-resource)
+    #    Grok family (gce-personal-resource)
     {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 4 Fast",       "deployment": "grok-4-fast-reasoning",                 "host": "gce", "persona": "prior-gen Grok 4 reasoning, variance vs 4.1","token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
     {"display": "Grok 3",            "deployment": "grok-3",                                "host": "gce", "persona": "older Grok, different bias / value angle",  "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
 
-    #    DeepSeek family (Azure 1 - pwgcerp-9302-resource)
+    #    DeepSeek family (gce-personal-resource)
     {"display": "DeepSeek V3.2",     "deployment": "DeepSeek-V3-2-Speciale",                 "host": "gce", "persona": "newest DeepSeek V3.2, sharp on data",      "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
     {"display": "DeepSeek V3.1",     "deployment": "DeepSeek-V3-1",                         "host": "gce", "persona": "DeepSeek V3.1, variance vs V3.2",          "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
 
     #    Microsoft Phi (chain-of-thought specialists)                         
     {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                       "host": "gce", "persona": "chain-of-thought on thin edges",             "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
 
-    #    OpenAI / GPT family (Azure 1 - pwgcerp-9302-resource)
+    #    OpenAI / GPT family (gce-personal-resource)
     {"display": "GPT-4o",            "deployment": "gpt-4o",                                 "host": "gce", "persona": "OpenAI multimodal workhorse",               "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "GPT-4.1",           "deployment": "gpt-41",                                 "host": "gce", "persona": "OpenAI flagship balanced view",              "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
     {"display": "GPT-4.1-mini",      "deployment": "gpt-41-mini",                            "host": "gce", "persona": "OpenAI fast consensus",                   "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
