@@ -51,57 +51,20 @@ services:
         value: "5"
       - key: DB_MAX_OVERFLOW
         value: "10"
-      # External APIs — Azure
+      # External APIs
       - key: AZURE_SWEDEN_KEY
         sync: false
       - key: AZURE_AI_KEY
         sync: false
       - key: AZURE_AI_ENDPOINT
-        sync: false
+        value: https://peter-mna31gr3-swedencentral.services.ai.azure.com/openai/v1/
       - key: AZURE_NC_KEY
         sync: false
       - key: AZURE_GCE_KEY
         sync: false
-      - key: AZURE_OPENAI_KEY
-        sync: false
-      - key: AZURE_OPENAI_ENDPOINT
-        sync: false
-      - key: AZURE_OPENAI_MODEL
-        sync: false
-      - key: AZURE_AI_PETERWILSON_KEY
-        sync: false
-      - key: THINKER_ENDPOINT
-        sync: false
-      # External APIs — Sports Data
       - key: ODDS_API_KEY_PAID
         sync: false
       - key: ODDS_API_KEY
-        sync: false
-      - key: SPORTSGAMEODDS_KEY
-        sync: false
-      - key: API_SPORTS_KEY
-        sync: false
-      - key: RAPIDAPI_KEY
-        sync: false
-      - key: BALLDONTLIE_API_KEY
-        sync: false
-      # External APIs — AI Providers
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: PERPLEXITY_API_KEY
-        sync: false
-      - key: MOONSHOT_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
-      - key: KIMI_SCOUT_KEY
-        sync: false
-      - key: S4_BRIDGE_KEY
-        sync: false
-      # Pipeline config
-      - key: ANALYSIS_THINKER
-        sync: false
-      - key: ANALYSIS_FORMATTER
         sync: false
 
   # ── Cron: Settle picks against final scores ────────────────────────────────

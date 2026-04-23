@@ -717,31 +717,33 @@ AZURE_HOSTS = {
 # GATEKEEPER (Stage 5 of the Edge Crew v3 pipeline) via the Moonshot direct API.
 # token_param: "max_completion_tokens" required for gpt-5+ / o-series / grok reasoning; "max_tokens" otherwise.
 REAL_AI_MODELS = [
+    #    gce-personal-resource (East US 2) — GCE personal subscription
+    {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",               "host": "gce", "persona": "contrarian, sniffs out trap lines",                    "token_param": "max_completion_tokens", "max_tokens": 8000, "timeout": 240},
+    {"display": "Grok 4 Fast",       "deployment": "grok-4-fast-reasoning",                  "host": "gce", "persona": "prior-gen Grok 4 reasoning, variance vs 4.1",          "token_param": "max_completion_tokens", "max_tokens": 8000, "timeout": 240},
+    {"display": "Grok 3",            "deployment": "grok-3",                                 "host": "gce", "persona": "older Grok, different bias / value angle",             "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "DeepSeek V3.2",     "deployment": "DeepSeek-V3-2-Speciale",                 "host": "gce", "persona": "newest DeepSeek V3, sharp on data",                   "token_param": "max_tokens",            "max_tokens": 2500, "timeout": 90},
+    {"display": "DeepSeek V3.1",     "deployment": "DeepSeek-V3-1",                          "host": "gce", "persona": "DeepSeek V3.1, variance vs V3.2",                     "token_param": "max_tokens",            "max_tokens": 2500, "timeout": 90},
+    {"display": "Phi-4 Reasoning",   "deployment": "Phi-4-reasoning",                        "host": "gce", "persona": "chain-of-thought on thin edges",                      "token_param": "max_tokens",            "max_tokens": 6000, "timeout": 180},
+    {"display": "GPT-4o",            "deployment": "gpt-4o",                                  "host": "gce", "persona": "OpenAI multimodal workhorse",                         "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "GPT-4.1",           "deployment": "gpt-41",                                  "host": "gce", "persona": "OpenAI flagship balanced view",                       "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "GPT-4.1-mini",      "deployment": "gpt-41-mini",                             "host": "gce", "persona": "OpenAI fast consensus",                              "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "GPT-5 Mini",        "deployment": "gpt-5-mini",                             "host": "gce", "persona": "next-gen OpenAI consensus",                           "token_param": "max_completion_tokens", "max_tokens": 8000, "timeout": 180},
+    {"display": "Llama-4 Maverick",  "deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8", "host": "gce", "persona": "open-source heavyweight, broad pattern",              "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "Llama-4 Scout",     "deployment": "Llama-4-Scout-17B-16E-Instruct",         "host": "gce", "persona": "lightweight Llama 4, fast first-read scout",          "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 60},
+    {"display": "Kimi K2.5 (Azure)", "deployment": "Kimi-K2.5",                              "host": "gce", "persona": "scout profiler - asks who benefits and who eats cost", "token_param": "max_tokens",            "max_tokens": 4000, "timeout": 180},
+
+    #    peter-mna31gr3-swedencentral (Sweden Central)
+    {"display": "Mistral Large 3",   "deployment": "Mistral-Large-3",                        "host": "sweden", "persona": "European flagship, different training bias",        "token_param": "max_tokens",            "max_tokens": 2000, "timeout": 90},
+
     #    OpenRouter
-    {"display": "Claude Sonnet 4.6", "deployment": "anthropic/claude-sonnet-4-6",            "host": "openrouter", "persona": "Anthropic rigorous reviewer, catches sloppy reasoning",                    "token_param": "max_tokens",      "max_tokens": 4000, "timeout": 120},
-    {"display": "Qwen 3.6 Plus",     "deployment": "qwen/qwen3.6-plus",                      "host": "openrouter", "persona": "Alibaba flagship, strong on data + non-western perspective",             "token_param": "max_tokens",      "max_tokens": 2000, "timeout": 120},
+    {"display": "Claude Sonnet 4.6", "deployment": "anthropic/claude-sonnet-4-6",            "host": "openrouter", "persona": "Anthropic rigorous reviewer, catches sloppy reasoning", "token_param": "max_tokens", "max_tokens": 4000, "timeout": 120},
+    {"display": "Qwen 3.6 Plus",     "deployment": "qwen/qwen3.6-plus",                      "host": "openrouter", "persona": "Alibaba flagship, strong on data + non-western perspective", "token_param": "max_tokens", "max_tokens": 2000, "timeout": 120},
 
     #    Google
-    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                       "host": "gemini",     "persona": "Google multimodal, broad pattern matcher - often catches line movement", "token_param": "maxOutputTokens", "max_tokens": 2000, "timeout": 120},
+    {"display": "Gemini 2.5 Flash",  "deployment": "gemini-2.5-flash",                       "host": "gemini",     "persona": "Google multimodal, broad pattern matcher",    "token_param": "maxOutputTokens",       "max_tokens": 2000, "timeout": 120},
 
     #    Perplexity
-    {"display": "Perplexity Sonar",  "deployment": "sonar",                                  "host": "perplexity", "persona": "real-time web research, contrarian to consensus",                        "token_param": "max_tokens",      "max_tokens": 2000, "timeout": 90},
-
-    # GCE personal Azure (gce-personal-resource + peter-mna31gr3-swedencentral) — restore when subscription re-enabled
-    # {"display": "Grok 4.1",        "deployment": "grok-4-1-fast-reasoning",              "host": "gce",    "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
-    # {"display": "Grok 4 Fast",     "deployment": "grok-4-fast-reasoning",                "host": "gce",    "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
-    # {"display": "Grok 3",          "deployment": "grok-3",                               "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "DeepSeek V3.2",   "deployment": "DeepSeek-V3-2-Speciale",               "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
-    # {"display": "DeepSeek V3.1",   "deployment": "DeepSeek-V3-1",                        "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2500,  "timeout": 90},
-    # {"display": "GPT-4o",          "deployment": "gpt-4o",                               "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "GPT-4.1",         "deployment": "gpt-41",                               "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "GPT-4.1-mini",    "deployment": "gpt-41-mini",                          "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "GPT-5 Mini",      "deployment": "gpt-5-mini",                           "host": "gce",    "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 180},
-    # {"display": "Llama-4 Maverick","deployment": "Llama-4-Maverick-17B-128E-Instruct-FP8","host": "gce",   "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "Llama-4 Scout",   "deployment": "Llama-4-Scout-17B-16E-Instruct",       "host": "gce",    "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 60},
-    # {"display": "Phi-4 Reasoning", "deployment": "Phi-4-reasoning",                      "host": "gce",    "token_param": "max_tokens",            "max_tokens": 6000,  "timeout": 180},
-    # {"display": "Kimi K2.5",       "deployment": "Kimi-K2.5",                            "host": "gce",    "token_param": "max_tokens",            "max_tokens": 4000,  "timeout": 180},
-    # {"display": "Mistral Large 3", "deployment": "Mistral-Large-3",                      "host": "sweden", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+    {"display": "Perplexity Sonar",  "deployment": "sonar",                                  "host": "perplexity", "persona": "real-time web research, contrarian to consensus", "token_param": "max_tokens",         "max_tokens": 2000, "timeout": 90},
 ]
 
 
