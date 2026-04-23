@@ -717,8 +717,8 @@ AZURE_HOSTS = {
 # GATEKEEPER (Stage 5 of the Edge Crew v3 pipeline) via the Moonshot direct API.
 # token_param: "max_completion_tokens" required for gpt-5+ / o-series / grok reasoning; "max_tokens" otherwise.
 REAL_AI_MODELS = [
-    #    Azure Model Router (ai-peterwilson7092ai011379814834)
-    {"display": "Azure Model Router","deployment": "model-router",                           "host": "ai_peterwilson", "persona": "Azure auto-routes to the best model for the task - consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
+    #    Azure Model Router (gce-personal-resource) — confirmed working 2026-04-23
+    {"display": "Azure Model Router","deployment": "model-router",                           "host": "gce",            "persona": "Azure auto-routes to the best model for the task - consensus baseline", "token_param": "max_tokens",            "max_tokens": 2000,  "timeout": 90},
 
     #    Grok family (gce-personal-resource)
     {"display": "Grok 4.1",          "deployment": "grok-4-1-fast-reasoning",              "host": "gce", "persona": "contrarian, sniffs out trap lines",          "token_param": "max_completion_tokens", "max_tokens": 8000,  "timeout": 240},
