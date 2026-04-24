@@ -2530,8 +2530,8 @@ async def _fetch_and_grade(sport: str, mode: str = "games", league: str = "") ->
                             if ct:
                                 gt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
                                 hours_ahead = (gt - datetime.now(timezone.utc)).total_seconds() / 3600
-                                if hours_ahead < -6 or hours_ahead > 14:
-                                    continue  # Finished >6h ago or >14h out - " skip
+                                if hours_ahead < -6 or hours_ahead > 48:
+                                    continue  # Finished >6h ago or >48h out - skip
                         except Exception:
                             pass
                         all_games.append(game)
@@ -3226,8 +3226,8 @@ def _filter_live_games(games: list) -> list:
                 if gt < now:
                     continue  # Already started - drop it
                 hours_ahead = (gt - now).total_seconds() / 3600
-                if hours_ahead > 14:
-                    continue  # Tomorrow's game - drop it
+                if hours_ahead > 48:
+                    continue  # >48h out - drop it
             except Exception:
                 pass
         out.append(g)
