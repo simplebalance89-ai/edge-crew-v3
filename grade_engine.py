@@ -3187,10 +3187,7 @@ def grade_game(game: dict, pick_side: str) -> dict:
                 chains_fired.append(chain_name)
 
     chain_bonus = max(-CHAIN_CAP, min(chain_bonus, CHAIN_CAP))
-    # DISABLED: chains do not affect score until system is dialed in.
-    # Chains still fire and are returned for visibility, but bonus is zeroed.
-    effective_chain_bonus = 0.0  # was: chain_bonus
-    final = round(max(1.0, min(10.0, composite + effective_chain_bonus)), 2)
+    final = round(max(1.0, min(10.0, composite + chain_bonus)), 2)
     grade = score_to_grade(final)
 
     return {
