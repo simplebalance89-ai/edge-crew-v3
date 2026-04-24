@@ -3453,7 +3453,7 @@ async def _analyze_games_impl(request: AnalyzeRequest):
             if valid_scores:
                 avg_score = round(sum(valid_scores) / len(valid_scores), 1)
                 avg_conf = int(sum(m.get("confidence", 50) for m in valid_models) / len(valid_models))
-                blended_grade = _ai_g(avg_score)
+                blended_grade = score_to_grade(avg_score)
                 game["aiGrade"] = {
                     "grade": blended_grade,
                     "score": avg_score,
